@@ -1,0 +1,36 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# macOS
+.DS_Store
+
+# Secrets — nunca commitar valores
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# Playwright
+playwright-report/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# Infisical (apenas .infisical.json é commitado, sem valores)
+# .infisical.json — COMMITADO (só tem workspaceId, sem secrets)

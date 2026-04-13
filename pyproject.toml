@@ -1,0 +1,160 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ai-sales-agent"
+version = "0.1.0"
+description = "Agente de vendas B2B via WhatsApp para distribuidoras brasileiras"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+# ─────────────────────────────────────────────
+# IMPORT-LINTER — Arquitetura em camadas fixas
+# Types → Config → Repo → Service → Runtime → UI
+# ─────────────────────────────────────────────
+
+[tool.importlinter]
+root_packages = ["src"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Types: não importa nenhuma camada interna"
+type = "forbidden"
+source_modules = ["src.*.types"]
+forbidden_modules = [
+    "src.*.config",
+    "src.*.repo",
+    "src.*.service",
+    "src.*.runtime",
+    "src.*.ui",
+]
+# REMEDIAÇÃO: src.{domínio}.types contém apenas Pydantic models puros.
+# Remova qualquer import de outras camadas do projeto.
+# Imports permitidos: stdlib, pydantic, typing.
+
+[[tool.importlinter.contracts]]
+name = "Config: importa apenas Types"
+type = "forbidden"
+source_modules = ["src.*.config"]
+forbidden_modules = [
+    "src.*.repo",
+    "src.*.service",
+    "src.*.runtime",
+    "src.*.ui",
+]
+# REMEDIAÇÃO: src.{domínio}.config lê variáveis de ambiente e define Settings.
+# Pode importar src.{domínio}.types, mas nunca camadas acima.
+
+[[tool.importlinter.contracts]]
+name = "Repo: não importa Service, Runtime ou UI"
+type = "forbidden"
+source_modules = ["src.*.repo"]
+forbidden_modules = [
+    "src.*.service",
+    "src.*.runtime",
+    "src.*.ui",
+]
+# REMEDIAÇÃO: src.{domínio}.repo contém apenas acesso a dados (SQLAlchemy queries).
+# Lógica de negócio pertence a src.{domínio}.service.
+# Mova a função para service/ e importe-a em runtime/ ou ui/.
+
+[[tool.importlinter.contracts]]
+name = "Service: não importa Runtime ou UI"
+type = "forbidden"
+source_modules = ["src.*.service"]
+forbidden_modules = [
+    "src.*.runtime",
+    "src.*.ui",
+]
+# REMEDIAÇÃO: src.{domínio}.service contém lógica de negócio pura.
+# Agentes Claude pertencem a src.{domínio}.runtime.
+# Endpoints FastAPI pertencem a src.{domínio}.ui.
+
+[[tool.importlinter.contracts]]
+name = "Runtime: não importa UI"
+type = "forbidden"
+source_modules = ["src.*.runtime"]
+forbidden_modules = ["src.*.ui"]
+# REMEDIAÇÃO: src.{domínio}.runtime contém agentes Claude.
+# Não deve depender de endpoints FastAPI.
+# Se precisar de dados do request, receba via parâmetro de função.
+
+# ─────────────────────────────────────────────
+# PYTEST
+# ─────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["src/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "unit: testes unitários (sem I/O externo)",
+    "integration: testes de integração (requerem serviços rodando)",
+    "slow: testes lentos (crawler, enriquecimento)",
+]
+
+# ─────────────────────────────────────────────
+# RUFF — Linter e formatter
+# ─────────────────────────────────────────────
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "LOG", # flake8-logging (detecta print() onde deveria ser log)
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/tests/*" = ["S101"]  # allow assert in tests
+
+# ─────────────────────────────────────────────
+# MYPY — Type checking
+# ─────────────────────────────────────────────
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+# ─────────────────────────────────────────────
+# COVERAGE
+# ─────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
