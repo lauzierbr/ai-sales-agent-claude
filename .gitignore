@@ -34,3 +34,10 @@ playwright-report/
 
 # Infisical (apenas .infisical.json é commitado, sem valores)
 # .infisical.json — COMMITADO (só tem workspaceId, sem secrets)
+
+# Imagens baixadas pelo crawler — binários, não versionar
+output/images/
+
+# Cache Python dentro de output/
+output/**/__pycache__/
+output/**/*.pyc

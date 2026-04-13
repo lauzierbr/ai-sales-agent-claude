@@ -21,6 +21,9 @@ Log de decisões técnicas. Atualizar sempre que uma nova decisão for tomada.
 | D013 | Arquitetura em camadas fixas (Types→UI) | Planejamento | ok |
 | D014 | VictoriaMetrics + VictoriaLogs para observabilidade | Planejamento | ok |
 | D015 | Memory Stores: separação e mapeamento (Managed Agents Fase 2) | Planejamento | ok |
+| D016 | Modelo de embeddings: text-embedding-3-small (OpenAI) | Sprint 0 | ok |
+| D017 | Schema PostgreSQL multi-tenant: tabela compartilhada com tenant_id no Sprint 0 | Sprint 0 | ok |
+| D018 | Trigger do crawler: on-demand via POST /catalog/crawl (sem scheduler no Sprint 0) | Sprint 0 | ok |
 
 ---
 
@@ -38,5 +41,19 @@ Violações bloqueiam com mensagens de remediação injetadas no contexto do age
 Single binary, PromQL + LogQL, extremamente leve para mac-mini.
 OpenTelemetry desde Sprint 1 permite que o Evaluator consulte métricas
 diretamente — prompts como "garanta latência < 3s p95" se tornam verificáveis.
+
+## D016 — Modelo de embeddings: `text-embedding-3-small` (OpenAI)
+Anthropic não oferece endpoint de embedding standalone. Voyage AI exige `VOYAGE_API_KEY` extra.
+`text-embedding-3-small` via `AsyncOpenAI`: 1536 dims, $0.02/1M tokens, assíncrono, substituível por Voyage no Sprint 5 com mudança de config.
+Variável Infisical: `OPENAI_API_KEY` (dev + staging).
+
+## D017 — Schema PostgreSQL multi-tenant no Sprint 0: tabela compartilhada
+`docs/DESIGN.md` e `docs/SECURITY.md` antecipam "schema por tenant" — referem-se à arquitetura final (Sprint 1+).
+No Sprint 0, pgvector `<=>` requer tabela única para índice `ivfflat` eficiente. Schemas separados criam footgun de `search_path` para busca semântica.
+Decisão: schema `public`, coluna `tenant_id TEXT NOT NULL` em `produtos`. Toda query filtra por `tenant_id`. Schemas por tenant entram no Sprint 1 para outras entidades.
+
+## D018 — Trigger do crawler: on-demand via `POST /catalog/crawl`
+Scheduler automático (APScheduler, Celery beat) pertence ao Sprint 1 (infra de aplicação).
+No Sprint 0, o endpoint `POST /catalog/crawl` dispara crawl síncrono e retorna `CrawlStatus`. Agendamento recorrente é out of scope.
 
 (Decisões D001-D011 em docs/design-docs/decisoes-planejamento.md)
