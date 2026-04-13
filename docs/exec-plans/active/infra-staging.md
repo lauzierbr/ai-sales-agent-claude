@@ -1,6 +1,6 @@
 # Exec Plan: Sprint Infra-Staging
 
-**Status:** 🔲 Pendente (aguarda Infra-Dev)
+**Status:** ✅ Concluído (2026-04-13)
 **Ambiente:** mac-mini-lablz (staging)
 **Executado via:** Claude Code com SSH ao mac-mini-lablz
 **Pré-requisito para:** Sprint 0 em diante em staging

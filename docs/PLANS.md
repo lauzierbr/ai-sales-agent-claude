@@ -7,7 +7,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint | Status | Tipo | Descrição |
 |--------|--------|------|-----------|
 | Infra-Dev | ✅ | Infra | Ambiente desenvolvimento (mac-lablz) |
-| Infra-Staging | 🔲 | Infra | Ambiente staging (mac-mini-lablz) |
+| Infra-Staging | ✅ | Infra | Ambiente staging (mac-mini-lablz) |
 | Sprint 0 | 🔲 | Produto | Catálogo — crawler + enriquecimento |
 | Sprint 1 | 🔲 | Produto | Infraestrutura da aplicação |
 | Sprint 2 | 🔲 | Produto | Agente cliente completo |
