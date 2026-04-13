@@ -1,15 +1,14 @@
 #!/bin/bash
-# deploy.sh — Deploy no mac-mini-lablz (staging)
-# Execute a partir do mac-lablz
+# deploy.sh — Deploy no macmini-lablz (staging)
+# Execute a partir do mac-lablz: ./scripts/deploy.sh
 set -e
 
-REMOTE_HOST="mac-mini-lablz"
-REMOTE_PATH="~/ai-sales-agent"
-REMOTE_USER="${DEPLOY_USER:-lauzier}"
+REMOTE_HOST="macmini-lablz"
+REMOTE_PATH="~/ai-sales-agent-claude"
 ENV="${1:-staging}"
 
-echo "🚀 Deploy — AI Sales Agent"
-echo "   Destino : $REMOTE_USER@$REMOTE_HOST"
+echo "Deploy — AI Sales Agent"
+echo "   Destino : $REMOTE_HOST"
 echo "   Ambiente: $ENV"
 echo ""
 
@@ -18,34 +17,30 @@ echo ""
 [[ ! $REPLY =~ ^[Ss]$ ]] && echo "Deploy cancelado." && exit 0
 
 # 1. Pull do código
-echo "📥 Atualizando código..."
-ssh $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH && git pull origin main"
+echo "Atualizando codigo..."
+ssh "$REMOTE_HOST" "export PATH=/usr/local/bin:\$PATH && cd $REMOTE_PATH && git pull origin main"
 
-# 2. Reinicia serviços Docker
-echo "🐳 Reiniciando containers..."
-ssh $REMOTE_USER@$REMOTE_HOST "
+# 2. Reinicia serviços Docker (staging)
+echo "Reiniciando containers..."
+ssh "$REMOTE_HOST" "
+    export PATH=/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:\$PATH
     cd $REMOTE_PATH
-    infisical run --env=$ENV -- \
-        docker-compose -f infra/docker-compose.staging.yml up -d --build
+    docker compose -f infra/docker-compose.staging.yml up -d
 "
 
-# 3. Reinicia aplicação FastAPI via launchd
-echo "🔄 Reiniciando aplicação..."
-ssh $REMOTE_USER@$REMOTE_HOST "
-    launchctl stop  com.ai-sales-agent 2>/dev/null || true
-    launchctl start com.ai-sales-agent
+# 3. Health check remoto
+echo "Health check..."
+sleep 5
+ssh "$REMOTE_HOST" "
+    export PATH=/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:\$PATH
+    cd $REMOTE_PATH
+    bash scripts/health-check.sh
 "
 
-# 4. Health check remoto
-echo "🏥 Health check..."
-sleep 3
-ssh $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_PATH && ./scripts/health-check.sh"
-
 echo ""
-echo "✅ Deploy concluído!"
+echo "Deploy concluido!"
 echo ""
-echo "Logs:"
-echo "  ssh $REMOTE_USER@$REMOTE_HOST 'tail -f $REMOTE_PATH/logs/app.log'"
+echo "Logs FastAPI (quando disponivel):"
+echo "  ssh $REMOTE_HOST 'tail -f $REMOTE_PATH/logs/app.log'"
 echo ""
-echo "Observabilidade:"
-echo "  Grafana staging: http://$REMOTE_HOST:3000"
+echo "Grafana staging: http://100.113.28.85:3001"
