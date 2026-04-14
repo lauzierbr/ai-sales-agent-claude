@@ -28,6 +28,8 @@ from src.catalog.types import (
     ResultadoBusca,
     StatusEnriquecimento,
 )
+from src.providers.auth import require_role
+from src.providers.db import get_session
 
 log = structlog.get_logger(__name__)
 
@@ -107,6 +109,7 @@ def _get_tenant_id(x_tenant_id: str = Header(..., alias="X-Tenant-ID")) -> str:
 async def trigger_crawl(
     tenant_id: str = Depends(_get_tenant_id),
     service: CatalogService = Depends(get_catalog_service),
+    _user: dict = Depends(require_role(["gestor"])),
 ) -> JSONResponse:
     """Dispara crawl completo do catálogo para o tenant informado.
 
@@ -478,3 +481,110 @@ async def painel_rejeitar(
     except ValueError:
         pass
     return RedirectResponse(url=f"/catalog/painel?tenant_id={tenant_id}", status_code=303)
+
+
+# ─────────────────────────────────────────────
+# JSON API — Scheduler de crawl
+# ─────────────────────────────────────────────
+
+
+@router.get("/schedule", response_class=JSONResponse)
+async def get_schedule(
+    request: Request,
+    _user: dict = Depends(require_role(["gestor"])),
+    session=Depends(get_session),
+) -> JSONResponse:
+    """Retorna configuração de schedule de crawl do tenant.
+
+    Requer JWT de gestor. Tenant extraído de request.state (TenantProvider).
+
+    Returns:
+        Schedule atual ou default se não configurado.
+    """
+    from sqlalchemy import text
+
+    tenant_id: str = getattr(request.state, "tenant_id", "")
+
+    result = await session.execute(
+        text(
+            "SELECT tenant_id, cron_expression, enabled, last_run_at, next_run_at "
+            "FROM crawl_schedule WHERE tenant_id = :tenant_id"
+        ),
+        {"tenant_id": tenant_id},
+    )
+    row = result.mappings().first()
+
+    if row is None:
+        return JSONResponse(
+            {
+                "tenant_id": tenant_id,
+                "cron_expression": "0 2 1 * *",
+                "enabled": True,
+                "last_run_at": None,
+                "next_run_at": None,
+            }
+        )
+
+    return JSONResponse(
+        {
+            "tenant_id": row["tenant_id"],
+            "cron_expression": row["cron_expression"],
+            "enabled": row["enabled"],
+            "last_run_at": row["last_run_at"].isoformat() if row["last_run_at"] else None,
+            "next_run_at": row["next_run_at"].isoformat() if row["next_run_at"] else None,
+        }
+    )
+
+
+@router.put("/schedule", response_class=JSONResponse)
+async def update_schedule(
+    request: Request,
+    _user: dict = Depends(require_role(["gestor"])),
+    session=Depends(get_session),
+) -> JSONResponse:
+    """Atualiza configuração de schedule de crawl do tenant.
+
+    Requer JWT de gestor. Valida expressão cron antes de salvar.
+
+    Body: {"cron_expression": "0 2 1 * *", "enabled": true}
+
+    Returns:
+        Schedule atualizado.
+
+    Raises:
+        HTTPException 422: se cron_expression inválida.
+    """
+    from sqlalchemy import text
+
+    from src.providers.scheduler import validate_cron
+
+    body = await request.json()
+    cron_expression: str = body.get("cron_expression", "0 2 1 * *")
+    enabled: bool = bool(body.get("enabled", True))
+    tenant_id: str = getattr(request.state, "tenant_id", "")
+
+    if not validate_cron(cron_expression):
+        raise HTTPException(status_code=422, detail="Expressão cron inválida")
+
+    await session.execute(
+        text("""
+            INSERT INTO crawl_schedule (id, tenant_id, cron_expression, enabled, created_at)
+            VALUES (gen_random_uuid()::text, :tenant_id, :cron_expression, :enabled, NOW())
+            ON CONFLICT (tenant_id) DO UPDATE SET
+                cron_expression = EXCLUDED.cron_expression,
+                enabled         = EXCLUDED.enabled
+        """),
+        {"tenant_id": tenant_id, "cron_expression": cron_expression, "enabled": enabled},
+    )
+    await session.commit()
+
+    log.info(
+        "crawl_schedule_atualizado",
+        tenant_id=tenant_id,
+        cron_expression=cron_expression,
+        enabled=enabled,
+    )
+
+    return JSONResponse(
+        {"tenant_id": tenant_id, "cron_expression": cron_expression, "enabled": enabled}
+    )

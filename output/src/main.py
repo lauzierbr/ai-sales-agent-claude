@@ -1,12 +1,14 @@
-"""Entry point da aplicação — FastAPI app com router do catálogo.
+"""Entry point da aplicação — FastAPI app com todos os domínios do Sprint 1.
 
-Sprint 0: apenas o domínio catalog está disponível.
-Sprint 1 adicionará: TenantProvider middleware, auth JWT, outros domínios.
+Sprint 0: catalog
+Sprint 1: TenantProvider middleware, auth JWT, tenants, agents, scheduler.
 """
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI
@@ -15,8 +17,28 @@ from fastapi.staticfiles import StaticFiles
 
 from src.catalog.ui import router as catalog_router
 from src.providers.telemetry import setup_telemetry
+from src.providers.tenant_context import TenantProvider
+from src.tenants.ui import auth_router, router as tenants_router
+from src.agents.ui import router as agents_router
 
 log = structlog.get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Gerencia ciclo de vida da aplicação — inicia e encerra scheduler."""
+    from src.providers.db import get_session_factory
+    from src.providers.scheduler import create_scheduler, start_scheduler_from_db
+
+    scheduler = create_scheduler()
+    await start_scheduler_from_db(scheduler, get_session_factory())
+
+    log.info("app_iniciada", versao="0.2.0")
+    yield
+
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+        log.info("scheduler_encerrado")
 
 
 def create_app() -> FastAPI:
@@ -26,10 +48,15 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Sales Agent",
         description="Agente de vendas B2B via WhatsApp para distribuidoras brasileiras",
-        version="0.1.0",
+        version="0.2.0",
+        lifespan=lifespan,
     )
 
-    # CORS — Sprint 1 restringirá por origem
+    # ─────────────────────────────────────────────
+    # Middleware
+    # ─────────────────────────────────────────────
+
+    # CORS — Sprint 1 ainda permissivo; Sprint 4 restringirá por origem
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -37,20 +64,35 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(catalog_router)
+    # TenantProvider — injeta tenant em todo request (exceto rotas excluídas)
+    app.add_middleware(TenantProvider)
 
-    # Serve imagens baixadas pelo crawler — /images/{tenant_id}/{codigo}.jpg
-    # Usa caminho absoluto relativo ao arquivo (independente de CWD)
+    # ─────────────────────────────────────────────
+    # Routers
+    # ─────────────────────────────────────────────
+
+    app.include_router(catalog_router)
+    app.include_router(auth_router)
+    app.include_router(tenants_router)
+    app.include_router(agents_router)
+
+    # ─────────────────────────────────────────────
+    # Static files — imagens do crawler
+    # ─────────────────────────────────────────────
+
     images_dir = Path(__file__).parent.parent / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")
 
+    # ─────────────────────────────────────────────
+    # Health check
+    # ─────────────────────────────────────────────
+
     @app.get("/health")
     async def health() -> dict[str, str]:
-        """Endpoint de health check."""
-        return {"status": "ok"}
+        """Endpoint de health check — excluído do TenantProvider."""
+        return {"status": "ok", "version": "0.2.0"}
 
-    log.info("app_iniciada", versao="0.1.0")
     return app
 
 

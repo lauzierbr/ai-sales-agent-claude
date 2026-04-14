@@ -1,0 +1,135 @@
+"""UI do domínio Agents — webhook Evolution API e identity router.
+
+Camada UI: importa tudo.
+POST /webhook/whatsapp excluído do TenantProvider (resolução via instancia_id).
+Decisão D022: validação HMAC-SHA256 + resposta 200 imediata + BackgroundTask.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import structlog
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from src.agents.service import validate_webhook_signature
+from src.agents.types import WebhookPayload
+
+log = structlog.get_logger(__name__)
+
+router = APIRouter(tags=["agents"])
+
+
+@router.post("/webhook/whatsapp")
+async def webhook_whatsapp(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> JSONResponse:
+    """Recebe webhook da Evolution API e processa em background.
+
+    Fluxo:
+    1. Lê body e valida HMAC-SHA256 (X-Evolution-Signature).
+    2. Retorna 200 imediatamente.
+    3. Background task: resolve tenant → persona → envia resposta.
+
+    Returns:
+        {"status": "received"}
+
+    Raises:
+        HTTPException 403: se assinatura ausente ou inválida.
+    """
+    body = await request.body()
+
+    # Valida assinatura HMAC
+    signature = request.headers.get("X-Evolution-Signature", "")
+    if not signature or not validate_webhook_signature(body, signature):
+        log.warning("webhook_assinatura_invalida", path=str(request.url.path))
+        raise HTTPException(status_code=403, detail="Assinatura inválida")
+
+    # Parse payload (falha silenciosa — não retorna 422 para Evolution API)
+    try:
+        payload = WebhookPayload.model_validate_json(body)
+    except Exception as exc:
+        log.warning("webhook_payload_invalido", error=str(exc))
+        return JSONResponse({"status": "received"})
+
+    # Processamento em background — resposta não é bloqueada
+    background_tasks.add_task(_process_message, payload.model_dump())
+
+    return JSONResponse({"status": "received"})
+
+
+async def _process_message(payload_dict: dict) -> None:
+    """Background task: resolve tenant e persona, envia resposta do agente.
+
+    Cria própria sessão de DB (request session pode estar fechada).
+
+    Args:
+        payload_dict: payload serializado como dict para evitar problemas de serialização.
+    """
+    from src.agents.runtime.agent_cliente import AgentCliente
+    from src.agents.runtime.agent_rep import AgentDesconhecido, AgentRep
+    from src.agents.service import IdentityRouter, get_instancia, parse_mensagem
+    from src.agents.types import Persona, WebhookPayload
+    from src.providers.db import get_session_factory
+    from src.tenants.repo import TenantRepo
+
+    factory = get_session_factory()
+
+    try:
+        payload = WebhookPayload.model_validate(payload_dict)
+    except Exception as exc:
+        log.error("process_message_parse_erro", error=str(exc))
+        return
+
+    async with factory() as session:
+        # 1. Resolve tenant via instancia
+        instancia = await get_instancia(payload.instance, session)
+        if instancia is None:
+            log.warning("instancia_nao_encontrada", instancia_id=payload.instance)
+            return
+
+        tenant_id = instancia.tenant_id
+
+        # 2. Busca tenant para personalização
+        tenant_repo = TenantRepo()
+        tenant = await tenant_repo.get_by_id(tenant_id, session)
+        if tenant is None:
+            log.warning("tenant_nao_encontrado", tenant_id=tenant_id)
+            return
+
+        # 3. Parseia mensagem
+        try:
+            mensagem = parse_mensagem(payload)
+        except Exception as exc:
+            log.error("parse_mensagem_erro", tenant_id=tenant_id, error=str(exc))
+            return
+
+        # 4. Resolve persona
+        identity_router = IdentityRouter()
+        persona = await identity_router.resolve(mensagem, tenant_id, session)
+
+        # Log com número hasheado (LGPD)
+        from_hash = hashlib.sha256(mensagem.de.encode()).hexdigest()
+        log.info(
+            "webhook_recebido",
+            tenant_id=tenant_id,
+            persona=persona.value,
+            from_number_hash=from_hash,
+        )
+
+        # 5. Chama agente correspondente
+        try:
+            if persona == Persona.CLIENTE_B2B:
+                await AgentCliente().responder(mensagem, tenant, session)
+            elif persona == Persona.REPRESENTANTE:
+                await AgentRep().responder(mensagem, tenant, session)
+            else:
+                await AgentDesconhecido().responder(mensagem, tenant, session)
+        except Exception as exc:
+            log.error(
+                "agent_resposta_erro",
+                tenant_id=tenant_id,
+                persona=persona.value,
+                error=str(exc),
+            )

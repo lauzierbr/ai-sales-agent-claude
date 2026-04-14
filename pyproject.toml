@@ -35,6 +35,13 @@ dependencies = [
     # Config
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
+    # Auth
+    "PyJWT>=2.8.0",
+    "bcrypt>=4.0.0",
+    # Scheduler
+    "apscheduler>=3.10.0",
+    # Cache / locks
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]

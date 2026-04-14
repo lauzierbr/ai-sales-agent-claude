@@ -6,7 +6,7 @@ Todos os testes são @pytest.mark.unit — sem I/O real.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -21,6 +21,30 @@ from src.catalog.types import (
 )
 from src.main import app
 from src.catalog.ui import get_catalog_service
+
+# ─────────────────────────────────────────────
+# Fixture de middleware de tenant — Sprint 1
+# Patch _get_tenant para evitar hit em Redis/DB nos testes unitários.
+# ─────────────────────────────────────────────
+
+_TENANT_JMB = {
+    "id": "jmb",
+    "nome": "JMB Distribuidora",
+    "cnpj": "00.000.000/0001-00",
+    "ativo": True,
+    "whatsapp_number": None,
+    "config_json": {},
+}
+
+
+@pytest.fixture(autouse=True)
+def patch_tenant_middleware():
+    """Substitui _get_tenant por AsyncMock retornando tenant JMB em todos os testes deste módulo."""
+    with patch(
+        "src.providers.tenant_context._get_tenant",
+        new=AsyncMock(return_value=_TENANT_JMB),
+    ):
+        yield
 
 
 def make_mock_service(produto_fixture: Produto) -> AsyncMock:
@@ -78,17 +102,24 @@ async def test_listar_produtos_retorna_200(
 
 
 @pytest.mark.unit
-async def test_listar_produtos_sem_header_retorna_422(
+async def test_listar_produtos_sem_header_retorna_401(
     produto_fixture: Produto,
 ) -> None:
-    """GET /catalog/produtos sem X-Tenant-ID deve retornar 422."""
-    # FastAPI resolve dependencies mesmo para erros 422 — precisamos de override
+    """GET /catalog/produtos sem X-Tenant-ID retorna 401 (TenantProvider — Sprint 1).
+
+    Sprint 0 esperava 422 (FastAPI validation). Sprint 1 adiciona TenantProvider
+    que intercepta antes e retorna 401 (D022: middleware de tenant obrigatório).
+    """
     mock_service = make_mock_service(produto_fixture)
     app.dependency_overrides[get_catalog_service] = lambda: mock_service
     try:
-        async with make_client() as client:
-            response = await client.get("/catalog/produtos")
-        assert response.status_code == 422
+        with patch(
+            "src.providers.tenant_context._get_tenant",
+            new=AsyncMock(return_value=None),
+        ):
+            async with make_client() as client:
+                response = await client.get("/catalog/produtos")
+        assert response.status_code == 401
     finally:
         app.dependency_overrides.clear()
 
@@ -218,7 +249,10 @@ async def test_painel_retorna_html(
         with patch("src.catalog.ui.templates") as mock_templates:
             mock_templates.TemplateResponse.return_value = mock_response
             async with make_client() as client:
-                response = await client.get("/catalog/painel?tenant_id=jmb")
+                response = await client.get(
+                    "/catalog/painel?tenant_id=jmb",
+                    headers={"X-Tenant-ID": "jmb"},
+                )
 
         assert response.status_code == 200
         assert "text/html" in response.headers.get("content-type", "")
@@ -252,5 +286,67 @@ async def test_aprovar_produto_retorna_produto(
         assert response.status_code == 200
         data = response.json()
         assert data["codigo_externo"] == "SKU001"
+    finally:
+        app.dependency_overrides.clear()
+
+
+# ─────────────────────────────────────────────
+# POST /catalog/crawl — A9: exige JWT de gestor
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_crawl_sem_jwt_retorna_401(
+    produto_fixture: Produto,
+    tenant_id: str,
+) -> None:
+    """A9: POST /catalog/crawl sem Authorization header retorna 401."""
+    import os
+    os.environ.setdefault("JWT_SECRET", "secret-de-teste-com-32-caracteres-ok")
+
+    mock_service = make_mock_service(produto_fixture)
+    app.dependency_overrides[get_catalog_service] = lambda: mock_service
+
+    try:
+        async with make_client() as client:
+            response = await client.post(
+                "/catalog/crawl",
+                params={"tenant_id": tenant_id},
+                headers={
+                    "X-Tenant-ID": tenant_id,
+                    # sem Authorization header
+                },
+            )
+        assert response.status_code == 401
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.unit
+async def test_crawl_role_cliente_retorna_403(
+    produto_fixture: Produto,
+    tenant_id: str,
+) -> None:
+    """A9: POST /catalog/crawl com JWT de role=cliente retorna 403."""
+    import os
+    os.environ.setdefault("JWT_SECRET", "secret-de-teste-com-32-caracteres-ok")
+
+    from src.providers.auth import create_access_token
+
+    token = create_access_token("u1", tenant_id, "cliente", expire_hours=1)
+    mock_service = make_mock_service(produto_fixture)
+    app.dependency_overrides[get_catalog_service] = lambda: mock_service
+
+    try:
+        async with make_client() as client:
+            response = await client.post(
+                "/catalog/crawl",
+                params={"tenant_id": tenant_id},
+                headers={
+                    "X-Tenant-ID": tenant_id,
+                    "Authorization": f"Bearer {token}",
+                },
+            )
+        assert response.status_code == 403
     finally:
         app.dependency_overrides.clear()

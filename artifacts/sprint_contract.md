@@ -1,167 +1,191 @@
-# Sprint Contract — Sprint 0 — Catálogo
+# Sprint Contract — Sprint 1 — Infraestrutura da Aplicação
 
-**Proposto por:** Generator  
-**Data:** 2026-04-13  
-**Referência:** `artifacts/spec.md`  
-**Status:** Aguardando ACEITO do Evaluator
+**Status:** ACEITO
+**Data:** 2026-04-14
 
 ---
 
-## Escopo acordado
+## Entregas comprometidas
 
-Pipeline completo de catálogo: crawler Playwright (EFOS/JMB), enriquecimento Claude Haiku, pgvector embeddings, upload Excel preços diferenciados, FastAPI JSON API + painel Jinja2.
-
-**Fora de escopo deste contrato:** autenticação JWT, scheduler de crawl, segundo tenant, API Bling.
-
----
-
-## Critérios de Alta — Bloqueantes (todos devem PASS)
-
-### A1 — Arquitetura: camadas sem violações
-**Comando:**
-```bash
-cd /Users/lauzier/MyRepos/ai-sales-agent-claude
-PYTHONPATH=output lint-imports
-```
-**PASS:** saída contém `"No contracts violated"` ou similar, exit code 0.  
-**FAIL:** qualquer violação de contrato listada, exit code ≠ 0.  
-**Nota:** `CatalogService` NÃO pode importar de `catalog.runtime.*`. Injeção via `EnricherProtocol` de `catalog.types`.
-
-### A2 — Segurança: zero secrets hardcoded
-**Comando:**
-```bash
-grep -rn "sk-ant\|api_key\s*=\s*['\"][a-zA-Z0-9]\|CRAWLER_PASS\s*=\s*['\"\|password\s*=\s*['\"][a-zA-Z0-9]" output/src/ --exclude-dir=tests
-```
-**PASS:** zero linhas de output.  
-**FAIL:** qualquer match fora de `tests/` — bloqueante imediato, arquivo:linha reportado.  
-**Nota (Evaluator):** diretório `tests/` excluído para evitar falso positivo em fixtures sintéticas. Se match em `tests/`, revisar manualmente se é dado real ou mock.
-
-### A3 — Isolamento de tenant: todo método do Repo tem `tenant_id`
-**Verificação dupla:**
-
-_3a. grep estrutural:_
-```bash
-grep -n "async def " output/src/catalog/repo.py | grep -v "tenant_id"
-```
-**PASS:** zero linhas (todo método async tem `tenant_id` na assinatura).
-
-_3b. teste unitário obrigatório:_
-```bash
-pytest -m unit -k "test_buscar_semantico_tenant_isolation or test_repo_tenant_isolation" -v
-```
-**PASS:** ambos os testes PASSED.  
-**Nota:** `test_buscar_semantico_tenant_isolation` chama `service.buscar_semantico` com `"jmb"` e depois `"outro_tenant"`, verifica que `mock_repo.buscar_por_embedding.call_args_list[0].kwargs["tenant_id"] == "jmb"` e `[1]... == "outro_tenant"`.
-
-### A4 — Testes unitários passam sem I/O real
-**Comando:**
-```bash
-cd /Users/lauzier/MyRepos/ai-sales-agent-claude
-infisical run --env=dev -- pytest -m unit -v --tb=short output/src/tests/unit/
-```
-**PASS:** `0 failed`, `0 error`. Ausência de `asyncpg.exceptions`, `ConnectionRefusedError`, `aiohttp.ClientError` no output (indicaria I/O acidental).  
-**FAIL:** qualquer teste FAILED/ERROR, ou presença de erros de conexão.
-
-### A5 — Endpoint GET /catalog/produtos responde 200
-**Comando:**
-```bash
-pytest -m unit -k "test_listar_produtos_retorna_200" -v --tb=short
-```
-**PASS:** PASSED. O teste usa `httpx.AsyncClient` com `app.dependency_overrides[get_catalog_service]` injetando mock.  
-**Cenário coberto:** header `X-Tenant-ID: jmb` presente → 200. Header ausente → 422 (validação FastAPI).
-
-### A6 — Endpoint POST /catalog/busca retorna ResultadoBusca
-**Comando:**
-```bash
-pytest -m unit -k "test_busca_semantica_retorna_resultado" -v --tb=short
-```
-**PASS:** PASSED. Resposta JSON tem lista com objetos contendo `produto` (objeto com `id`, `nome`) e `score` (float entre 0 e 1).
-
-### A7 — Upload Excel retorna ExcelUploadResult
-**Comando:**
-```bash
-pytest -m unit -k "test_upload_precos_excel" -v --tb=short
-```
-**PASS:** PASSED. Fixture `output/src/tests/fixtures/precos_teste.xlsx` com 3 linhas válidas (1 com CNPJ com pontuação, 1 sem) + 1 linha inválida (CNPJ ausente). Resultado: `linhas_processadas=4`, `inseridos+atualizados=3`, `len(erros)==1`.
-
-### A8 — Zero print() no código fonte
-**Comando:**
-```bash
-grep -rn "print(" output/src/
-```
-**PASS:** zero linhas de output.  
-**FAIL:** qualquer match — arquivo:linha reportado, log deve usar `structlog.get_logger()`.
-
-### A9 — mypy --strict sem erros
-**Comando:**
-```bash
-mypy --strict output/src/catalog/ --exclude "output/src/catalog/runtime/crawler/efos.py"
-```
-**PASS:** `Success: no issues found`.  
-**Nota:** `efos.py` excluído porque Playwright não tem stubs mypy. A exclusão deve ser registrada como tech debt em `docs/exec-plans/tech-debt.md`.  
-**FAIL:** qualquer erro em arquivos não excluídos.
+1. `output/src/providers/tenant_context.py` — `TenantProvider(BaseHTTPMiddleware)` com cache Redis TTL 60s; rotas excluídas listadas explicitamente
+2. `output/src/providers/auth.py` — `create_access_token`, `decode_token`, `get_current_user`, `require_role`; PyJWT + HS256 + bcrypt
+3. `output/src/providers/scheduler.py` — `AsyncIOScheduler`; não inicia se `ENVIRONMENT == "test"`
+4. `output/src/tenants/types.py` — `Tenant`, `Usuario`, `Role` (enum)
+5. `output/src/tenants/config.py` — `TenantConfig`
+6. `output/src/tenants/repo.py` — `TenantRepo` + `UsuarioRepo` com `tenant_id` obrigatório em queries
+7. `output/src/tenants/service.py` — `TenantService.provision_tenant`
+8. `output/src/tenants/ui.py` — `GET /tenants`, `GET /tenants/{id}`, `POST /tenants`
+9. `output/src/agents/types.py` — `Mensagem`, `Persona` (enum), `WebhookPayload`
+10. `output/src/agents/config.py` — `AgentConfig`, `EvolutionConfig`
+11. `output/src/agents/service.py` — `IdentityRouter.resolve` (stub → DESCONHECIDO) + `send_whatsapp_message`
+12. `output/src/agents/ui.py` — `POST /webhook/whatsapp` com validação HMAC-SHA256 + `BackgroundTasks`
+13. `output/src/agents/runtime/agent_cliente.py` — `AgentCliente.responder`
+14. `output/src/agents/runtime/agent_rep.py` — `AgentRep.responder`
+15. `output/src/catalog/runtime/scheduler_job.py` — `run_crawl_for_tenant` com Redis SETNX lock
+16. `output/src/catalog/ui.py` — atualizado: `POST /catalog/crawl` exige `require_role(["gestor"])`; adiciona `GET /catalog/schedule`, `PUT /catalog/schedule`
+17. `output/src/main.py` — atualizado: middleware TenantProvider, lifespan com scheduler, routers tenants e agents
+18. `output/alembic/versions/0002_tenants_usuarios.py` — tabelas `tenants` + `usuarios` + seed JMB (condicional se env var presente)
+19. `output/alembic/versions/0003_crawl_schedule.py` — tabela `crawl_schedule`
+20. `output/alembic/versions/0004_whatsapp_instancias.py` — tabela `whatsapp_instancias`
+21. `output/scripts/provision_tenant.py` — CLI argparse para provisionar tenant via `TenantService`
+22. Suite de testes unitários para todas as entregas acima (≥ 40 novos testes)
+23. `output/src/tests/integration/tenants/test_isolation.py` — testes de isolamento multi-tenant
 
 ---
 
-## Critérios de Média — Não bloqueantes individualmente (threshold: falha em ≤ 1)
+## Critérios de aceitação — Alta (bloqueantes)
 
-### M1 — OTel spans em todo o Service
-**Verificação:**
-```bash
-python3 -c "
-import ast, sys
-src = open('output/src/catalog/service.py').read()
-tree = ast.parse(src)
-funcs = [n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and not n.name.startswith('_')]
-# verificar que cada função tem 'tracer' no corpo
-print('Funções públicas:', funcs)
-"
-```
-**PASS:** todas as funções públicas têm `tracer.start_as_current_span` no corpo — verificado via grep complementar:
-```bash
-grep -c "start_as_current_span" output/src/catalog/service.py
-```
-Valor ≥ número de funções públicas (mínimo 6: `salvar_produto_bruto`, `enriquecer_produto`, `gerar_e_salvar_embedding`, `buscar_semantico`, `processar_excel_precos`, `aprovar_produto`, `rejeitar_produto`).
+**A1. import-linter — zero violações de camadas**
+Teste: `lint-imports` na raiz do projeto
+Evidência esperada: saída contendo `Kept` para todos os contratos definidos; zero linhas `Broken`
 
-### M2 — Docstrings nos métodos públicos
-**Verificação:**
+**A2. Sem secrets hardcoded**
+Teste:
 ```bash
-python3 -m pydocstyle output/src/catalog/service.py output/src/catalog/repo.py --convention=google 2>&1 | head -20
+grep -r --include="*.py" \
+  -E "(password|secret|api_key|apikey)\s*=\s*['\"][^'\"]{4,}" \
+  output/src/ \
+  --exclude-dir=tests
 ```
-**PASS:** zero erros de docstring ausente (D100, D101, D102, D103).
+Evidência esperada: saída vazia (zero matches)
 
-### M3 — Cobertura mínima
-**Comando:**
+**A3. tenant_id obrigatório — verificado via teste unitário dedicado**
+Teste: `pytest -m unit -k "test_todo_metodo_repo_tem_tenant_id"`
+Evidência esperada: `PASSED`; teste valida via inspeção de assinatura (usando `inspect.signature`) que todos os métodos públicos de `TenantRepo` e `UsuarioRepo` que executam queries recebem `tenant_id: str` como parâmetro posicional ou keyword; zero métodos sem o parâmetro
+
+**A4. pytest -m unit — 100% dos testes passam**
+Teste: `pytest -m unit -v`
+Evidência esperada: `0 failed, 0 error` — profundidade garantida pelos thresholds de cobertura M4 e M5
+
+**A5. TenantProvider: tenant inválido → HTTP 401**
+Teste: `pytest -m unit -k "test_tenant_invalido_retorna_401"`
+Evidência esperada: `PASSED`; resposta com status 401 e body `{"detail": "Tenant inválido ou inativo"}`
+
+**A6. TenantProvider: rota excluída passa sem header X-Tenant-ID**
+Teste: `pytest -m unit -k "test_rota_excluida_sem_tenant"`
+Evidência esperada: `PASSED`; requests para `/health` e `/auth/login` sem header X-Tenant-ID retornam 200/422 (nunca 401 do middleware)
+
+**A7. Auth: token expirado → HTTP 401**
+Teste: `pytest -m unit -k "test_token_expirado_retorna_401"`
+Evidência esperada: `PASSED`; token com `exp` no passado retorna 401
+
+**A8. Auth: role insuficiente → HTTP 403**
+Teste: `pytest -m unit -k "test_role_insuficiente_retorna_403"`
+Evidência esperada: `PASSED`; token com role `cliente` em endpoint `require_role(["gestor"])` retorna 403
+
+**A9. POST /catalog/crawl exige JWT de gestor**
+Teste: `pytest -m unit -k "test_crawl_sem_jwt_retorna_401 or test_crawl_role_cliente_retorna_403"`
+Evidência esperada: ambos `PASSED`
+
+**A10. Webhook: assinatura HMAC inválida → HTTP 403**
+Teste: `pytest -m unit -k "test_webhook_assinatura_invalida_retorna_403"`
+Evidência esperada: `PASSED`; header `X-Evolution-Signature` com valor incorreto retorna 403
+
+**A11. Webhook: header ausente → HTTP 403**
+Teste: `pytest -m unit -k "test_webhook_sem_header_retorna_403"`
+Evidência esperada: `PASSED`
+
+**A12. Webhook: assinatura válida → HTTP 200 imediato**
+Teste: `pytest -m unit -k "test_webhook_valido_retorna_200"`
+Evidência esperada: `PASSED`; resposta `{"status": "received"}` com status 200; processamento em BackgroundTask (não bloqueia resposta)
+
+**A13. Scheduler não inicia com ENVIRONMENT=test**
+Teste: `pytest -m unit -k "test_scheduler_nao_inicia_em_test"`
+Evidência esperada: `PASSED`; `AsyncIOScheduler.start` nunca chamado quando `ENVIRONMENT == "test"`
+
+**A14. Sem print() em output/src/**
+Teste:
 ```bash
-infisical run --env=dev -- pytest -m unit --cov=output/src/catalog --cov-report=term-missing --cov-fail-under=70
+grep -r --include="*.py" "print(" output/src/ --exclude-dir=tests
 ```
-**PASS:** cobertura geral ≥ 70%. Breakdowns esperados: `service.py` ≥ 80%, `repo.py` ≥ 60%.  
-**Nota:** `runtime/crawler/efos.py` pode ter cobertura baixa — headless Playwright não roda em CI.
+Evidência esperada: saída vazia
+
+**A15. Isolamento multi-tenant — dois níveis de verificação**
+Teste 1: `pytest -m unit -k "test_isolamento"` — lógica de isolamento via mock
+Evidência: `PASSED`; mock de `CatalogRepo` confirma que query com `tenant_id="TESTE"` não retorna dado inserido com `tenant_id="JMB"`
+
+Teste 2:
+```bash
+grep -c "@pytest.mark.integration" \
+  output/src/tests/integration/tenants/test_isolation.py
+```
+Evidência: retorna `2` ou mais (arquivo existe e tem ≥ 2 testes de integração marcados corretamente)
 
 ---
 
-## Evidências obrigatórias para APROVADO
+## Critérios de aceitação — Média (não bloqueantes individualmente)
 
-O Generator deve incluir no relatório de auto-avaliação:
+**M1. mypy --strict sem erros**
+Teste: `mypy --strict output/src/`
+Evidência esperada: `Found 0 errors`
 
-1. Saída completa de `lint-imports` (A1)
-2. Output (vazio) de grep de secrets (A2)
-3. Output (vazio) de grep de `print(` (A8)
-4. Saída de `pytest -m unit -v` (A4) — últimas 30 linhas
-5. Saída de `mypy --strict` (A9)
-6. Saída de coverage (M3)
+**M2. OTel spans em funções de Service e scheduler_job**
+Teste: inspeção manual de `tenants/service.py`, `agents/service.py`, `catalog/runtime/scheduler_job.py`
+Evidência esperada: toda função pública de Service tem `tracer.start_as_current_span(...)` com atributo `tenant_id`; scheduler_job tem span `crawler_scheduled_run`
+
+**M3. structlog com from_number_hash (SHA256) no webhook**
+Teste: inspeção manual de `agents/ui.py`
+Evidência esperada: log `webhook_recebido` contém campo `from_number_hash` (SHA256 do número de telefone) e NÃO contém o número em plaintext; todos os eventos do scheduler logados via structlog
+
+**M4. Cobertura ≥ 80% em providers/auth.py e agents/service.py**
+Teste: `pytest -m unit --cov=output/src/providers/auth --cov=output/src/agents/service --cov-report=term-missing`
+Evidência esperada: ambos os módulos com linha `TOTAL` ≥ 80%
+
+**M5. Cobertura ≥ 60% em tenants/repo.py e providers/tenant_context.py**
+Teste: `pytest -m unit --cov=output/src/tenants/repo --cov=output/src/providers/tenant_context --cov-report=term-missing`
+Evidência esperada: ambos com `TOTAL` ≥ 60%
+
+**M6. Docstrings em todas as funções públicas de Service e Repo**
+Teste: inspeção manual de `tenants/service.py`, `tenants/repo.py`, `agents/service.py`
+Evidência esperada: toda função pública tem docstring de ao menos uma linha
 
 ---
 
-## Protocolo de falha
+## Threshold de Média
 
-- **REPROVADO 1ª vez:** Evaluator entrega `artifacts/qa_sprint_0_r1.md` com `REPROVADO`, arquivo:linha:causa de cada falha. Generator tem **1 rodada** de correção.
-- **REPROVADO 2ª vez:** Evaluator entrega `artifacts/qa_sprint_0_r2.md`. **NÃO contatar Generator.** Escalar para o usuário com tabela comparativa r1 vs r2.
+Máximo de falhas de Média permitidas: **1 de 6**
+
+Se 2 ou mais critérios de Média falharem, o sprint é reprovado mesmo com todos os de Alta passando.
 
 ---
 
-## Assinatura
+## Fora do escopo deste contrato
 
-| Parte | Status | Data |
-|-------|--------|------|
-| Generator | Proposto | 2026-04-13 |
-| Evaluator | **ACEITO** | 2026-04-13 |
+O Evaluator **não** testa neste sprint:
+- AgentCliente com Claude SDK real (stub de resposta fixa é o comportamento correto em Sprint 1)
+- Execução real do crawler pelo scheduler (lógica testada via mock)
+- Envio real de mensagem via Evolution API (100% mockado nos testes unit)
+- Lookup real de `representantes` e `clientes_b2b` (IdentityRouter retorna DESCONHECIDO — correto para Sprint 1)
+- Refresh token JWT
+- Rate limiting Redis por tenant
+- HTTPS/TLS
+- Migração de dados do Sprint 0
+
+---
+
+## Ambiente de testes
+
+```
+pytest -m unit        → roda no container do Evaluator (zero I/O externo)
+                        PostgreSQL, Redis, Evolution API: todos mockados
+                        Requerido: 100% pass, 0 falhas
+
+pytest -m integration → NÃO roda no container do Evaluator
+                        Requer mac-lablz com PostgreSQL + Redis ativos
+                        Validado manualmente após aprovação do Evaluator
+
+pytest -m slow        → nunca roda no loop automático
+```
+
+**Regra crítica:** teste marcado como `unit` que realizar conexão TCP, acesso a arquivo fora de `/tmp` ou chamada HTTP real é tratado como **falha de Alta**, independentemente do resultado.
+
+---
+
+## Notas de implementação (binding para o Generator)
+
+1. **Ordem de implementação:** E1 → E2 → E3 → E4 → E7 → E5 → E6
+2. **Seed JMB na migration 0002:** lê `GESTOR_PASSWORD_JMB` de `os.getenv`; se ausente, pula seed com `structlog.warning` (não falha a migration)
+3. **Cache Redis no TenantProvider:** chave `tenant:{tenant_id}`, TTL 60s, JSON; se Redis indisponível → fallback direto no DB sem erro
+4. **bcrypt rounds:** produção `rounds=12`; testes unit injetam `rounds=4` via parâmetro de `create_access_token`
+5. **APScheduler + uvicorn --reload:** `scheduler.start()` apenas dentro de `lifespan`; condicionado a `ENVIRONMENT != "test"`
+6. **IdentityRouter interface:** `async def resolve(self, mensagem: Mensagem, tenant_id: str, session: AsyncSession) -> Persona`

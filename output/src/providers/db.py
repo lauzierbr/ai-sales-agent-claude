@@ -76,3 +76,27 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     factory = get_session_factory()
     async with factory() as session:
         yield session
+
+
+# ─────────────────────────────────────────────
+# Redis — singleton lazy para cache e locks
+# ─────────────────────────────────────────────
+
+import redis.asyncio as aioredis  # noqa: E402
+
+_redis_client: aioredis.Redis | None = None  # type: ignore[type-arg]
+
+
+def get_redis() -> aioredis.Redis:  # type: ignore[type-arg]
+    """Retorna (ou cria) o cliente Redis singleton.
+
+    Lê REDIS_URL do Infisical. Se indisponível, caller deve tratar exceção.
+
+    Returns:
+        Cliente Redis assíncrono.
+    """
+    global _redis_client
+    if _redis_client is None:
+        url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        _redis_client = aioredis.from_url(url, decode_responses=True)
+    return _redis_client

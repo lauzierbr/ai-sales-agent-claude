@@ -21,6 +21,7 @@ from src.catalog.types import (
     ResultadoBusca,
     StatusEnriquecimento,
 )
+from src.tenants.types import Role, Tenant, Usuario
 
 
 # ─────────────────────────────────────────────
@@ -145,6 +146,47 @@ def mock_enricher() -> AsyncMock:
     """Mock do EnricherProtocol para testes unitários de Service."""
     mock = AsyncMock(spec=EnricherProtocol)
     return mock
+
+
+@pytest.fixture
+def tenant_fixture() -> Tenant:
+    """Tenant JMB para testes de integração e service."""
+    return Tenant(
+        id="jmb",
+        nome="JMB Distribuidora",
+        cnpj="00.000.000/0001-00",
+        ativo=True,
+        whatsapp_number="5519999990000",
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+@pytest.fixture
+def usuario_gestor_fixture(tenant_id: str) -> Usuario:
+    """Usuário gestor para testes — senha não hasheada (use bcrypt_rounds=4 em testes)."""
+    return Usuario(
+        id="u-gestor-01",
+        tenant_id=tenant_id,
+        cnpj="11.222.333/0001-44",
+        senha_hash="$2b$04$placeholder",
+        role=Role.gestor,
+        ativo=True,
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+@pytest.fixture
+def usuario_rep_fixture(tenant_id: str) -> Usuario:
+    """Usuário representante para testes."""
+    return Usuario(
+        id="u-rep-01",
+        tenant_id=tenant_id,
+        cnpj="55.666.777/0001-88",
+        senha_hash="$2b$04$placeholder",
+        role=Role.rep,
+        ativo=True,
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
 
 
 @pytest.fixture
