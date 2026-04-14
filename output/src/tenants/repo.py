@@ -6,6 +6,7 @@ Toda função pública recebe tenant_id (onde aplicável) como parâmetro obriga
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -45,7 +46,7 @@ class TenantRepo:
             cnpj=row["cnpj"],
             ativo=row["ativo"],
             whatsapp_number=row["whatsapp_number"],
-            config_json=row["config_json"] or {},
+            config_json=json.loads(row["config_json"] or "{}"),
             criado_em=row["criado_em"],
         )
 
@@ -70,7 +71,7 @@ class TenantRepo:
                 cnpj=r["cnpj"],
                 ativo=r["ativo"],
                 whatsapp_number=r["whatsapp_number"],
-                config_json=r["config_json"] or {},
+                config_json=json.loads(r["config_json"] or "{}"),
                 criado_em=r["criado_em"],
             )
             for r in rows

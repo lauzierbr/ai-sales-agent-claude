@@ -84,10 +84,10 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 import redis.asyncio as aioredis  # noqa: E402
 
-_redis_client: aioredis.Redis | None = None  # type: ignore[type-arg]
+_redis_client: aioredis.Redis | None = None
 
 
-def get_redis() -> aioredis.Redis:  # type: ignore[type-arg]
+def get_redis() -> aioredis.Redis:
     """Retorna (ou cria) o cliente Redis singleton.
 
     Lê REDIS_URL do Infisical. Se indisponível, caller deve tratar exceção.

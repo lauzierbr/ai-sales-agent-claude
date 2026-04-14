@@ -50,12 +50,13 @@ def upgrade() -> None:
         sa.UniqueConstraint("tenant_id"),
     )
 
-    # Seed: schedule default para JMB
+    # Seed: schedule default para JMB — só insere se JMB existir na tabela tenants
     conn = op.get_bind()
     conn.execute(
         sa.text("""
             INSERT INTO crawl_schedule (id, tenant_id, cron_expression, enabled, created_at)
-            VALUES (gen_random_uuid()::text, 'jmb', '0 2 1 * *', true, NOW())
+            SELECT gen_random_uuid()::text, 'jmb', '0 2 1 * *', true, NOW()
+            WHERE EXISTS (SELECT 1 FROM tenants WHERE id = 'jmb')
             ON CONFLICT (tenant_id) DO NOTHING
         """)
     )

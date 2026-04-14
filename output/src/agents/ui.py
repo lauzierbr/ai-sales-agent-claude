@@ -8,6 +8,8 @@ Decisão D022: validação HMAC-SHA256 + resposta 200 imediata + BackgroundTask.
 from __future__ import annotations
 
 import hashlib
+from typing import Any
+
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -59,7 +61,7 @@ async def webhook_whatsapp(
     return JSONResponse({"status": "received"})
 
 
-async def _process_message(payload_dict: dict) -> None:
+async def _process_message(payload_dict: dict[str, Any]) -> None:
     """Background task: resolve tenant e persona, envia resposta do agente.
 
     Cria própria sessão de DB (request session pode estar fechada).

@@ -6,6 +6,7 @@ Critério A13: scheduler não inicia quando ENVIRONMENT=test.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -98,7 +99,7 @@ async def test_crawl_pula_se_lock_ja_adquirido() -> None:
     async def mock_acquire(lock_key: str) -> bool:
         return False  # lock já existe
 
-    async def mock_execute(tenant_id, sf):
+    async def mock_execute(tenant_id: str, sf: Any) -> None:
         execute_calls.append(tenant_id)
 
     with (
@@ -122,7 +123,7 @@ async def test_crawl_executa_se_lock_disponivel() -> None:
     async def mock_acquire(lock_key: str) -> bool:
         return True  # lock adquirido
 
-    async def mock_execute(tenant_id, sf):
+    async def mock_execute(tenant_id: str, sf: Any) -> None:
         execute_calls.append(tenant_id)
 
     with (
@@ -146,10 +147,10 @@ async def test_crawl_libera_lock_mesmo_com_erro() -> None:
     async def mock_acquire(lock_key: str) -> bool:
         return True
 
-    async def mock_execute(tenant_id, sf):
+    async def mock_execute(tenant_id: str, sf: Any) -> None:
         raise RuntimeError("falha simulada do crawler")
 
-    async def mock_release(lock_key: str):
+    async def mock_release(lock_key: str) -> None:
         locks_liberados.append(lock_key)
 
     with (

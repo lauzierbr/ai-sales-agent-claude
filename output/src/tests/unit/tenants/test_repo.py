@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -41,7 +42,7 @@ def _make_usuario(tenant_id: str = "jmb") -> Usuario:
     )
 
 
-def _make_row(data: dict) -> MagicMock:
+def _make_row(data: dict[str, Any]) -> MagicMock:
     """Cria mock de row de resultado SQLAlchemy."""
     row = MagicMock()
     row.__getitem__ = lambda self, key: data[key]

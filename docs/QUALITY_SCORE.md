@@ -29,7 +29,7 @@ Escala: ✅ Completo | 🟡 Parcial | 🔲 Não iniciado | ❌ Com débito
 | Isolamento de tenant testado | ✅ | 4 testes @integration + mocks (Sprint 1) |
 | Cobertura de testes > 76% | 🟡 | 76% (Sprint 1); meta 80%+ Sprint 2 |
 | Secrets via Infisical (0 hardcode) | ✅ | Verificado Sprint 1 |
-| mypy --strict | ❌ | 66 erros (tipo debt) — Sprint 2 |
+| mypy --strict | ✅ | 0 erros — resolvido na homologação Sprint 1 |
 | Docs sincronizadas com código | 🟡 | ADRs D019-D022 atualizados (Sprint 5 doc-gardening) |
 
 ## Tech debt tracker
@@ -37,4 +37,4 @@ Escala: ✅ Completo | 🟡 Parcial | 🔲 Não iniciado | ❌ Com débito
 Ver docs/exec-plans/tech-debt-tracker.md
 
 ---
-Atualizado por: Evaluator | Sprint: 1 | Data: 2026-04-14
+Atualizado por: Generator (homologação) | Sprint: 1 | Data: 2026-04-14

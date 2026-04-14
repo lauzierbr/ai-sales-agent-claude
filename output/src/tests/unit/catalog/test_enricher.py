@@ -74,7 +74,7 @@ async def test_enriquecer_remove_markdown_do_json(
             from src.catalog.runtime.enricher import EnricherAgent
             enricher = EnricherAgent()
             # Substituímos o _client pelo mock criado acima
-            enricher._client = mock_client  # type: ignore[assignment]
+            enricher._client = mock_client
             resultado = await enricher.enriquecer(produto_bruto_fixture)
 
     assert resultado.nome == "Shampoo Hidratante 300ml"

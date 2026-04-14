@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import datetime, timezone
+from typing import Any
 from pathlib import Path
 from uuid import UUID
 
@@ -109,7 +110,7 @@ def _get_tenant_id(x_tenant_id: str = Header(..., alias="X-Tenant-ID")) -> str:
 async def trigger_crawl(
     tenant_id: str = Depends(_get_tenant_id),
     service: CatalogService = Depends(get_catalog_service),
-    _user: dict = Depends(require_role(["gestor"])),
+    _user: dict[str, Any] = Depends(require_role(["gestor"])),
 ) -> JSONResponse:
     """Dispara crawl completo do catálogo para o tenant informado.
 
@@ -431,6 +432,7 @@ async def upload_precos(
 async def painel_revisao(
     request: Request,
     tenant_id: str = Query("jmb", description="Tenant ID para visualizar"),
+    limit: int = Query(100, ge=1, le=500, description="Máximo de produtos por página"),
     service: CatalogService = Depends(get_catalog_service),
 ) -> HTMLResponse:
     """Renderiza painel de revisão de produtos para o tenant.
@@ -441,7 +443,7 @@ async def painel_revisao(
     produtos = await service.listar_produtos(
         tenant_id=tenant_id,
         status=StatusEnriquecimento.ENRIQUECIDO,
-        limit=100,
+        limit=limit,
     )
 
     return templates.TemplateResponse(
@@ -491,8 +493,8 @@ async def painel_rejeitar(
 @router.get("/schedule", response_class=JSONResponse)
 async def get_schedule(
     request: Request,
-    _user: dict = Depends(require_role(["gestor"])),
-    session=Depends(get_session),
+    _user: dict[str, Any] = Depends(require_role(["gestor"])),
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """Retorna configuração de schedule de crawl do tenant.
 
@@ -539,8 +541,8 @@ async def get_schedule(
 @router.put("/schedule", response_class=JSONResponse)
 async def update_schedule(
     request: Request,
-    _user: dict = Depends(require_role(["gestor"])),
-    session=Depends(get_session),
+    _user: dict[str, Any] = Depends(require_role(["gestor"])),
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """Atualiza configuração de schedule de crawl do tenant.
 

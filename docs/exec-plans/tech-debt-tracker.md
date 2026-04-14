@@ -7,13 +7,13 @@ bloquearam aprovação mas devem ser endereçados.
 
 | ID | Sprint | Domínio | Descrição | Prioridade |
 |----|--------|---------|-----------|------------|
-| TD-01 | Sprint 1 | transversal | mypy --strict: 66 erros de anotação de tipo em `catalog/ui.py` e testes (dict sem type args, params sem anotação). Corrigir com `--strict` por módulo em Sprint 2. | Média |
+| -  | -      | -       | -         | -          |
 
 ## Resolvido
 
 | ID | Sprint identificado | Sprint resolvido | Descrição |
 |----|---------------------|-----------------|-----------|
-| -  | -                   | -               | -         |
+| TD-01 | Sprint 1 | Sprint 2 (homologação) | mypy --strict: 66 erros de anotação de tipo. Corrigidos com `dict[str, Any]`, `-> None`, `isinstance` narrowing e remoção de `# type: ignore` desnecessários. `mypy --strict` agora retorna "Success: no issues found in 64 source files". |
 
 ---
 Atualizado por: Evaluator | Último sprint: Sprint 1 | Data: 2026-04-14

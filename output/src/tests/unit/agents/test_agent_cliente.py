@@ -77,7 +77,7 @@ async def test_agent_cliente_usa_instancia_correta(
     session = AsyncMock()
     chamadas = []
 
-    async def mock_send(instancia_id, numero, texto):
+    async def mock_send(instancia_id: str, numero: str, texto: str) -> None:
         chamadas.append((instancia_id, numero, texto))
 
     with patch("src.agents.runtime.agent_cliente.send_whatsapp_message", new=mock_send):
@@ -99,7 +99,7 @@ async def test_agent_cliente_template_contem_tenant_nome(
     session = AsyncMock()
     textos_enviados = []
 
-    async def mock_send(instancia_id, numero, texto):
+    async def mock_send(instancia_id: str, numero: str, texto: str) -> None:
         textos_enviados.append(texto)
 
     with patch("src.agents.runtime.agent_cliente.send_whatsapp_message", new=mock_send):

@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 import structlog
-from bs4 import BeautifulSoup  # type: ignore[import-untyped]
+from bs4 import BeautifulSoup
 
 from src.catalog.config import CrawlerConfig
 from src.catalog.runtime.crawler.base import CrawlerBase
@@ -145,9 +145,10 @@ class EfosHttpCrawler(CrawlerBase):
                 continue
 
             nome = nome_el.get_text(strip=True)
-            href = url_el.get("href") or ""
-            if not nome or not href:
+            href_raw = url_el.get("href")
+            if not isinstance(href_raw, str) or not href_raw or not nome:
                 continue
+            href: str = href_raw
 
             url_cat = (
                 href if href.startswith("http")

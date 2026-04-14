@@ -5,6 +5,7 @@ Todos os testes são @pytest.mark.unit — sem I/O externo.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
-def _make_app(tenant_dict: dict | None = None) -> FastAPI:
+def _make_app(tenant_dict: dict[str, Any] | None = None) -> FastAPI:
     """Cria app de teste com TenantProvider e um endpoint simples."""
     from src.providers.tenant_context import TenantProvider
 
@@ -20,15 +21,15 @@ def _make_app(tenant_dict: dict | None = None) -> FastAPI:
     app.add_middleware(TenantProvider)
 
     @app.get("/health")
-    async def health() -> dict:
+    async def health() -> dict[str, Any]:
         return {"status": "ok"}
 
     @app.get("/auth/login")
-    async def fake_login() -> dict:
+    async def fake_login() -> dict[str, Any]:
         return {"token": "fake"}
 
     @app.get("/catalog/produtos")
-    async def produtos(request: MagicMock) -> dict:
+    async def produtos(request: MagicMock) -> dict[str, Any]:
         return {"tenant_id": request.state.tenant_id}
 
     return app
@@ -40,7 +41,7 @@ def _make_app(tenant_dict: dict | None = None) -> FastAPI:
 
 
 @pytest.fixture
-def mock_get_tenant_success() -> dict:
+def mock_get_tenant_success() -> dict[str, Any]:
     return {
         "id": "jmb",
         "nome": "JMB Distribuidora",
@@ -57,7 +58,7 @@ def mock_get_tenant_success() -> dict:
 
 
 @pytest.mark.unit
-async def test_rota_excluida_sem_tenant(mock_get_tenant_success: dict) -> None:
+async def test_rota_excluida_sem_tenant(mock_get_tenant_success: dict[str, Any]) -> None:
     """Rotas em EXCLUDED_PATHS passam sem X-Tenant-ID — nunca retornam 401."""
     import httpx
 
@@ -67,16 +68,24 @@ async def test_rota_excluida_sem_tenant(mock_get_tenant_success: dict) -> None:
     app.add_middleware(TenantProvider)
 
     @app.get("/health")
-    async def health() -> dict:
+    async def health() -> dict[str, Any]:
         return {"status": "ok"}
 
     @app.get("/auth/login")
-    async def login() -> dict:
+    async def login() -> dict[str, Any]:
         return {"msg": "ok"}
 
     @app.post("/webhook/whatsapp")
-    async def webhook() -> dict:
+    async def webhook() -> dict[str, Any]:
         return {"status": "received"}
+
+    @app.get("/catalog/painel")
+    async def painel() -> dict[str, Any]:
+        return {"produtos": []}
+
+    @app.post("/catalog/painel/{produto_id}/aprovar")
+    async def aprovar(produto_id: str) -> dict[str, Any]:
+        return {"ok": True}
 
     with patch(
         "src.providers.tenant_context._get_tenant",
@@ -96,6 +105,14 @@ async def test_rota_excluida_sem_tenant(mock_get_tenant_success: dict) -> None:
             resp = await client.post("/webhook/whatsapp")
             assert resp.status_code == 200
 
+            # /catalog/painel — sem X-Tenant-ID (usa query param)
+            resp = await client.get("/catalog/painel")
+            assert resp.status_code == 200
+
+            # /catalog/painel/{id}/aprovar — sem X-Tenant-ID
+            resp = await client.post("/catalog/painel/abc123/aprovar")
+            assert resp.status_code == 200
+
 
 @pytest.mark.unit
 async def test_tenant_invalido_retorna_401() -> None:
@@ -108,7 +125,7 @@ async def test_tenant_invalido_retorna_401() -> None:
     app.add_middleware(TenantProvider)
 
     @app.get("/catalog/produtos")
-    async def produtos() -> dict:
+    async def produtos() -> dict[str, Any]:
         return {"data": []}
 
     with patch(
@@ -135,7 +152,7 @@ async def test_tenant_inativo_retorna_401() -> None:
     app.add_middleware(TenantProvider)
 
     @app.get("/catalog/produtos")
-    async def produtos() -> dict:
+    async def produtos() -> dict[str, Any]:
         return {"data": []}
 
     tenant_inativo = {
@@ -160,7 +177,7 @@ async def test_tenant_inativo_retorna_401() -> None:
 
 
 @pytest.mark.unit
-async def test_tenant_valido_injeta_estado(mock_get_tenant_success: dict) -> None:
+async def test_tenant_valido_injeta_estado(mock_get_tenant_success: dict[str, Any]) -> None:
     """Tenant válido é injetado em request.state via dispatch direto do middleware."""
     from starlette.datastructures import Headers
     from starlette.testclient import TestClient
@@ -319,7 +336,7 @@ async def test_sem_header_tenant_id_retorna_401() -> None:
     app.add_middleware(TenantProvider)
 
     @app.get("/catalog/produtos")
-    async def produtos() -> dict:
+    async def produtos() -> dict[str, Any]:
         return {"data": []}
 
     with patch(

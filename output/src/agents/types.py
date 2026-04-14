@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -38,7 +39,7 @@ class WebhookPayload(BaseModel):
 
     event: str       # ex: "MESSAGES_UPSERT"
     instance: str    # instancia_id (nome da instância Evolution)
-    data: dict       # dados brutos — parseados em Mensagem
+    data: dict[str, Any]       # dados brutos — parseados em Mensagem
 
 
 class WhatsappInstancia(BaseModel):

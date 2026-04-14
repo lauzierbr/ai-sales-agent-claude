@@ -19,11 +19,11 @@ from src.catalog.types import (
 @pytest.mark.unit
 def test_status_enriquecimento_valores() -> None:
     """StatusEnriquecimento deve ter os 5 valores esperados."""
-    assert StatusEnriquecimento.PENDENTE == "pendente"
-    assert StatusEnriquecimento.ENRIQUECIDO == "enriquecido"
-    assert StatusEnriquecimento.EM_REVISAO == "em_revisao"
-    assert StatusEnriquecimento.ATIVO == "ativo"
-    assert StatusEnriquecimento.INATIVO == "inativo"
+    assert StatusEnriquecimento.PENDENTE.value == "pendente"
+    assert StatusEnriquecimento.ENRIQUECIDO.value == "enriquecido"
+    assert StatusEnriquecimento.EM_REVISAO.value == "em_revisao"
+    assert StatusEnriquecimento.ATIVO.value == "ativo"
+    assert StatusEnriquecimento.INATIVO.value == "inativo"
 
 
 @pytest.mark.unit

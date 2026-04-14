@@ -5,7 +5,9 @@ Todos os testes são @pytest.mark.unit — sem I/O externo.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -44,7 +46,7 @@ def _make_tenant() -> Tenant:
     )
 
 
-def _make_app_with_overrides(mock_session=None):
+def _make_app_with_overrides(mock_session: Any = None) -> FastAPI:
     """Cria app isolado com get_session como stub (noop AsyncGenerator)."""
     from src.providers.db import get_session
     from src.tenants.ui import auth_router, router
@@ -54,7 +56,7 @@ def _make_app_with_overrides(mock_session=None):
     app.include_router(router)
 
     # Override get_session para evitar conexão real ao banco
-    async def fake_session():
+    async def fake_session() -> AsyncGenerator[None, None]:
         yield None
 
     app.dependency_overrides[get_session] = fake_session
@@ -162,7 +164,8 @@ async def test_login_token_contem_tenant_id_e_role() -> None:
             )
 
     token = resp.json()["access_token"]
-    payload = decode_token(token)
+    with patch.dict("os.environ", {"JWT_SECRET": "secret-de-teste-com-32-caracteres-ok"}):
+        payload = decode_token(token)
     assert payload["tenant_id"] == "jmb"
     assert payload["role"] == "gestor"
 

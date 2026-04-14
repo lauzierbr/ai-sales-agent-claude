@@ -8,6 +8,7 @@ Decisão: D022 — JWT apenas para ações privilegiadas.
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -130,7 +131,7 @@ async def get_current_user(request: Request) -> dict[str, Any]:
     return decode_token(token)
 
 
-def require_role(roles: list[str]):
+def require_role(roles: list[str]) -> Callable[..., Awaitable[dict[str, Any]]]:
     """Dependency factory: valida que usuário tem um dos roles permitidos.
 
     Uso:

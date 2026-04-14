@@ -133,7 +133,7 @@ async def _execute_crawl(
 
     enricher = EnricherAgent()
     repo = CatalogRepo(session_factory)
-    service = CatalogService(repo=repo, enricher=enricher, embedding_client=embedding_client)  # type: ignore[arg-type]
+    service = CatalogService(repo=repo, enricher=enricher, embedding_client=embedding_client)
 
     async with EfosHttpCrawler(config) as crawler:
         categorias = await crawler.get_categorias()

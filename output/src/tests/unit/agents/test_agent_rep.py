@@ -89,7 +89,7 @@ async def test_agent_rep_usa_numero_sem_sufixo(
     session = AsyncMock()
     chamadas = []
 
-    async def mock_send(instancia_id, numero, texto):
+    async def mock_send(instancia_id: str, numero: str, texto: str) -> None:
         chamadas.append((instancia_id, numero, texto))
 
     with patch("src.agents.runtime.agent_rep.send_whatsapp_message", new=mock_send):
@@ -131,7 +131,7 @@ async def test_agent_desconhecido_usa_whatsapp_number_do_tenant(
     session = AsyncMock()
     textos_enviados = []
 
-    async def mock_send(instancia_id, numero, texto):
+    async def mock_send(instancia_id: str, numero: str, texto: str) -> None:
         textos_enviados.append(texto)
 
     with patch("src.agents.runtime.agent_rep.send_whatsapp_message", new=mock_send):
@@ -150,7 +150,7 @@ async def test_agent_desconhecido_sem_whatsapp_number_usa_fallback(
     session = AsyncMock()
     textos_enviados = []
 
-    async def mock_send(instancia_id, numero, texto):
+    async def mock_send(instancia_id: str, numero: str, texto: str) -> None:
         textos_enviados.append(texto)
 
     with patch("src.agents.runtime.agent_rep.send_whatsapp_message", new=mock_send):

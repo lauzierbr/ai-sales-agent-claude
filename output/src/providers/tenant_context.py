@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any, cast
 
 import structlog
 from fastapi import Request, Response
@@ -17,7 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 log = structlog.get_logger(__name__)
 
-# Rotas que não exigem tenant identificado
+# Rotas que não exigem tenant identificado (match exato)
 _EXCLUDED_PATHS = frozenset({
     "/health",
     "/docs",
@@ -26,6 +27,11 @@ _EXCLUDED_PATHS = frozenset({
     "/auth/login",
     "/webhook/whatsapp",
 })
+
+# Prefixos excluídos — qualquer path que comece com estes passa sem header
+_EXCLUDED_PREFIXES = (
+    "/catalog/painel",  # painel de revisão usa tenant_id via query param
+)
 
 _CACHE_TTL = int(os.getenv("TENANT_CACHE_TTL", "60"))
 
@@ -46,7 +52,8 @@ class TenantProvider(BaseHTTPMiddleware):
     ) -> Response:
         """Intercepta request e injeta contexto de tenant."""
         # Rotas excluídas passam direto
-        if request.url.path in _EXCLUDED_PATHS:
+        path = request.url.path
+        if path in _EXCLUDED_PATHS or path.startswith(_EXCLUDED_PREFIXES):
             return await call_next(request)
 
         # Extrai header
@@ -73,7 +80,7 @@ class TenantProvider(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-async def _get_tenant(tenant_id: str) -> dict | None:
+async def _get_tenant(tenant_id: str) -> dict[str, Any] | None:
     """Busca tenant no cache Redis ou DB.
 
     Returns:
@@ -92,7 +99,7 @@ async def _get_tenant(tenant_id: str) -> dict | None:
     return tenant_dict
 
 
-async def _get_from_redis(tenant_id: str) -> dict | None:
+async def _get_from_redis(tenant_id: str) -> dict[str, Any] | None:
     """Tenta obter tenant do cache Redis.
 
     Returns:
@@ -104,13 +111,13 @@ async def _get_from_redis(tenant_id: str) -> dict | None:
         redis = get_redis()
         data = await redis.get(f"tenant:{tenant_id}")
         if data:
-            return json.loads(data)
+            return cast(dict[str, Any], json.loads(data))
     except Exception as exc:
         log.warning("redis_cache_erro", tenant_id=tenant_id, error=str(exc))
     return None
 
 
-async def _set_in_redis(tenant_id: str, tenant_dict: dict) -> None:
+async def _set_in_redis(tenant_id: str, tenant_dict: dict[str, Any]) -> None:
     """Armazena tenant no cache Redis com TTL.
 
     Falha silenciosa se Redis indisponível.
@@ -124,7 +131,7 @@ async def _set_in_redis(tenant_id: str, tenant_dict: dict) -> None:
         log.warning("redis_set_erro", tenant_id=tenant_id, error=str(exc))
 
 
-async def _get_from_db(tenant_id: str) -> dict | None:
+async def _get_from_db(tenant_id: str) -> dict[str, Any] | None:
     """Busca tenant diretamente no PostgreSQL.
 
     Returns:

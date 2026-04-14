@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -29,10 +30,10 @@ class Tenant(BaseModel):
     cnpj: str
     ativo: bool = True
     whatsapp_number: str | None = None
-    config_json: dict = {}
+    config_json: dict[str, Any] = {}
     criado_em: datetime
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serializa para dict compatível com JSONResponse."""
         return {
             "id": self.id,
@@ -58,7 +59,7 @@ class Usuario(BaseModel):
     ativo: bool = True
     criado_em: datetime
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serializa para dict — exclui senha_hash por segurança."""
         return {
             "id": self.id,

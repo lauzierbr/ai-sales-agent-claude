@@ -6,6 +6,7 @@ Todos os testes são @pytest.mark.unit — sem I/O real.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -38,7 +39,7 @@ _TENANT_JMB = {
 
 
 @pytest.fixture(autouse=True)
-def patch_tenant_middleware():
+def patch_tenant_middleware() -> Generator[None, None, None]:
     """Substitui _get_tenant por AsyncMock retornando tenant JMB em todos os testes deste módulo."""
     with patch(
         "src.providers.tenant_context._get_tenant",

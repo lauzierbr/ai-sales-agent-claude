@@ -7,6 +7,7 @@ Decisão D019: APScheduler 3.x embedded (sem broker).
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -59,7 +60,7 @@ async def start_scheduler_from_db(
 
 async def _load_schedules(
     session_factory: async_sessionmaker[AsyncSession],
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Carrega schedules ativos do banco de dados.
 
     Returns:

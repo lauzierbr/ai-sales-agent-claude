@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from typing import Any
+
 import pytest
 
 from src.tenants.types import Role, Tenant, Usuario
@@ -121,7 +123,7 @@ async def test_provision_tenant_hasheia_senha() -> None:
     senha_plain = "minha_senha_secreta"
     usuario_criado = None
 
-    async def captura_usuario(usuario, session):
+    async def captura_usuario(usuario: Usuario, session: Any) -> None:
         nonlocal usuario_criado
         usuario_criado = usuario
 
@@ -157,7 +159,7 @@ async def test_provision_tenant_role_e_gestor() -> None:
     factory = _mock_session_factory()
     usuario_criado = None
 
-    async def captura_usuario(usuario, session):
+    async def captura_usuario(usuario: Usuario, session: Any) -> None:
         nonlocal usuario_criado
         usuario_criado = usuario
 
