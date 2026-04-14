@@ -433,16 +433,24 @@ async def painel_revisao(
     request: Request,
     tenant_id: str = Query("jmb", description="Tenant ID para visualizar"),
     limit: int = Query(100, ge=1, le=500, description="Máximo de produtos por página"),
+    status: str = Query("todos", description="Filtro de status: todos, enriquecido, pendente, ativo, inativo"),
     service: CatalogService = Depends(get_catalog_service),
 ) -> HTMLResponse:
     """Renderiza painel de revisão de produtos para o tenant.
 
-    Lista produtos com status ENRIQUECIDO aguardando aprovação/rejeição.
-    Tenant ID via query param para uso direto no browser (não header).
+    Tenant ID via query param para uso direto no browser (sem header).
+    status=todos mostra todos os produtos independente do status de enriquecimento.
     """
+    status_filtro: StatusEnriquecimento | None = None
+    if status != "todos":
+        try:
+            status_filtro = StatusEnriquecimento(status)
+        except ValueError:
+            pass
+
     produtos = await service.listar_produtos(
         tenant_id=tenant_id,
-        status=StatusEnriquecimento.ENRIQUECIDO,
+        status=status_filtro,
         limit=limit,
     )
 
@@ -453,6 +461,7 @@ async def painel_revisao(
             "produtos": [p.to_dict() for p in produtos],
             "tenant_id": tenant_id,
             "total": len(produtos),
+            "status_filtro": status,
         },
     )
 
