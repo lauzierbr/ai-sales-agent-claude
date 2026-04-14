@@ -141,7 +141,16 @@ async def _execute_crawl(
             try:
                 produtos = await crawler.get_produtos(categoria)
                 for produto_bruto in produtos:
-                    await service.salvar_produto_bruto(tenant_id, produto_bruto)
+                    try:
+                        produto = await service.salvar_produto_bruto(tenant_id, produto_bruto)
+                        await service.enriquecer_produto(tenant_id, produto.id)
+                    except Exception as exc:
+                        log.warning(
+                            "crawler_produto_erro",
+                            tenant_id=tenant_id,
+                            codigo=produto_bruto.codigo_externo,
+                            error=str(exc),
+                        )
             except Exception as exc:
                 log.warning(
                     "crawler_categoria_erro",
