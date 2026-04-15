@@ -71,6 +71,8 @@ class OrderService:
                 session=session,
             )
 
+            await session.commit()
+
             log.info(
                 "pedido_criado_service",
                 tenant_id=pedido_input.tenant_id,

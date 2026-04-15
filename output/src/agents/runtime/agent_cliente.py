@@ -261,6 +261,9 @@ class AgentCliente:
                 session=session,
             )
 
+            # 8.1 Commit — persiste conversa, mensagens (e pedido se tool foi chamada)
+            await session.commit()
+
             # 9. Atualiza Redis com histórico
             messages.append({"role": "assistant", "content": resposta_final})
             await self._salvar_historico_redis(tenant.id, numero, messages)
