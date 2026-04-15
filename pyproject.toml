@@ -42,6 +42,8 @@ dependencies = [
     "apscheduler>=3.10.0",
     # Cache / locks
     "redis>=5.0.0",
+    # PDF generation
+    "fpdf2>=2.7.0",
 ]
 
 [project.optional-dependencies]

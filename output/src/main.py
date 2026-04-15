@@ -27,13 +27,20 @@ log = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Gerencia ciclo de vida da aplicação — inicia e encerra scheduler."""
+    import os
+
     from src.providers.db import get_session_factory
     from src.providers.scheduler import create_scheduler, start_scheduler_from_db
+
+    # Garante diretório de PDFs
+    pdf_storage_path = os.getenv("PDF_STORAGE_PATH", "./pdfs")
+    Path(pdf_storage_path).mkdir(parents=True, exist_ok=True)
+    log.info("pdf_storage_pronto", path=pdf_storage_path)
 
     scheduler = create_scheduler()
     await start_scheduler_from_db(scheduler, get_session_factory())
 
-    log.info("app_iniciada", versao="0.2.0")
+    log.info("app_iniciada", versao="0.3.0")
     yield
 
     if scheduler.running:
@@ -83,6 +90,12 @@ def create_app() -> FastAPI:
     images_dir = Path(__file__).parent.parent / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")
+
+    # PDFs gerados pelo agente
+    import os as _os
+    pdfs_dir = Path(_os.getenv("PDF_STORAGE_PATH", "./pdfs"))
+    pdfs_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/pdfs", StaticFiles(directory=str(pdfs_dir)), name="pdfs")
 
     # ─────────────────────────────────────────────
     # Health check

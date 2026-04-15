@@ -65,14 +65,21 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
     """Background task: resolve tenant e persona, envia resposta do agente.
 
     Cria própria sessão de DB (request session pode estar fechada).
+    Injeta dependências no AgentCliente para permitir mock completo em testes.
 
     Args:
         payload_dict: payload serializado como dict para evitar problemas de serialização.
     """
+    from src.agents.config import AgentClienteConfig
+    from src.agents.repo import ClienteB2BRepo, ConversaRepo, RepresentanteRepo
     from src.agents.runtime.agent_cliente import AgentCliente
     from src.agents.runtime.agent_rep import AgentDesconhecido, AgentRep
     from src.agents.service import IdentityRouter, get_instancia, parse_mensagem
     from src.agents.types import Persona, WebhookPayload
+    from src.orders.config import OrderConfig
+    from src.orders.repo import OrderRepo
+    from src.orders.runtime.pdf_generator import PDFGenerator
+    from src.orders.service import OrderService
     from src.providers.db import get_session_factory
     from src.tenants.repo import TenantRepo
 
@@ -123,11 +130,49 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
         # 5. Chama agente correspondente
         try:
             if persona == Persona.CLIENTE_B2B:
-                await AgentCliente().responder(mensagem, tenant, session)
+                # Identifica cliente B2B para injetar ID no AgentCliente
+                cliente_b2b_id: str | None = None
+                telefone_norm = mensagem.de.split("@")[0]
+                cliente = await ClienteB2BRepo().get_by_telefone(
+                    tenant_id, telefone_norm, session
+                )
+                if cliente is not None:
+                    cliente_b2b_id = cliente.id
+
+                # Instancia AgentCliente com dependências injetadas
+                agent = AgentCliente(
+                    order_service=OrderService(
+                        repo=OrderRepo(),
+                        config=OrderConfig(),
+                    ),
+                    conversa_repo=ConversaRepo(),
+                    pdf_generator=PDFGenerator(),
+                    config=AgentClienteConfig(),
+                )
+                await agent.responder(
+                    mensagem=mensagem,
+                    tenant=tenant,
+                    session=session,
+                    cliente_b2b_id=cliente_b2b_id,
+                    representante_id=None,
+                )
+
             elif persona == Persona.REPRESENTANTE:
+                # Identifica representante para injetar ID
+                representante_id: str | None = None
+                telefone_norm_rep = mensagem.de.split("@")[0]
+                rep = await RepresentanteRepo().get_by_telefone(
+                    tenant_id, telefone_norm_rep, session
+                )
+                if rep is not None:
+                    representante_id = rep.id
+
+                # AgentRep permanece stub em Sprint 2
                 await AgentRep().responder(mensagem, tenant, session)
+
             else:
                 await AgentDesconhecido().responder(mensagem, tenant, session)
+
         except Exception as exc:
             log.error(
                 "agent_resposta_erro",

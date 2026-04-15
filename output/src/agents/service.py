@@ -6,6 +6,7 @@ Não importa Runtime ou UI.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import os
@@ -17,7 +18,7 @@ from opentelemetry import trace
 from opentelemetry.metrics import get_meter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents.repo import WhatsappInstanciaRepo
+from src.agents.repo import ClienteB2BRepo, RepresentanteRepo, WhatsappInstanciaRepo
 from src.agents.types import Mensagem, Persona, WebhookPayload, WhatsappInstancia
 
 log = structlog.get_logger(__name__)
@@ -31,30 +32,49 @@ _mensagens_enviadas = meter.create_counter(
 
 
 class IdentityRouter:
-    """Resolve a persona de um remetente WhatsApp — Sprint 1: stub."""
+    """Resolve a persona de um remetente WhatsApp via lookup no banco de dados."""
 
     def __init__(self) -> None:
         self._instancia_repo = WhatsappInstanciaRepo()
+        self._cliente_repo = ClienteB2BRepo()
+        self._rep_repo = RepresentanteRepo()
 
     async def resolve(
         self, mensagem: Mensagem, tenant_id: str, session: AsyncSession
     ) -> Persona:
-        """Resolve persona do remetente.
+        """Resolve persona do remetente pelo número de telefone.
 
-        Sprint 1: retorna sempre DESCONHECIDO.
-        Sprint 2: implementará lookup em `representantes` e `clientes_b2b`.
+        Lookup em ordem: clientes_b2b → representantes → DESCONHECIDO.
+        Remove sufixo @s.whatsapp.net antes da busca.
 
         Args:
-            mensagem: mensagem recebida.
-            tenant_id: ID do tenant.
-            session: sessão SQLAlchemy.
+            mensagem: mensagem recebida com número do remetente.
+            tenant_id: ID do tenant — filtro obrigatório.
+            session: sessão SQLAlchemy assíncrona.
 
         Returns:
-            Persona identificada (sempre DESCONHECIDO em Sprint 1).
+            Persona identificada: CLIENTE_B2B, REPRESENTANTE ou DESCONHECIDO.
         """
         with tracer.start_as_current_span("identity_router_resolve") as span:
             span.set_attribute("tenant_id", tenant_id)
-            # Sprint 1 stub — Sprint 2 implementará lookup real
+
+            telefone = mensagem.de.split("@")[0]
+
+            cliente = await self._cliente_repo.get_by_telefone(
+                tenant_id, telefone, session
+            )
+            if cliente is not None:
+                span.set_attribute("persona", "cliente_b2b")
+                return Persona.CLIENTE_B2B
+
+            rep = await self._rep_repo.get_by_telefone(
+                tenant_id, telefone, session
+            )
+            if rep is not None:
+                span.set_attribute("persona", "representante")
+                return Persona.REPRESENTANTE
+
+            span.set_attribute("persona", "desconhecido")
             return Persona.DESCONHECIDO
 
 
@@ -134,9 +154,6 @@ async def send_whatsapp_message(
         instancia_id: nome da instância Evolution API.
         numero: número destinatário (formato E.164 sem +).
         texto: texto da mensagem.
-
-    Raises:
-        httpx.HTTPStatusError: se a API retornar erro 4xx/5xx (logado, não propagado).
     """
     api_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
     api_key = os.getenv("EVOLUTION_API_KEY", "")
@@ -166,3 +183,59 @@ async def send_whatsapp_message(
         # Não propaga — background task não deve crashar por falha de envio
     except Exception as exc:
         log.error("evolution_api_timeout", instancia_id=instancia_id, error=str(exc))
+
+
+async def send_whatsapp_media(
+    instancia_id: str,
+    numero: str,
+    pdf_bytes: bytes,
+    caption: str,
+    file_name: str,
+) -> None:
+    """Envia PDF via Evolution API como documento WhatsApp.
+
+    Usa base64 e endpoint /message/sendMedia/.
+    Erros não propagam — background task deve ser resiliente.
+
+    Args:
+        instancia_id: nome da instância Evolution API.
+        numero: número destinatário (formato E.164 sem +).
+        pdf_bytes: conteúdo do PDF em bytes.
+        caption: legenda exibida junto ao documento.
+        file_name: nome do arquivo exibido ao destinatário.
+    """
+    api_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+    api_key = os.getenv("EVOLUTION_API_KEY", "")
+
+    url = f"{api_url}/message/sendMedia/{instancia_id}"
+    payload = {
+        "number": numero,
+        "mediatype": "document",
+        "mimetype": "application/pdf",
+        "caption": caption,
+        "media": base64.b64encode(pdf_bytes).decode(),
+        "fileName": file_name,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                headers={"apikey": api_key},
+            )
+            resp.raise_for_status()
+            log.info(
+                "media_enviada",
+                instancia_id=instancia_id,
+                numero_hash=hashlib.sha256(numero.encode()).hexdigest()[:8],
+                file_name=file_name,
+            )
+    except httpx.HTTPStatusError as exc:
+        log.error(
+            "evolution_api_media_erro",
+            status_code=exc.response.status_code,
+            instancia_id=instancia_id,
+        )
+    except Exception as exc:
+        log.error("evolution_api_media_timeout", instancia_id=instancia_id, error=str(exc))

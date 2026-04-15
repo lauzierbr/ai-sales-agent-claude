@@ -52,7 +52,19 @@ O contrato está em artifacts/sprint_contract.md. Execute a avaliação completa
 11. Evaluator: APROVADO → artifacts/qa_sprint_N.md
              REPROVADO → Generator tem 1 rodada de correção
              2x REPROVADO → escalonamento para você
+12. Generator: prepara ambiente de homologação
+    - Executa deploy.sh staging
+    - Aplica seed de dados reais (scripts/seed_homologacao_sprint-N.py)
+    - Entrega checklist em docs/exec-plans/active/homologacao_sprint-N.md
+13. Você: executa homologação manual no staging (WhatsApp real)
+    - Segue checklist de cenários do arquivo acima
+    - Registra resultado: APROVADO ou lista de bugs
+14. Se APROVADO: sprint encerrado, move plano para completed/
+    Se REPROVADO: bugs viram hotfixes antes do próximo sprint
 ```
+
+> **Regra:** Nenhum sprint avança para o seguinte sem APROVADO na homologação.
+> Protocolo completo em `docs/HOMOLOGACAO.md`.
 
 ## Regras inegociáveis (nunca ignore)
 
