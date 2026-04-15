@@ -407,20 +407,22 @@ class CatalogRepo:
         """
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
-        # Nota: <=> é o operador de cosine distance do pgvector.
-        # O parâmetro é nomeado :query_vec (não :embedding) para evitar
-        # colisão com o nome da coluna — SQLAlchemy/asyncpg confunde os dois.
-        sql = text("""
+        # O vetor é interpolado diretamente no SQL (não como parâmetro bind)
+        # porque asyncpg não consegue inferir o tipo 'vector' automaticamente.
+        # A interpolação é segura: vec_str contém apenas floats gerados internamente.
+        # status_enriquecimento também é literal para evitar problema de IN (...)
+        # com prepared statements no asyncpg.
+        sql = text(f"""
             SELECT
                 id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
                 tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
                 status_enriquecimento, criado_em, atualizado_em,
-                embedding <=> CAST(:query_vec AS vector) AS distancia
+                embedding <=> '{vec_str}'::vector AS distancia
             FROM produtos
             WHERE tenant_id = :tenant_id
               AND embedding IS NOT NULL
               AND status_enriquecimento IN ('enriquecido', 'ativo')
-              AND embedding <=> CAST(:query_vec AS vector) < :distancia_maxima
+              AND embedding <=> '{vec_str}'::vector < :distancia_maxima
             ORDER BY distancia ASC
             LIMIT :limit
         """)
@@ -430,7 +432,6 @@ class CatalogRepo:
                 sql,
                 {
                     "tenant_id": tenant_id,
-                    "query_vec": vec_str,
                     "distancia_maxima": distancia_maxima,
                     "limit": limit,
                 },
