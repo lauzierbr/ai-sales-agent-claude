@@ -70,12 +70,18 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
     Args:
         payload_dict: payload serializado como dict para evitar problemas de serialização.
     """
+    import os as _os
+
+    import openai as _openai
+
     from src.agents.config import AgentClienteConfig
     from src.agents.repo import ClienteB2BRepo, ConversaRepo, RepresentanteRepo
     from src.agents.runtime.agent_cliente import AgentCliente
     from src.agents.runtime.agent_rep import AgentDesconhecido, AgentRep
     from src.agents.service import IdentityRouter, get_instancia, parse_mensagem
     from src.agents.types import Persona, WebhookPayload
+    from src.catalog.repo import CatalogRepo
+    from src.catalog.service import CatalogService
     from src.orders.config import OrderConfig
     from src.orders.repo import OrderRepo
     from src.orders.runtime.pdf_generator import PDFGenerator
@@ -84,6 +90,14 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
     from src.tenants.repo import TenantRepo
 
     factory = get_session_factory()
+
+    # CatalogService — usa embedding OpenAI para busca semântica
+    _embedding_client = _openai.AsyncOpenAI(api_key=_os.getenv("OPENAI_API_KEY"))
+    _catalog_service = CatalogService(
+        repo=CatalogRepo(session_factory=factory),
+        enricher=None,  # type: ignore[arg-type]  # não usado na busca
+        embedding_client=_embedding_client,
+    )
 
     try:
         payload = WebhookPayload.model_validate(payload_dict)
@@ -152,6 +166,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     conversa_repo=ConversaRepo(),
                     pdf_generator=PDFGenerator(),
                     config=AgentClienteConfig(),
+                    catalog_service=_catalog_service,
                 )
                 await agent.responder(
                     mensagem=mensagem,

@@ -419,22 +419,24 @@ class AgentCliente:
             return {"produtos": [], "aviso": "Catálogo não disponível."}
 
         try:
-            resultado = await self._catalog_service.buscar_semantico(
+            # buscar_semantico cria a própria session via session_factory
+            resultados = await self._catalog_service.buscar_semantico(
                 tenant_id=tenant_id,
                 query=query,
                 limit=limit,
-                session=session,
             )
+            # resultados é list[ResultadoBusca]; cada item tem .produto e .score
             produtos = [
                 {
-                    "produto_id": str(p.id),
-                    "codigo_externo": p.codigo_externo,
-                    "nome": p.nome,
-                    "marca": p.marca,
-                    "categoria": p.categoria,
-                    "preco_padrao": str(p.preco_padrao) if p.preco_padrao else None,
+                    "produto_id": str(r.produto.id),
+                    "codigo_externo": r.produto.codigo_externo,
+                    "nome": r.produto.nome or r.produto.nome_bruto,
+                    "marca": r.produto.marca,
+                    "categoria": r.produto.categoria,
+                    "preco_padrao": str(r.produto.preco_padrao) if r.produto.preco_padrao else None,
+                    "score": r.score,
                 }
-                for p in (resultado.produtos if hasattr(resultado, "produtos") else resultado)
+                for r in resultados
             ]
             return {"produtos": produtos, "total": len(produtos)}
         except Exception as exc:
