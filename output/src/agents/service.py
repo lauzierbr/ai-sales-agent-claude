@@ -94,18 +94,33 @@ async def get_instancia(
     return await repo.get_by_instancia_id(instancia_id, session)
 
 
-def parse_mensagem(payload: WebhookPayload) -> Mensagem:
+def parse_mensagem(payload: WebhookPayload) -> Mensagem | None:
     """Converte WebhookPayload da Evolution API em Mensagem normalizada.
+
+    Retorna None para mensagens que não devem ser processadas:
+    - fromMe=True: mensagens enviadas pelo próprio bot (evita loop)
+    - texto vazio: status updates, reactions, etc.
+    - remoteJid vazio ou de grupo (@g.us)
 
     Args:
         payload: payload bruto da Evolution API.
 
     Returns:
-        Mensagem normalizada.
+        Mensagem normalizada ou None se deve ser ignorada.
     """
     data = payload.data
     key = data.get("key", {})
     msg = data.get("message", {})
+
+    # Ignora mensagens enviadas pelo próprio bot (evita loop infinito)
+    if key.get("fromMe", False):
+        return None
+
+    remote_jid = key.get("remoteJid", "")
+
+    # Ignora grupos (remoteJid termina em @g.us)
+    if remote_jid.endswith("@g.us"):
+        return None
 
     # Texto pode vir em vários campos dependendo do tipo
     texto = (
@@ -113,11 +128,16 @@ def parse_mensagem(payload: WebhookPayload) -> Mensagem:
         or msg.get("extendedTextMessage", {}).get("text")
         or ""
     )
+
+    # Ignora mensagens sem texto (status updates, reactions, etc.)
+    if not texto.strip():
+        return None
+
     timestamp_raw = data.get("messageTimestamp", 0)
 
     return Mensagem(
         id=key.get("id", ""),
-        de=key.get("remoteJid", ""),
+        de=remote_jid,
         para=payload.instance,
         texto=texto,
         tipo=data.get("messageType", "text"),
