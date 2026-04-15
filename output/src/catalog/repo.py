@@ -392,7 +392,7 @@ class CatalogRepo:
         tenant_id: str,
         embedding: list[float],
         limit: int = 10,
-        distancia_maxima: float = 0.4,
+        distancia_maxima: float = 0.75,
     ) -> list[tuple[Produto, float]]:
         """Busca semântica por similaridade de embedding (cosine distance).
 
