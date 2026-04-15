@@ -107,11 +107,15 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             log.warning("tenant_nao_encontrado", tenant_id=tenant_id)
             return
 
-        # 3. Parseia mensagem
+        # 3. Parseia mensagem (None = ignorar: fromMe, grupo, sem texto)
         try:
             mensagem = parse_mensagem(payload)
         except Exception as exc:
             log.error("parse_mensagem_erro", tenant_id=tenant_id, error=str(exc))
+            return
+
+        if mensagem is None:
+            log.debug("webhook_mensagem_ignorada", tenant_id=tenant_id, instance=payload.instance)
             return
 
         # 4. Resolve persona
