@@ -6,6 +6,7 @@ Camada Types: sem imports internos do projeto.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
@@ -51,3 +52,75 @@ class WhatsappInstancia(BaseModel):
     tenant_id: str
     numero_whatsapp: str
     ativo: bool = True
+
+
+class ClienteB2B(BaseModel):
+    """Cliente B2B identificado pelo número de telefone WhatsApp."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    nome: str
+    cnpj: str
+    telefone: str   # E.164 digits apenas, sem @s.whatsapp.net
+    ativo: bool = True
+    criado_em: datetime
+
+
+class Representante(BaseModel):
+    """Representante comercial identificado pelo número de telefone WhatsApp."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    usuario_id: str | None
+    telefone: str
+    nome: str
+    ativo: bool = True
+
+
+class Conversa(BaseModel):
+    """Sessão de conversa entre cliente/rep e o agente."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    telefone: str
+    persona: Persona
+    iniciada_em: datetime
+    encerrada_em: datetime | None = None
+
+
+class MensagemConversa(BaseModel):
+    """Mensagem individual dentro de uma conversa."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    conversa_id: str
+    role: str   # "user" ou "assistant"
+    conteudo: str
+    criado_em: datetime
+
+
+class ItemIntento(BaseModel):
+    """Item de um pedido em fase de intenção (ainda não confirmado)."""
+
+    produto_id: str
+    codigo_externo: str
+    nome_produto: str
+    quantidade: int
+    preco_unitario: Decimal
+
+
+class IntentoPedido(BaseModel):
+    """Intenção de pedido capturada pelo AgentCliente durante a conversa."""
+
+    tenant_id: str
+    cliente_b2b_id: str | None
+    representante_id: str | None
+    telefone_solicitante: str
+    itens: list[ItemIntento]

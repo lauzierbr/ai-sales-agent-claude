@@ -1,24 +1,31 @@
-# Sprint 1 — Infraestrutura da Aplicação
+# Sprint 2 — Agente Cliente Completo
 
 **Status:** Em planejamento
-**Data:** 2026-04-14
-**Pré-requisitos:** Sprint 0 concluído — catálogo com crawler httpx + pgvector operacional; Infra-Dev e Infra-Staging concluídos
+**Data:** 2026-04-15
+**Pré-requisitos:** Sprint 1 concluído — FastAPI com TenantProvider, JWT, webhook Evolution API, scheduler, v0.2.0 tagueada
 
 ---
 
 ## Objetivo
 
-Ao final deste sprint, a aplicação tem middleware multi-tenant funcional, autenticação JWT para gestores, scheduler de crawl configurável por tenant, webhook WhatsApp com roteamento de persona, resposta básica de agente e infraestrutura de provisionamento de novos tenants — a plataforma está pronta para receber um segundo tenant sem intervenção manual em código.
+Ao final deste sprint, o sistema possui um agente conversacional real usando o Claude SDK que identifica o cliente B2B pelo número de telefone, mantém histórico de conversa (Redis + PostgreSQL), consulta o catálogo de produtos via busca semântica, e registra pedidos confirmados gerando um PDF e notificando o gestor via WhatsApp.
 
 ---
 
 ## Contexto
 
-Sprint 0 entregou o pipeline de catálogo isolado. A aplicação ainda não tem: (1) middleware que identifica o tenant em cada request, (2) autenticação para ações privilegiadas, (3) agendamento automático de crawl, (4) canal WhatsApp funcional, (5) domínio de tenants com provisionamento. Sem esses pilares, qualquer feature de Sprint 2+ (agente cliente, pedidos) não tem onde se apoiar.
+Sprint 1 entregou o esqueleto: IdentityRouter stub (sempre DESCONHECIDO), AgentCliente com resposta de template fixo, webhook funcional. Nenhuma conversa real ocorre — o agente não usa IA, não identifica clientes e não processa pedidos.
 
-O sprint segue o roadmap de `docs/PLANS.md` Sprint 1, com adição explícita de scheduler de crawl (D018 postergou para cá) e infraestrutura de onboarding do segundo tenant.
+Sprint 2 completa o núcleo do produto: o cliente envia uma mensagem, o sistema identifica quem é, o Claude conduz a conversa, e pedidos confirmados geram documentos e notificam o gestor. O MVP está funcional após este sprint.
 
-ADRs que governam este sprint: D019, D020, D021, D022 (ver `docs/design-docs/index.md`).
+**Remoções deliberadas (decisão do usuário):**
+- Loja Integrada API — fora do MVP
+- resolve_preco() com preços diferenciados — fora do MVP
+- Evaluator em produção — equívoco; Evaluator é exclusivo do harness de desenvolvimento
+
+**Decisão arquitetural D023:** pedido confirmado gera PDF + notificação WhatsApp para o gestor. Processamento manual no EFOS. Sem integração ERP para escrita de pedidos no MVP.
+
+ADR D023 será registrado em `docs/design-docs/index.md` após aprovação do contrato.
 
 ---
 
@@ -26,264 +33,431 @@ ADRs que governam este sprint: D019, D020, D021, D022 (ver `docs/design-docs/ind
 
 | Domínio | Camadas |
 |---------|---------|
-| providers | Types, Config, Runtime (auth.py, tenant_context.py, scheduler.py) |
-| tenants | Types, Config, Repo, Service, UI |
-| agents | Types, Config, Service, Runtime, UI |
-| catalog | Runtime (scheduler_job.py), UI (schedule endpoints) |
-| alembic | Migrations 0002, 0003 (+ 0004 se necessário) |
-| scripts | scripts/provision_tenant.py |
+| agents | Types, Config, Repo, Service, Runtime (reescritas), UI (atualização) |
+| orders | Types, Config, Repo, Service, Runtime — domínio novo completo |
+| alembic | Migrations 0007–0012 |
+| pyproject.toml | adicionar fpdf2>=2.7.0 |
+| main.py | lifespan: mkdir pdfs; montar /pdfs como StaticFiles |
 
 ---
 
 ## Considerações multi-tenant
 
-Decisão D020: tabela compartilhada + `tenant_id TEXT NOT NULL` para todos os domínios deste sprint. Nenhum schema por tenant será criado.
-
-O TenantProvider middleware é o gatekeeper central: extrai `X-Tenant-ID` do header, valida existência e status ativo no DB, injeta `request.state.tenant_id: str` e `request.state.tenant: Tenant` antes de qualquer handler. Endpoints sem tenant (health, docs, auth/login, webhook) são explicitamente excluídos do middleware.
-
-O webhook WhatsApp resolve `tenant_id` a partir do campo `instancia_id` do payload Evolution API, via lookup na tabela `whatsapp_instancias`. Esse lookup ocorre dentro do handler (o webhook não carrega X-Tenant-ID — a instância IS o tenant identifier).
-
-Testes de isolamento são critério obrigatório: dados do tenant JMB não podem aparecer em queries com tenant_id de outro tenant.
+Todas as novas tabelas seguem o padrão D020: `tenant_id TEXT NOT NULL` com FK para `tenants(id)`. Todos os métodos públicos de Repo recebem `tenant_id: str`. ConversaRepo usa chaves Redis prefixadas por `conv:{tenant_id}:{telefone}`.
 
 ---
 
-## Secrets necessários (Infisical)
+## Estado das migrations
 
-| Variável | Ambiente | Descrição |
-|----------|----------|-----------|
-| `JWT_SECRET` | development | Chave HMAC HS256 (≥256 bits, hex aleatório) para assinar tokens JWT |
-| `JWT_SECRET` | staging | Idem, valor diferente do dev |
-| `EVOLUTION_WEBHOOK_SECRET` | development | Segredo HMAC-SHA256 para validar requests do webhook Evolution API |
-| `EVOLUTION_WEBHOOK_SECRET` | staging | Idem |
-| `GESTOR_PASSWORD_JMB` | development | Senha plaintext do gestor JMB (apenas para seed; não usada em runtime) |
-| `GESTOR_PASSWORD_JMB` | staging | Idem |
-
-> Nota: `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE_NAME` já devem existir do Sprint Infra-Dev.
+Migrations 0007–0012 já criadas (produzidas antes do Generator Fase 1 por engano — Generator Fase 2 não precisa recriá-las, apenas verificar consistência com este spec).
 
 ---
 
 ## Entregas
 
-### E1 — TenantProvider middleware
+### E1 — Migrations 0007–0012
 
-**Camadas:** Types, Config, Repo (providers + tenants), Runtime (FastAPI middleware)
-**Arquivos:**
-- `output/src/providers/tenant_context.py` (novo, substitui stub)
-- `output/src/tenants/types.py` (novo)
-- `output/src/tenants/config.py` (novo)
-- `output/src/tenants/repo.py` (novo — TenantRepo.get_by_id + get_active)
-- `output/src/main.py` (atualização — adiciona middleware)
+**Arquivos (já criados):**
+- `output/alembic/versions/0007_clientes_b2b.py`
+- `output/alembic/versions/0008_representantes.py`
+- `output/alembic/versions/0009_conversas.py`
+- `output/alembic/versions/0010_mensagens_conversa.py`
+- `output/alembic/versions/0011_pedidos.py`
+- `output/alembic/versions/0012_itens_pedido.py`
 
-**Critérios de aceitação:**
-- [ ] `TenantProvider` é um `BaseHTTPMiddleware` FastAPI registrado em `main.py`
-- [ ] Extrai `X-Tenant-ID` do header de cada request
-- [ ] Faz lookup em tabela `tenants` (DB) e verifica `ativo == True`
-- [ ] Injeta `request.state.tenant_id: str` e `request.state.tenant: Tenant` no request
-- [ ] Retorna `HTTP 401 {"detail": "Tenant inválido ou inativo"}` se tenant não encontrado ou inativo
-- [ ] Rotas excluídas do middleware: `/health`, `/docs`, `/openapi.json`, `/redoc`, `/auth/login`, `/webhook/whatsapp`
-- [ ] Cache Redis do tenant com TTL 60s para evitar lookup a cada request
-- [ ] `lint-imports` passa sem violações
-- [ ] `pytest -m unit` cobre: tenant válido → injeta; inválido → 401; rota excluída → passa sem header
+**Schema:**
 
----
+`clientes_b2b`: id, tenant_id (FK→tenants CASCADE), nome, cnpj, telefone, ativo, criado_em
+- UNIQUE(tenant_id, cnpj), UNIQUE(tenant_id, telefone)
+- INDEX: (tenant_id), (tenant_id, telefone)
 
-### E2 — Auth JWT (gestor)
+`representantes`: id, tenant_id (FK→tenants CASCADE), usuario_id (FK→usuarios SET NULL, nullable), telefone, nome, ativo
+- UNIQUE(tenant_id, telefone)
+- INDEX: (tenant_id), (tenant_id, telefone)
 
-**Camadas:** Types, Config, Service, UI (providers/auth.py)
-**Arquivos:**
-- `output/src/providers/auth.py` (novo)
-- `output/src/tenants/types.py` (adiciona modelo `Usuario` e enum `Role`)
-- `output/alembic/versions/0002_tenants_usuarios.py` (novo)
+`conversas`: id, tenant_id (FK→tenants CASCADE), telefone, persona (CHECK IN 'cliente_b2b','representante','desconhecido'), iniciada_em, encerrada_em (nullable)
+- INDEX: (tenant_id, telefone), (tenant_id, iniciada_em)
 
-**Critérios de aceitação:**
-- [ ] Migration 0002 cria tabelas `tenants` e `usuarios` no schema `public`
-  - `tenants(id TEXT PK, nome TEXT NOT NULL, cnpj TEXT UNIQUE NOT NULL, ativo BOOL NOT NULL DEFAULT true, whatsapp_number TEXT, config_json JSONB NOT NULL DEFAULT '{}', criado_em TIMESTAMPTZ NOT NULL DEFAULT now())`
-  - `usuarios(id TEXT PK, tenant_id TEXT NOT NULL REFERENCES tenants(id), cnpj TEXT NOT NULL, senha_hash TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('gestor','rep','cliente')), ativo BOOL NOT NULL DEFAULT true, criado_em TIMESTAMPTZ NOT NULL DEFAULT now())`
-  - Índice único em `usuarios(cnpj, tenant_id)`
-- [ ] Seed em migration 0002: tenant JMB + usuário gestor JMB com `bcrypt(GESTOR_PASSWORD_JMB)` lido de variável de ambiente
-- [ ] `POST /auth/login` recebe `{"cnpj": "...", "senha": "..."}` (body JSON), retorna `{"access_token": "...", "token_type": "bearer"}`
-- [ ] Token JWT contém claims: `sub` (user_id), `tenant_id`, `role`, `exp` (agora + 8h), `iat`
-- [ ] Senha verificada com `bcrypt.checkpw`; nunca plaintext em DB ou log
-- [ ] `providers/auth.py` exporta: `create_access_token()`, `decode_token()`, `get_current_user` (FastAPI Depends), `require_role(roles)` (dependency factory)
-- [ ] `get_current_user` retorna `HTTP 401` se token ausente, inválido ou expirado
-- [ ] `require_role(["gestor"])` retorna `HTTP 403` se role não está na lista
-- [ ] `POST /catalog/crawl` passa a exigir `Depends(require_role(["gestor"]))` — atualização em `catalog/ui.py`
-- [ ] `pytest -m unit` cobre: login correto → token; cnpj errado → 401; senha errada → 401; token expirado → 401; role insuficiente → 403
-- [ ] Cobertura ≥ 80% das funções de `providers/auth.py`
+`mensagens_conversa`: id, conversa_id (FK→conversas CASCADE), role (CHECK IN 'user','assistant'), conteudo, criado_em
+- INDEX: (conversa_id), (conversa_id, criado_em)
+
+`pedidos`: id, tenant_id (FK→tenants CASCADE), cliente_b2b_id (FK→clientes_b2b SET NULL, nullable), representante_id (FK→representantes SET NULL, nullable), status (CHECK IN 'pendente','confirmado','cancelado', default 'pendente'), total_estimado NUMERIC(12,2), pdf_path (nullable), criado_em
+- INDEX: (tenant_id), (tenant_id, status), (tenant_id, criado_em)
+
+`itens_pedido`: id, pedido_id (FK→pedidos CASCADE), produto_id (FK→produtos RESTRICT), codigo_externo, nome_produto, quantidade (CHECK > 0), preco_unitario NUMERIC(12,2) (CHECK >= 0), subtotal NUMERIC(12,2)
+- INDEX: (pedido_id)
+- Nota: subtotal calculado em Python (não gerado no banco — evita gotcha SQLAlchemy Computed)
+
+**Critérios:**
+- [ ] Cada migration tem `revision`, `down_revision`, `upgrade()`, `downgrade()` corretos
+- [ ] `alembic upgrade head` aplica todas sem erro no dev
+- [ ] `alembic downgrade -1` desfaz cada migration sem erro
 
 ---
 
-### E3 — Domínio Tenants (completo)
+### E2 — Novos tipos (agents + orders)
 
-**Camadas:** Types, Config, Repo, Service, UI
 **Arquivos:**
-- `output/src/tenants/types.py` (completo)
-- `output/src/tenants/config.py` (novo)
-- `output/src/tenants/repo.py` (completo — TenantRepo + UsuarioRepo)
-- `output/src/tenants/service.py` (novo)
-- `output/src/tenants/ui.py` (novo)
-- `output/src/main.py` (atualização — inclui router tenants)
+- `output/src/agents/types.py` — adicionar ao existente: `ClienteB2B`, `Representante`, `Conversa`, `MensagemConversa`, `ItemIntento`, `IntentoPedido`
+- `output/src/orders/__init__.py` — já existe (vazio)
+- `output/src/orders/types.py` — criar: `StatusPedido`, `ItemPedidoInput`, `ItemPedido`, `CriarPedidoInput`, `Pedido`
 
-**Critérios de aceitação:**
-- [ ] `Tenant` Pydantic model: `id, nome, cnpj, ativo, whatsapp_number, config_json: dict, criado_em`
-- [ ] `Usuario` Pydantic model: `id, tenant_id, cnpj, senha_hash, role: Role, ativo, criado_em`
-- [ ] `Role` enum: `gestor`, `rep`, `cliente`
-- [ ] `TenantRepo.get_by_id(tenant_id, session) → Tenant | None`
-- [ ] `TenantRepo.get_active_tenants(session) → list[Tenant]`
-- [ ] `TenantRepo.create(tenant, session) → Tenant`
-- [ ] `UsuarioRepo.get_by_cnpj(cnpj, tenant_id, session) → Usuario | None`
-- [ ] `UsuarioRepo.create(usuario, session) → Usuario`
-- [ ] `TenantService.provision_tenant(nome, cnpj, gestor_cnpj, gestor_senha_hash, session) → Tenant` — cria tenant + usuário gestor em transação única
-- [ ] `GET /tenants` — lista tenants ativos (sem auth — endpoint interno)
-- [ ] `GET /tenants/{tenant_id}` — retorna tenant ou 404
-- [ ] `POST /tenants` — body `{nome, cnpj, gestor_cnpj, gestor_senha}`, cria via provision_tenant, retorna Tenant
-- [ ] Todos os métodos de Repo com parâmetro `tenant_id` obrigatório onde aplicável
-- [ ] `lint-imports` passa: Repo não importa Service; Service não importa UI
-- [ ] `pytest -m unit` cobre TenantRepo e TenantService com mocks; cobertura ≥ 80%
+**Modelos agents/types.py a adicionar:**
+```python
+class ClienteB2B(BaseModel):
+    id: str; tenant_id: str; nome: str; cnpj: str; telefone: str; ativo: bool; criado_em: datetime
+
+class Representante(BaseModel):
+    id: str; tenant_id: str; usuario_id: str | None; telefone: str; nome: str; ativo: bool
+
+class Conversa(BaseModel):
+    id: str; tenant_id: str; telefone: str; persona: Persona; iniciada_em: datetime; encerrada_em: datetime | None
+
+class MensagemConversa(BaseModel):
+    id: str; conversa_id: str; role: str; conteudo: str; criado_em: datetime
+
+class ItemIntento(BaseModel):
+    produto_id: str; codigo_externo: str; nome_produto: str; quantidade: int; preco_unitario: Decimal
+
+class IntentoPedido(BaseModel):
+    tenant_id: str; cliente_b2b_id: str | None; representante_id: str | None
+    telefone_solicitante: str; itens: list[ItemIntento]
+```
+
+**Modelos orders/types.py:**
+```python
+class StatusPedido(StrEnum): PENDENTE = "pendente"; CONFIRMADO = "confirmado"; CANCELADO = "cancelado"
+
+class ItemPedidoInput(BaseModel):
+    produto_id: str; codigo_externo: str; nome_produto: str; quantidade: int; preco_unitario: Decimal
+
+class ItemPedido(BaseModel):  # from_attributes=True
+    id: str; pedido_id: str; produto_id: str; codigo_externo: str; nome_produto: str
+    quantidade: int; preco_unitario: Decimal; subtotal: Decimal
+
+class CriarPedidoInput(BaseModel):
+    tenant_id: str; cliente_b2b_id: str | None; representante_id: str | None; itens: list[ItemPedidoInput]
+
+class Pedido(BaseModel):  # from_attributes=True
+    id: str; tenant_id: str; cliente_b2b_id: str | None; representante_id: str | None
+    status: StatusPedido; total_estimado: Decimal; pdf_path: str | None; criado_em: datetime
+    itens: list[ItemPedido] = []
+```
+
+**Critérios:**
+- [ ] `agents/types.py` ainda importa apenas stdlib + pydantic (camada Types)
+- [ ] `orders/types.py` importa apenas stdlib + pydantic (camada Types)
+- [ ] `lint-imports` sem violação em src.*.types
 
 ---
 
-### E4 — Scheduler de crawl
+### E3 — Repositórios novos
 
-**Camadas:** Config, Service, Runtime (catalog + providers)
 **Arquivos:**
-- `output/src/providers/scheduler.py` (novo)
-- `output/src/catalog/runtime/scheduler_job.py` (novo)
-- `output/alembic/versions/0003_crawl_schedule.py` (novo)
-- `output/src/catalog/config.py` (atualização — CrawlScheduleConfig)
-- `output/src/catalog/ui.py` (atualização — endpoints /catalog/schedule)
-- `output/src/main.py` (atualização — lifespan com scheduler)
+- `output/src/agents/repo.py` — adicionar: `ClienteB2BRepo`, `RepresentanteRepo`, `ConversaRepo`
+- `output/src/orders/repo.py` — criar: `OrderRepo`
 
-**Critérios de aceitação:**
-- [ ] Migration 0003 cria tabela `crawl_schedule`:
-  - `(id TEXT PK, tenant_id TEXT NOT NULL UNIQUE REFERENCES tenants(id), cron_expression TEXT NOT NULL DEFAULT '0 2 1 * *', enabled BOOL NOT NULL DEFAULT true, last_run_at TIMESTAMPTZ, next_run_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`
-- [ ] `providers/scheduler.py` inicializa `AsyncIOScheduler` com `asyncio` executor; não inicia se `ENVIRONMENT == "test"`
-- [ ] Startup FastAPI via `lifespan`: lê `crawl_schedule` do DB, adiciona job por tenant com `enabled=True`
-- [ ] `scheduler_job.run_crawl_for_tenant(tenant_id)`: tenta Redis SETNX `crawl_lock:{tenant_id}` TTL 3600s; se obtém lock → executa crawl → libera lock; se não obtém → loga skip
-- [ ] Default cron `0 2 1 * *` (02h00 do dia 1 de cada mês)
-- [ ] `GET /catalog/schedule` — lista schedules do tenant extraído do `request.state.tenant_id` (requer `Depends(require_role(["gestor"]))`)
-- [ ] `PUT /catalog/schedule` — recebe `{cron_expression: str, enabled: bool}`, valida sintaxe cron (apscheduler CronTrigger.from_crontab), retorna 422 se inválido; requer JWT gestor
-- [ ] OTel span `crawler_scheduled_run` com atributos `tenant_id`, `triggered_by: "scheduler"`
-- [ ] Métricas OTel: `crawler_job_started_total{tenant_id}`, `crawler_job_completed_total{tenant_id}`, `crawler_job_failed_total{tenant_id}`
-- [ ] `structlog` em: job iniciado, lock obtido, lock já existe (skip), job concluído, job falhou
-- [ ] `pytest -m unit` cobre: lock obtido → executa; lock existente → skip; cron inválido → 422
-- [ ] APScheduler não inicia se `ENVIRONMENT == "test"` (variável de ambiente)
+**ClienteB2BRepo:**
+```python
+async def get_by_telefone(self, tenant_id: str, telefone: str, session) -> ClienteB2B | None
+async def create(self, tenant_id: str, cliente: ClienteB2B, session) -> ClienteB2B
+```
+
+**RepresentanteRepo:**
+```python
+async def get_by_telefone(self, tenant_id: str, telefone: str, session) -> Representante | None
+```
+
+**ConversaRepo:**
+```python
+async def get_or_create_conversa(self, tenant_id: str, telefone: str, persona: Persona, session) -> Conversa
+async def add_mensagem(self, conversa_id: str, role: str, conteudo: str, session) -> MensagemConversa
+async def get_historico(self, conversa_id: str, limit: int, session) -> list[MensagemConversa]
+async def encerrar_conversa(self, conversa_id: str, session) -> None
+```
+
+**OrderRepo:**
+```python
+async def criar_pedido(self, pedido: Pedido, itens: list[ItemPedido], session) -> Pedido  # retorna com id via RETURNING
+async def get_pedido(self, tenant_id: str, pedido_id: str, session) -> Pedido | None  # inclui itens
+async def get_pedidos_pendentes(self, tenant_id: str, session) -> list[Pedido]
+async def update_pdf_path(self, tenant_id: str, pedido_id: str, pdf_path: str, session) -> None
+```
+
+**Critérios:**
+- [ ] Todos os métodos públicos de repo têm `tenant_id` onde aplicável
+- [ ] Nenhum repo importa service, runtime ou ui
+- [ ] `lint-imports` sem violação em src.*.repo
 
 ---
 
-### E5 — Webhook Evolution API → Identity Router
+### E4 — Serviços e Config
 
-**Camadas:** Types, Config, Service, UI (agents)
 **Arquivos:**
-- `output/src/agents/types.py` (novo)
-- `output/src/agents/config.py` (novo)
-- `output/src/agents/service.py` (novo — IdentityRouter)
-- `output/src/agents/ui.py` (novo — webhook endpoint)
-- `output/alembic/versions/0004_whatsapp_instancias.py` (novo, se não couber em 0003)
-- `output/src/main.py` (atualização — inclui router agents)
+- `output/src/orders/config.py` — criar: `OrderConfig` (pdf_storage_path via `PDF_STORAGE_PATH`, default `./pdfs`)
+- `output/src/orders/service.py` — criar: `OrderService`
+- `output/src/agents/config.py` — adicionar: `AgentClienteConfig`
+- `output/src/agents/service.py` — reescrever `IdentityRouter.resolve()` real; adicionar `send_whatsapp_media()`
 
-**Critérios de aceitação:**
-- [ ] Tabela `whatsapp_instancias`: `(instancia_id TEXT PK, tenant_id TEXT NOT NULL REFERENCES tenants(id), numero_whatsapp TEXT NOT NULL, ativo BOOL NOT NULL DEFAULT true)`
-- [ ] `Mensagem` Pydantic model: `id: str, de: str, para: str, texto: str, tipo: str, instancia_id: str, timestamp: datetime`
-- [ ] `Persona` enum: `CLIENTE_B2B`, `REPRESENTANTE`, `DESCONHECIDO`
-- [ ] `POST /webhook/whatsapp` — aceita payload JSON da Evolution API
-- [ ] Valida assinatura: `hmac.compare_digest(HMAC-SHA256(body_bytes, secret), header_value)`; retorna `HTTP 403` se inválido ou header ausente
-- [ ] Retorna `HTTP 200 {"status": "received"}` imediatamente; processamento via `BackgroundTasks`
-- [ ] `IdentityRouter.resolve(mensagem, tenant_id, session) → Persona`:
-  - Stub Sprint 1: sempre retorna `DESCONHECIDO` (lookup real em Sprint 2 quando tabelas existirem)
-  - Interface definida para facilitar substituição em Sprint 2
-- [ ] `structlog`: `webhook_recebido{tenant_id, persona, from_number_hash}` — número hasheado SHA256 (LGPD)
-- [ ] `pytest -m unit` cobre: assinatura válida → 200; assinatura inválida → 403; header ausente → 403
-- [ ] Cobertura ≥ 80% do handler webhook
+**AgentClienteConfig (agents/config.py):**
+```python
+class AgentClienteConfig:
+    model: str = "claude-sonnet-4-6"
+    max_tokens: int = 1024
+    max_tool_iterations: int = 5
+    redis_history_ttl: int = 86400      # 24h
+    redis_history_max_messages: int = 20
+    pdf_storage_path: str = os.getenv("PDF_STORAGE_PATH", "./pdfs")
+    system_prompt_template: str  # ver spec do AgentCliente
+```
+
+**IdentityRouter real (agents/service.py):**
+```python
+async def resolve(self, mensagem: Mensagem, tenant_id: str, session: AsyncSession) -> Persona:
+    telefone = mensagem.de.split("@")[0]  # normaliza E.164
+    if await ClienteB2BRepo().get_by_telefone(tenant_id, telefone, session): return Persona.CLIENTE_B2B
+    if await RepresentanteRepo().get_by_telefone(tenant_id, telefone, session): return Persona.REPRESENTANTE
+    return Persona.DESCONHECIDO
+```
+
+**send_whatsapp_media (agents/service.py):**
+```python
+async def send_whatsapp_media(instancia_id: str, numero: str, pdf_bytes: bytes, filename: str, caption: str = "") -> None
+# POST {EVOLUTION_API_URL}/message/sendMedia/{instancia_id}
+# body: {"number": numero, "mediatype": "document", "mimetype": "application/pdf",
+#        "caption": caption, "media": base64(pdf_bytes), "fileName": filename}
+# Erro não propaga — background task seguro
+```
+
+**OrderService (orders/service.py):**
+```python
+async def criar_pedido_from_intent(self, tenant_id: str, cliente_b2b_id: str | None,
+    representante_id: str | None, itens: list[ItemPedidoInput]) -> Pedido
+    # calcula total_estimado = sum(qtd * preco) em Python; persiste via OrderRepo
+async def update_pdf_path(self, tenant_id: str, pedido_id: str, pdf_path: str) -> None
+async def get_pedidos_pendentes(self, tenant_id: str) -> list[Pedido]
+```
+
+**Critérios:**
+- [ ] IdentityRouter usa `ClienteB2BRepo` e `RepresentanteRepo` (não stubs)
+- [ ] `send_whatsapp_media` usa base64 + Evolution API endpoint correto
+- [ ] `OrderService` calcula `total_estimado` em Python
+- [ ] Nenhum service importa runtime ou ui
+- [ ] OTel span em `IdentityRouter.resolve` com `tenant_id`
 
 ---
 
-### E6 — Resposta básica WhatsApp por persona
+### E5 — Runtime: PDFGenerator
 
-**Camadas:** Service, Runtime, UI (agents)
-**Arquivos:**
-- `output/src/agents/runtime/agent_cliente.py` (novo)
-- `output/src/agents/runtime/agent_rep.py` (novo)
-- `output/src/agents/service.py` (atualização — send_whatsapp_message)
+**Arquivo:** `output/src/orders/runtime/__init__.py` + `output/src/orders/runtime/pdf_generator.py`
 
-**Critérios de aceitação:**
-- [ ] `send_whatsapp_message(instancia_id, numero, texto, session) → None` → POST `{EVOLUTION_API_URL}/message/sendText/{instancia_id}` com header `apikey: {EVOLUTION_API_KEY}`; usa `httpx.AsyncClient`
-- [ ] `AgentCliente.responder(mensagem, tenant, session)` → envia: `"Olá! Sou o assistente da {tenant.nome}. Como posso ajudar? Consulte produtos, verifique pedidos ou fale com um atendente."`
-- [ ] `AgentRep.responder(mensagem, tenant, session)` → envia: `"Olá! Use este canal para consultar catálogo, registrar pedidos da sua carteira ou verificar metas."`
-- [ ] `Persona.DESCONHECIDO` → envia: `"Olá! Para atendimento, entre em contato pelo WhatsApp {tenant.whatsapp_number or 'da distribuidora'}."`
-- [ ] Falha na Evolution API (status != 2xx) → `structlog.error("evolution_api_erro", status_code=..., tenant_id=...)` + exceção não propagada (background task não crasha)
-- [ ] OTel span `agent_response` com atributos: `tenant_id`, `persona`
-- [ ] Métricas: contador `whatsapp_mensagens_enviadas_total{tenant_id, persona}`
-- [ ] `pytest -m unit` cobre cada persona com mock httpx; cobertura ≥ 80%
+**Dependências:** `fpdf2>=2.7.0` (adicionar em pyproject.toml)
 
----
+**Interface:**
+```python
+class PDFGenerator:
+    def gerar_pdf_pedido(self, pedido: Pedido, tenant: Tenant) -> bytes: ...
+```
 
-### E7 — Onboarding segundo tenant (infraestrutura + validação de isolamento)
+**Layout PDF (A4 portrait, fpdf2):**
+- Header: nome do tenant em fundo azul escuro (#003087), branco, bold
+- Bloco: ID curto `PED-{pedido.id[:8]}` + data/hora
+- Bloco: dados do cliente B2B (se disponível)
+- Tabela itens: Código | Produto | Qtd | Preço Unit. | Subtotal
+  - linhas alternadas branco/#F5F5F5
+  - valores em `R$ {valor:,.2f}` convertido para formato BR (`1.234,56`)
+- Total alinhado à direita
+- Rodapé: timestamp + instrução ao gestor
 
-**Camadas:** Service, scripts, tests
-**Arquivos:**
-- `output/scripts/provision_tenant.py` (novo)
-- `output/src/tests/integration/tenants/test_isolation.py` (novo)
+**Nota:** `bytes(pdf.output())` — fpdf2 2.x retorna bytearray; encapsular em `bytes()`.
 
-**Critérios de aceitação:**
-- [ ] `python scripts/provision_tenant.py --nome "Distribuidora Teste" --cnpj "00.000.000/0001-00" --gestor-cnpj "000.000.000-00" --gestor-senha "senha123"` cria tenant + usuário gestor via `TenantService.provision_tenant`
-- [ ] Script inicia DB session via `providers/db.py`; não hardcoda URL — usa `POSTGRES_URL` injetada via `infisical run`
-- [ ] Seed do JMB já existente via migration 0002 (não requer script)
-- [ ] Teste de isolamento de catálogo (`@pytest.mark.integration`):
-  - Cria tenant JMB + tenant TESTE no DB de teste
-  - Insere produto com `tenant_id="JMB"`
-  - `CatalogRepo.listar_produtos(tenant_id="TESTE", session)` → retorna lista vazia
-  - `CatalogRepo.listar_produtos(tenant_id="JMB", session)` → retorna o produto inserido
-- [ ] Teste de isolamento de auth:
-  - Gestor JMB não pode autenticar com tenant_id TESTE (mesmo que o CNPJ seja igual — lookups filtram por tenant_id)
-- [ ] `pytest -m integration` passa para `test_isolation.py`
+**Imports permitidos:** apenas `orders/types`, `tenants/types`, stdlib, fpdf2
+
+**Critérios:**
+- [ ] Retorna `bytes` (não bytearray)
+- [ ] Não importa nada de `agents/` ou `catalog/`
+- [ ] PDF > 1024 bytes com dados de fixture
+- [ ] Nome do tenant aparece no conteúdo do PDF
+- [ ] Total aparece formatado em reais
 
 ---
 
-## Decisões pendentes
+### E6 — Runtime: AgentCliente (Claude SDK)
 
-Nenhuma. ADRs D019–D022 aprovados e documentados em `docs/design-docs/index.md` antes da geração deste spec.
+**Arquivo:** `output/src/agents/runtime/agent_cliente.py` — **REESCREVER COMPLETAMENTE**
+
+**Construtor (injeção de dependências):**
+```python
+class AgentCliente:
+    def __init__(self,
+        catalog_service: CatalogService,
+        order_service: OrderService,
+        conversa_repo: ConversaRepo,
+        config: AgentClienteConfig,
+    ) -> None: ...
+
+    async def responder(self, mensagem: Mensagem, tenant: Tenant,
+                        instancia: WhatsappInstancia, session: AsyncSession,
+                        redis: Redis) -> None: ...
+```
+
+**System prompt:**
+```
+Você é um assistente de vendas B2B da {tenant_nome}.
+Seu objetivo é ajudar clientes a encontrar produtos no catálogo e registrar pedidos.
+Seja objetivo e profissional. Fale sempre em português.
+Ao buscar produtos, use a ferramenta buscar_produtos com a descrição do que o cliente quer.
+Ao confirmar um pedido, liste todos os itens com quantidades e preços e use confirmar_pedido.
+Nunca invente preços — use apenas os retornados pela busca.
+```
+
+**Ferramentas expostas ao modelo:**
+
+`buscar_produtos`:
+- input: `query: str`, `limit: int = 5`
+- executa: `catalog_service.buscar_semantico(tenant_id, query, limit)`
+- retorno: JSON com `[{codigo_externo, nome, marca, categoria, preco_padrao}]`
+
+`confirmar_pedido`:
+- input: `itens: list[{codigo_externo, nome_produto, quantidade, preco_unitario}]`, `observacao?: str`
+- executa: `order_service.criar_pedido_from_intent()` → `PDFGenerator().gerar_pdf_pedido()` → `send_whatsapp_media()`
+- notifica: `tenant.whatsapp_number` (e `representante.telefone` se representante_id presente)
+
+**Loop de conversa (imperativo, não recursivo):**
+```
+1. Carrega histórico Redis: key conv:{tenant_id}:{telefone}, TTL 24h, max 20 msgs
+2. Appenda mensagem do usuário
+3. anthropic.messages.create(model, system, messages, tools, max_tokens)
+4. Se stop_reason == "tool_use":
+   a. Executa ferramenta solicitada
+   b. Appenda tool_use block + tool_result block
+   c. Loop (máx 5 iterações — impede runaway)
+5. Se stop_reason == "end_turn":
+   a. Extrai TextBlock (verificar que existe antes de extrair)
+   b. ConversaRepo.add_mensagem (user + assistant)
+   c. Atualiza Redis com histórico atualizado
+   d. send_whatsapp_message() com resposta textual
+```
+
+**Critérios:**
+- [ ] `AgentCliente` recebe deps no construtor (testável sem monkey-patching)
+- [ ] Loop limitado a `max_tool_iterations` (default 5)
+- [ ] `stop_reason == "tool_use"` sem TextBlock não provoca KeyError
+- [ ] Histórico Redis carregado no início de cada turno
+- [ ] Mensagens persistidas no DB após cada turno
+- [ ] `send_whatsapp_media` chamado ao confirmar pedido
+- [ ] OTel span `agent_cliente_responder` com tenant_id
+- [ ] Nenhum `print()` — structlog apenas
+
+---
+
+### E7 — Atualização de agents/ui.py e main.py
+
+**agents/ui.py — atualizar `_process_message`:**
+```python
+# Construir AgentCliente com dependências injetadas
+from src.catalog.service import CatalogService
+from src.catalog.repo import CatalogRepo
+from src.orders.service import OrderService
+from src.orders.repo import OrderRepo
+from src.agents.config import AgentClienteConfig
+from src.agents.repo import ConversaRepo
+from src.providers.db import get_redis
+
+catalog_service = CatalogService(CatalogRepo(), factory)
+order_service = OrderService(OrderRepo(), factory)
+conversa_repo = ConversaRepo()
+config = AgentClienteConfig()
+redis = get_redis()
+
+agent = AgentCliente(catalog_service, order_service, conversa_repo, config)
+await agent.responder(mensagem, tenant, instancia, session, redis)
+```
+
+**main.py — adicionar no lifespan:**
+```python
+from src.orders.config import OrderConfig
+pdf_dir = Path(OrderConfig().pdf_storage_path)
+pdf_dir.mkdir(parents=True, exist_ok=True)
+```
+
+**main.py — montar /pdfs:**
+```python
+pdfs_dir = Path(OrderConfig().pdf_storage_path)
+app.mount("/pdfs", StaticFiles(directory=str(pdfs_dir)), name="pdfs")
+```
+
+**pyproject.toml — adicionar dependência:**
+```toml
+"fpdf2>=2.7.0",
+```
+
+---
+
+### E8 — Testes unitários
+
+**Arquivos:**
+- `output/src/tests/unit/agents/test_identity_router.py` — **REESCREVER** (5 casos)
+- `output/src/tests/unit/agents/test_agent_cliente.py` — **REESCREVER** (7 casos)
+- `output/src/tests/unit/orders/__init__.py` — criar vazio
+- `output/src/tests/unit/orders/test_types.py` — criar (3 casos)
+- `output/src/tests/unit/orders/test_repo.py` — criar (4 casos)
+- `output/src/tests/unit/orders/test_service.py` — criar (3 casos)
+- `output/src/tests/unit/orders/test_pdf_generator.py` — criar (4 casos)
+
+**test_identity_router.py (5 casos):**
+1. telefone em `clientes_b2b` → CLIENTE_B2B
+2. telefone só em `representantes` → REPRESENTANTE
+3. telefone em nenhum → DESCONHECIDO
+4. número `5519999@s.whatsapp.net` → repo chamado com `5519999`
+5. telefone em ambos → CLIENTE_B2B tem prioridade
+
+**test_agent_cliente.py (7 casos):**
+1. `anthropic.messages.create` chamado com model correto
+2. `stop_reason == "tool_use"` com `buscar_produtos` → `CatalogService.buscar_semantico` chamado
+3. `stop_reason == "tool_use"` com `confirmar_pedido` → `OrderService.criar_pedido_from_intent` chamado
+4. `stop_reason == "end_turn"` → `send_whatsapp_message` chamado
+5. Mock sempre retorna tool_use → após 5 iterações, encerra sem loop infinito
+6. Redis retorna histórico → histórico incluído nas messages do Claude
+7. `ConversaRepo.add_mensagem` chamado após turno encerrado
+
+**test_pdf_generator.py (4 casos):**
+1. `gerar_pdf_pedido` retorna `bytes`
+2. Retorno > 1024 bytes
+3. Conteúdo contém nome do tenant
+4. Conteúdo contém total formatado
 
 ---
 
 ## Fora do escopo
 
+- AgentRep com Claude SDK (permanece template; Sprint 3)
+- Painel de pedidos REST (Sprint 4)
+- Integração ERP para confirmação de pedido
+- Preços diferenciados por cliente
 - Refresh token JWT
-- Autenticação dos clientes WhatsApp (identificados apenas pelo número de telefone)
-- Migração das tabelas de `catalog` para schemas por tenant (mantém D017)
-- Schema por tenant para qualquer domínio (mantém D020)
-- AgentCliente completo com Claude SDK e memória (Sprint 2)
-- ConversaRepo / histórico de mensagens (Sprint 2)
-- Tabelas `representantes` e `clientes_b2b` — E5 usa stub `DESCONHECIDO`
-- Preços diferenciados por cliente (Sprint 2)
-- Rate limiting por tenant via Redis (sprint futuro)
-- HTTPS/TLS (staging tem HTTP; TLS em sprint de hardening)
-- Platform admin role (Lauzier opera via script, não endpoint)
-- Segundo tenant real com cliente definido (cliente não identificado ainda)
-- Painel web do gestor (Sprint 4)
-- Retry automático na Evolution API (Sprint 2)
+- Rate limiting
+- Segundo tenant real
 
 ---
 
 ## Riscos
 
-| Risco | Probabilidade | Impacto | Mitigação |
-|-------|--------------|---------|-----------|
-| Sprint grande (7 entregas, ~22 arquivos novos) | Alta | Médio | Prioridade E1→E2→E3→E4→E7→E5→E6; Evaluator pode aprovar E1-E5+E7 e postergar E6 para Sprint 1b |
-| APScheduler duplicando jobs com `uvicorn --reload` | Média | Médio | `scheduler.start()` condicionado a `not settings.debug` ou APScheduler `jobstore` com ID único |
-| Evolution API indisponível em dev (sem instância configurada) | Alta | Baixo | E5+E6 100% unit com mocks; teste real apenas em staging com instância ativa |
-| `bcrypt` lento em testes (rounds=12 por padrão) | Média | Baixo | Fixture de teste usa `rounds=4`; produção usa `rounds=12` |
-| Middleware TenantProvider com latência de DB por request | Baixa | Médio | Cache Redis do tenant com TTL 60s (especificado em E1) |
+| Risco | Probabilidade | Mitigação |
+|-------|--------------|-----------|
+| `fpdf2.output()` retorna bytearray (não bytes) | Alta | Sempre encapsular: `bytes(pdf.output())` |
+| `subtotal` como coluna gerada — gotcha SQLAlchemy | Alta | Calcular em Python, salvar como NUMERIC regular |
+| AgentCliente importa de orders/ — violação cross-domain? | Baixa | import-linter não proíbe cross-domain em runtime; só proíbe camadas erradas |
+| `stop_reason == "tool_use"` sem TextBlock → KeyError | Média | Verificar existência de TextBlock antes de extrair |
+| Redis key sem normalização de telefone → colisão | Baixa | `_normalize_phone` privado em ConversaRepo strip `@s.whatsapp.net` |
 
 ---
 
-## Handoff para o próximo sprint
+## Handoff para Sprint 3
 
-Sprint 2 (Agente cliente completo) encontrará:
-- **TenantProvider** funcional → qualquer novo endpoint tem tenant no contexto sem código adicional
-- **Auth JWT** operacional → `require_role(["gestor"])` pronto para endpoints do painel
-- **whatsapp_instancias** populada → webhook resolve tenant por instância automaticamente
-- **IdentityRouter** com interface definida → Sprint 2 implementa lookup real em `representantes` + `clientes_b2b`
-- **Scheduler** ativo → Sprint 2 ajusta cadência por tenant sem mudança de código
-- **send_whatsapp_message** funcional → Sprint 2 usa para respostas reais do AgentCliente
-- **provision_tenant** script → operações de onboarding sem intervenção em código
+Sprint 3 (AgentRep) encontrará:
+- **IdentityRouter real** funcional → reps identificados automaticamente
+- **ConversaRepo + Redis** operacional → memória reutilizável por AgentRep
+- **OrderService** operacional → AgentRep usa o mesmo serviço para pedidos em nome de clientes
+- **PDFGenerator** operacional → AgentRep usa o mesmo gerador
+- **clientes_b2b + representantes** tabelas populadas → lookup funcional

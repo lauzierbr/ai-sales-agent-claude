@@ -10,7 +10,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Infra-Staging | ✅ | Infra | Ambiente staging (mac-mini-lablz) |
 | Sprint 0 | ✅ | Produto | Catálogo — crawler + enriquecimento |
 | Sprint 1 | ✅ | Produto | Infraestrutura da aplicação |
-| Sprint 2 | 🔲 | Produto | Agente cliente completo |
+| Sprint 2 | ✅ | Produto | Agente cliente completo |
 | Sprint 3 | 🔲 | Produto | Agente representante |
 | Sprint 4 | 🔲 | Produto | Painel do gestor |
 | Sprint 5 | 🔲 | Produto | Inteligência e escala |
