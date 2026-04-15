@@ -202,6 +202,23 @@ class CatalogService:
                 dimensoes=len(embedding),
             )
 
+    async def get_por_codigo(
+        self, tenant_id: str, codigo_externo: str
+    ) -> ResultadoBusca | None:
+        """Busca produto por código externo (lookup exato).
+
+        Args:
+            tenant_id: identificador do tenant.
+            codigo_externo: código do produto no ERP.
+
+        Returns:
+            ResultadoBusca com distancia=0.0 ou None se não encontrado.
+        """
+        produto = await self._repo.get_produto_por_codigo(tenant_id, codigo_externo)
+        if produto is None:
+            return None
+        return ResultadoBusca(produto, distancia=0.0)
+
     # ─────────────────────────────────────────────
     # Busca semântica
     # ─────────────────────────────────────────────

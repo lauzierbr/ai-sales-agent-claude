@@ -86,10 +86,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
     from src.orders.repo import OrderRepo
     from src.orders.runtime.pdf_generator import PDFGenerator
     from src.orders.service import OrderService
-    from src.providers.db import get_session_factory
+    from src.providers.db import get_redis, get_session_factory
     from src.tenants.repo import TenantRepo
 
     factory = get_session_factory()
+    _redis = get_redis()
 
     # CatalogService — usa embedding OpenAI para busca semântica
     _embedding_client = _openai.AsyncOpenAI(api_key=_os.getenv("OPENAI_API_KEY"))
@@ -167,6 +168,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     pdf_generator=PDFGenerator(),
                     config=AgentClienteConfig(),
                     catalog_service=_catalog_service,
+                    redis_client=_redis,
                 )
                 await agent.responder(
                     mensagem=mensagem,

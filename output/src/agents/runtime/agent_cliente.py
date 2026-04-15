@@ -419,12 +419,26 @@ class AgentCliente:
             return {"produtos": [], "aviso": "Catálogo não disponível."}
 
         try:
-            # buscar_semantico cria a própria session via session_factory
-            resultados = await self._catalog_service.buscar_semantico(
-                tenant_id=tenant_id,
-                query=query,
-                limit=limit,
-            )
+            resultados = []
+
+            # Se a query parece um código (só dígitos), tenta lookup exato primeiro
+            query_stripped = query.strip()
+            if query_stripped.isdigit() and len(query_stripped) >= 4:
+                por_codigo = await self._catalog_service.get_por_codigo(
+                    tenant_id=tenant_id,
+                    codigo_externo=query_stripped,
+                )
+                if por_codigo is not None:
+                    resultados = [por_codigo]
+
+            # Fallback (ou pesquisa normal): busca semântica
+            if not resultados:
+                resultados = await self._catalog_service.buscar_semantico(
+                    tenant_id=tenant_id,
+                    query=query,
+                    limit=limit,
+                )
+
             # resultados é list[ResultadoBusca]; cada item tem .produto e .score
             produtos = [
                 {

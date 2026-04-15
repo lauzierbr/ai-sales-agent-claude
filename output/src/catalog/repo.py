@@ -298,6 +298,37 @@ class CatalogRepo:
 
         return self._row_to_produto(row) if row else None
 
+    async def get_produto_por_codigo(
+        self, tenant_id: str, codigo_externo: str
+    ) -> Produto | None:
+        """Busca produto por código externo (lookup exato).
+
+        Args:
+            tenant_id: identificador do tenant.
+            codigo_externo: código do produto no ERP.
+
+        Returns:
+            Produto encontrado ou None.
+        """
+        sql = text("""
+            SELECT
+                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
+                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
+                status_enriquecimento, criado_em, atualizado_em
+            FROM produtos
+            WHERE tenant_id = :tenant_id
+              AND codigo_externo = :codigo_externo
+        """)
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                sql,
+                {"tenant_id": tenant_id, "codigo_externo": codigo_externo},
+            )
+            row = result.fetchone()
+
+        return self._row_to_produto(row) if row else None
+
     async def listar_produtos(
         self,
         tenant_id: str,
