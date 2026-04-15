@@ -407,13 +407,15 @@ class CatalogRepo:
         """
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
-        # Notas de implementação:
-        # 1. O vetor é interpolado diretamente no SQL (não como parâmetro bind)
-        #    porque asyncpg não consegue inferir o tipo 'vector' do pgvector.
-        #    A interpolação é segura: vec_str contém apenas floats gerados internamente.
-        # 2. ORDER BY usa a expressão completa (não o alias 'distancia') porque
-        #    asyncpg com prepared statements retorna 0 rows ao ordenar por alias
-        #    de expressão vetorial — bug confirmado em testes de isolamento.
+        # Notas de implementação (asyncpg + pgvector):
+        # 1. O vetor é interpolado no SQL (não como parâmetro bind) porque asyncpg
+        #    não infere o tipo 'vector' automaticamente em prepared statements.
+        # 2. ORDER BY com expressão vetorial em prepared statements asyncpg retorna
+        #    silenciosamente 0 rows (bug confirmado por testes de isolamento).
+        # 3. LIMIT é aplicado em Python após sort, não no SQL — necessário porque
+        #    sem ORDER BY o LIMIT retorna rows em ordem física arbitrária, não
+        #    por similaridade. Busca todos os rows < distancia_maxima e pega os N mais
+        #    próximos. Em produção: catálogo JMB tem ~450 produtos, volume gerenciável.
         sql = text(f"""
             SELECT
                 id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
@@ -425,7 +427,6 @@ class CatalogRepo:
               AND embedding IS NOT NULL
               AND status_enriquecimento IN ('enriquecido', 'ativo')
               AND embedding <=> '{vec_str}'::vector < :distancia_maxima
-            LIMIT :limit
         """)
 
         async with self._session_factory() as session:
@@ -434,14 +435,12 @@ class CatalogRepo:
                 {
                     "tenant_id": tenant_id,
                     "distancia_maxima": distancia_maxima,
-                    "limit": limit,
                 },
             )
             rows = result.fetchall()
 
-        # ORDER BY na query com expressão vetorial causa 0 rows no asyncpg (bug confirmado).
-        # Ordenamos em Python após fetch — correto e sem overhead para os limites usados.
-        sorted_rows = sorted(rows, key=lambda r: float(r.distancia))
+        # Sort por distância crescente em Python, depois slice para o limit
+        sorted_rows = sorted(rows, key=lambda r: float(r.distancia))[:limit]
         return [(self._row_to_produto(row), float(row.distancia)) for row in sorted_rows]
 
     # ─────────────────────────────────────────────
