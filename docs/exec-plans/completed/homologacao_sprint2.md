@@ -1,9 +1,30 @@
 # Homologação Sprint 2 — Agente Cliente Completo
 
-**Status:** PENDENTE  
+**Status:** APROVADO ✅  
 **Data:** 2026-04-15  
 **Executado por:** Lauzier  
 **QA Evaluator:** APROVADO (`artifacts/qa_sprint_2.md`)
+
+## Resultado Final
+
+| Cenário | Resultado |
+|---------|-----------|
+| C1 — Saudação e identidade | ✅ Bot responde com persona JMB |
+| C2 — Busca semântica ("tem shampoo?") | ✅ 5 resultados relevantes |
+| C3 — Busca por código exato | ✅ Lookup direto por `codigo_externo` |
+| C4 — Confirmar pedido via WhatsApp | ✅ Pedido `a0f0df8a` criado com PDF |
+| C5 — Pedido persistido no DB | ✅ `itens_pedido` com código, qtd, preço |
+| C6 — Conversa persistida | ✅ 6 mensagens em `mensagens_conversa` |
+| C7 — `print()` ausente | ✅ Zero ocorrências |
+| C8 — Logs estruturados | ✅ structlog com `tenant_id`, hash LGPD |
+
+**Bugs corrigidos durante homologação:**
+- asyncpg + pgvector ORDER BY silencioso → workaround Python sort
+- `session.commit()` ausente → pedido/conversa não persistia
+- `fromMe=True` causava loop infinito de resposta
+- Webhook signature: Evolution envia token simples (não HMAC)
+- `distancia_maxima` ajustado de 0.4 → 0.75
+- FK `itens_pedido.produto_id` (TEXT vs UUID) removida da migration
 
 ---
 
