@@ -71,12 +71,35 @@ Se encontrar um ADR ausente:
 
 ---
 
+## Gotchas conhecidos — inclua sempre que aplicável
+
+Quando o sprint introduzir uma integração nova com biblioteca externa, driver
+de banco ou API de terceiro, inclua uma seção `## Gotchas conhecidos` no spec.
+
+Exemplos do histórico do projeto que **devem ser referenciados se o sprint
+tocar as mesmas áreas:**
+
+| Área | Gotcha | Workaround |
+|------|--------|------------|
+| asyncpg + pgvector | `ORDER BY` com expressão vetorial em prepared statements retorna 0 rows silenciosamente | Fetch all sem `ORDER BY`/`LIMIT`, sort em Python |
+| asyncpg + pgvector | `CAST(:param AS vector)` falha na inferência de tipo | Interpolar a string do vetor diretamente no SQL (f-string) |
+| SQLAlchemy AsyncSession | `async with factory() as session` não faz auto-commit | Chamar `await session.commit()` explicitamente após qualquer escrita |
+| fpdf2 2.x | `pdf.output()` retorna `bytearray`, não `bytes` | Encapsular em `bytes(pdf.output())` |
+| Evolution API webhook | Não assina com HMAC — envia token simples no header | Comparação de token com `hmac.compare_digest`, não verificação de assinatura |
+| Evolution API webhook | Envia webhook para mensagens de saída (`fromMe=True`) | Ignorar mensagens `fromMe=True` em `parse_mensagem` |
+
+Se o sprint introduzir nova integração, o Planner deve pesquisar gotchas
+conhecidos da biblioteca/API e documentá-los no spec antes de passar ao Generator.
+
+---
+
 ## Responsabilidades
 
 1. Gerar `artifacts/spec.md` com o formato definido abaixo
 2. Criar `docs/exec-plans/active/sprint-N-nome.md` com o plano detalhado
-3. Atualizar o status do sprint em `docs/PLANS.md` para 🔄 Em planejamento
-4. Se necessário, propor novos ADRs em `docs/design-docs/index.md`
+3. Criar `docs/exec-plans/active/homologacao_sprint-N.md` com o checklist de homologação humana
+4. Atualizar o status do sprint em `docs/PLANS.md` para 🔄 Em planejamento
+5. Se necessário, propor novos ADRs em `docs/design-docs/index.md`
 
 ---
 
@@ -104,6 +127,10 @@ explicitamente não faz evita que o Generator expanda o escopo por conta própri
 **Critérios testáveis, não subjetivos:** "O código deve ser limpo" não é
 critério. "import-linter passa sem violações" é critério. "pytest -m unit
 passa com cobertura ≥ 80% das funções de Service" é critério.
+
+**Smoke gate obrigatório:** Todo sprint que toca Runtime ou UI deve especificar
+um critério de smoke staging executável no mac-lablz com infra real. Não é
+opcional — sem smoke gate, o Evaluator não pode aprovar o sprint.
 
 ---
 
@@ -136,6 +163,14 @@ Se não há impacto multi-tenant, justifique explicitamente.]
 |----------|----------|-----------|
 | [NOME_EXATO] | development | [o que é] |
 
+## Gotchas conhecidos
+[Comportamentos silenciosos, bugs de drivers, footguns de bibliotecas que
+o Generator DEVE tratar explicitamente. Vazio se nenhum identificado.]
+
+| Área | Gotcha | Workaround obrigatório |
+|------|--------|------------------------|
+| [ex: asyncpg + pgvector] | [comportamento inesperado] | [como contornar] |
+
 ## Entregas
 
 ### [Nome da entrega 1]
@@ -147,6 +182,27 @@ Se não há impacto multi-tenant, justifique explicitamente.]
 
 ### [Nome da entrega 2]
 ...
+
+## Critério de smoke staging (obrigatório se sprint toca Runtime ou UI)
+
+Script: `scripts/smoke_sprint_N.py`
+
+O script deve verificar automaticamente, contra infra real (mac-lablz):
+- [ ] [verificação do caminho crítico principal]
+- [ ] [verificação de persistência no banco]
+- [ ] [verificação de integração externa se aplicável]
+
+Execução esperada: `python scripts/smoke_sprint_N.py` → saída `ALL OK`
+
+## Checklist de homologação humana
+
+Cenários que o usuário executa manualmente após o smoke gate passar.
+Cada cenário tem: condição inicial, ação e resultado esperado observável.
+
+| ID | Cenário | Como testar | Resultado esperado |
+|----|---------|-------------|-------------------|
+| H1 | [cenário crítico] | [passos exatos] | [o que observar] |
+| H2 | ... | ... | ... |
 
 ## Decisões pendentes
 [ADRs que precisam ser aprovados antes da implementação. Vazio se nenhum.]
@@ -166,11 +222,65 @@ aqui afetam sprints futuros.]
 
 ---
 
+## Formato obrigatório de docs/exec-plans/active/homologacao_sprint-N.md
+
+O Planner cria este arquivo. O Generator completa os detalhes técnicos.
+O usuário executa e registra o resultado.
+
+```markdown
+# Homologação Sprint [N] — [Nome]
+
+**Status:** PENDENTE
+**Data prevista:** [AAAA-MM-DD]
+**Executado por:** Lauzier
+
+---
+
+## Pré-condições (executadas pelo Generator antes de chamar homologação)
+
+- [ ] Deploy realizado: `./scripts/deploy.sh staging`
+- [ ] Migrations aplicadas: `alembic upgrade head`
+- [ ] Seed de dados: `python scripts/seed_homologacao_sprint-N.py`
+- [ ] Smoke gate passou: `python scripts/smoke_sprint_N.py` → ALL OK
+- [ ] Health check: `curl http://100.113.28.85:8000/health` → versão correta
+
+**Só iniciar homologação manual após todas as pré-condições ✅**
+
+---
+
+## Cenários de homologação
+
+### H1 — [Nome do cenário]
+**Condição inicial:** [estado do sistema antes do teste]
+**Ação:** [o que o usuário faz — WhatsApp, curl, etc.]
+**Resultado esperado:** [o que deve aparecer — mensagem, dado no banco, etc.]
+**Verificação de banco (se aplicável):** `SELECT ...`
+**Resultado:** [ ] PASSOU / [ ] FALHOU
+**Observações:** ___
+
+### H2 — ...
+
+---
+
+## Resultado final
+
+**Veredicto:** [ ] APROVADO / [ ] REPROVADO
+**Data:** ___
+**Bugs encontrados:**
+- [ ] nenhum
+
+**Se REPROVADO — próximos passos:**
+[lista de bugs para hotfix antes do Sprint [N+1]]
+```
+
+---
+
 ## O que fazer ao terminar
 
 1. Salvar `artifacts/spec.md` com o conteúdo completo
 2. Criar `docs/exec-plans/active/sprint-N-nome.md` com seções:
    - Objetivo, Entregas (checklist), Log de decisões, Notas de execução
-3. Atualizar `docs/PLANS.md`: status do sprint para 🔄
-4. Comunicar ao usuário que o spec está disponível para revisão
-5. Aguardar aprovação explícita antes de qualquer outra ação
+3. Criar `docs/exec-plans/active/homologacao_sprint-N.md` com o template acima
+4. Atualizar `docs/PLANS.md`: status do sprint para 🔄
+5. Comunicar ao usuário que o spec está disponível para revisão
+6. Aguardar aprovação explícita antes de qualquer outra ação

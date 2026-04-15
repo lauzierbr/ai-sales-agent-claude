@@ -33,12 +33,33 @@ avalie cada critério com as seguintes perguntas:
 - Cobre casos de erro, não apenas happy path?
 - Inclui verificação de segurança (tenant isolation, secrets, linter)?
 - A evidência esperada é objetiva (não "parece correto")?
+- **O contrato inclui critério A_SMOKE se o sprint toca Runtime ou UI?**
 
 **Para critérios de Média:**
 - O threshold de falhas permitidas está explícito?
 - Os testes de Média têm comandos concretos?
+- **O contrato inclui M_INJECT se o sprint instancia deps em ui.py?**
 
-**Objeções válidas — exemplos:**
+**Objeções obrigatórias — recuse o contrato se:**
+
+```
+OBJEÇÃO A_SMOKE ausente: Sprint toca Runtime/UI mas não há critério de smoke
+staging com infra real. Todo sprint nessa categoria requer:
+  A_SMOKE. smoke gate staging — caminho crítico completo
+    Teste: python scripts/smoke_sprint_N.py (no mac-lablz)
+    Evidência esperada: saída "ALL OK", exit code 0
+
+OBJEÇÃO M_INJECT ausente: Sprint instancia AgentCliente/deps em ui.py mas
+não há teste verificando que nenhuma dependência crítica é None.
+Proposta: adicionar M_INJECT como critério de Média.
+
+OBJEÇÃO commit não testado: Sprint escreve no banco mas nenhum critério
+verifica persistência após commit em sessão nova.
+Proposta: adicionar teste @pytest.mark.staging que verifica dado persiste
+após commit em nova sessão.
+```
+
+**Objeções de exemplo:**
 
 ```
 OBJEÇÃO A1: Critério "endpoint retorna 200" não cobre caso de tenant inválido.
@@ -50,8 +71,8 @@ Proposta: máximo 1 falha de Média permitida (de 3 critérios).
 ```
 
 **Quando aceitar:** quando todos os critérios de Alta são testáveis
-mecanicamente, cobrem casos de erro e de segurança, e o threshold de
-Média está explícito.
+mecanicamente, cobrem casos de erro e de segurança, incluem A_SMOKE se
+aplicável, e o threshold de Média está explícito.
 
 Resposta de aceitação:
 
@@ -76,23 +97,32 @@ grep -rn "password\s*=\s*['\"][^{]" output/src/
 # Esperado: sem resultados (passwords só via os.getenv)
 
 # 2. Arquitetura — bloqueante imediato
-python -m importchecker
-# ou: lint-imports
+lint-imports
 # Esperado: 0 violações
 
 # 3. Observabilidade — bloqueante
 grep -rn "print(" output/src/
 # Esperado: sem resultados
 
-# 4. Testes — bloqueante
+# 4. Testes unitários — bloqueante
 pytest -m unit -v --tb=short
 # Esperado: 0 falhas
 
-# 5. Cobertura — critério de Média
+# 5. Testes staging — bloqueante (roda no mac-lablz)
+ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
+  infisical run --env=staging -- pytest -m staging -v --tb=short"
+# Esperado: 0 falhas
+
+# 6. Smoke gate — bloqueante (roda no mac-lablz)
+ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
+  infisical run --env=staging -- python ../scripts/smoke_sprint_N.py"
+# Esperado: saída "ALL OK", exit code 0
+
+# 7. Cobertura — critério de Média
 pytest -m unit --cov=output/src --cov-report=term-missing
 # Referência: threshold definido no contrato
 
-# 6. Type hints — critério de Média
+# 8. Type hints — critério de Média
 mypy --strict output/src/ 2>&1 | tail -5
 # Referência: threshold definido no contrato
 ```
@@ -112,6 +142,35 @@ Em caso de FAIL, documente obrigatoriamente:
 - Causa raiz provável
 - O que o Generator precisa mudar para corrigir
 
+### Avaliação de A_SMOKE (critério especial)
+
+O smoke gate é executado no mac-lablz com infra real. Não pode ser
+substituído por mocks nem por inspeção de código.
+
+```bash
+# No mac-lablz:
+ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
+  infisical run --env=staging -- python ../scripts/smoke_sprint_N.py"
+```
+
+Se o script não existir: **FAIL imediato** — o Generator não entregou o
+smoke gate.
+
+Se o script retornar exit code 1: **FAIL** — documente cada check que falhou
+com o output exato.
+
+Se o script retornar exit code 0 e imprimir "ALL OK": **PASS**.
+
+### Avaliação de M_INJECT (critério de Média)
+
+```bash
+ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
+  infisical run --env=staging -- pytest -m staging \
+  tests/staging/agents/test_ui_injection.py -v"
+```
+
+Se o arquivo não existir: **FAIL de Média** — Generator não testou injeção.
+
 ### Avaliação de critérios de Média e threshold
 
 Após avaliar todos os critérios de Média, calcule:
@@ -122,8 +181,7 @@ threshold = valor definido no sprint_contract.md
 ```
 
 Se `falhas_media > threshold`: o sprint é **REPROVADO** mesmo que todos
-os critérios de Alta tenham passado. O relatório deve deixar isso explícito
-com os números.
+os critérios de Alta tenham passado.
 
 Se `falhas_media <= threshold`: os critérios de Média que falharam vão
 para o tech-debt-tracker, mas não bloqueiam aprovação.
@@ -138,22 +196,13 @@ Testes marcados com `@pytest.mark.integration` ou `@pytest.mark.slow`
 pytest -m unit -v --tb=short
 ```
 
-Se o Generator escreveu testes de integração sem marker correta (um teste
-de integração disfarçado de unit), isso é **débito de Média** — documente
-mas não bloqueia se estiver dentro do threshold.
+Testes `@pytest.mark.staging` são executados no mac-lablz via SSH — não
+no container do Evaluator.
 
 **Exceção que vira Alta:** se um teste marcado como `@pytest.mark.unit`
 falhar com erro de conexão (`ConnectionRefusedError`, `asyncpg.exceptions`,
 `redis.exceptions`, timeout de rede), isso é **falha de Alta** — o
-Generator escreveu um teste unit com I/O real. Evidência obrigatória:
-
-```
-Critério A[N]: FAIL
-Arquivo: output/src/tests/unit/catalog/test_repo.py:45
-Erro: asyncpg.exceptions.ConnectionDoesNotExistError
-Causa raiz: test_repo.py linha 45 usa get_db_session() real em vez de mock
-Correção: substituir get_db_session() por mocker.AsyncMock()
-```
+Generator escreveu um teste unit com I/O real.
 
 ### Verificação de cobertura por camada
 
@@ -163,9 +212,6 @@ Após `pytest -m unit`, execute:
 pytest -m unit --cov=output/src --cov-report=term-missing --no-header -q
 ```
 
-Verifique os thresholds mínimos por camada (os do contrato prevalecem
-sobre os defaults abaixo):
-
 | Camada | Threshold default |
 |--------|------------------|
 | Repo | 60% |
@@ -174,16 +220,23 @@ sobre os defaults abaixo):
 | UI | 60% |
 
 Se a cobertura de **Service** ficar abaixo de 80%, é **falha de Média**.
-Se o contrato definiu threshold mais alto para o sprint e não foi atingido,
-é **falha de Média** com evidência numérica obrigatória no relatório:
 
+---
+
+## Verificação especial: session.commit()
+
+Para todo sprint que escreve no banco, verifique:
+
+```bash
+# Nos testes unitários de Service, o commit deve ser verificado:
+grep -rn "commit.assert_called" output/src/tests/unit/
 ```
-M3: FAIL
-Cobertura de Service: 61% (threshold do contrato: 80%)
-Módulos abaixo do threshold:
-  src/catalog/service.py    45%  (faltam testes de resolver_preco, enriquecer_produto)
-  src/orders/service.py     78%  (faltam testes de criar_pedido com estoque zero)
-```
+
+Se um Service escreve no banco mas nenhum teste unitário verifica que
+`session.commit()` foi chamado, documente como **falha de Média**.
+
+Se o smoke gate falha porque dados não persistiram (erro de commit),
+documente como **falha de Alta** no critério A_SMOKE.
 
 ---
 
@@ -212,6 +265,8 @@ Motivo resumido (1-2 frases):
 | import-linter | lint-imports | PASS / FAIL (N violações) |
 | print() proibido | grep print( | PASS / FAIL (N ocorrências) |
 | pytest unit | pytest -m unit | PASS / FAIL (N falhas) |
+| pytest staging | pytest -m staging (mac-lablz) | PASS / FAIL (N falhas) |
+| smoke gate | python scripts/smoke_sprint_N.py | PASS / FAIL |
 
 ## Critérios de Alta
 
@@ -222,6 +277,12 @@ Motivo resumido (1-2 frases):
 **Causa raiz (se FAIL):** [arquivo:linha — descrição]
 **Correção necessária (se FAIL):** [o que o Generator deve mudar]
 
+### A_SMOKE — Smoke gate staging
+**Status:** PASS | FAIL
+**Comando:** `python scripts/smoke_sprint_N.py` (mac-lablz)
+**Evidência observada:** [output completo do script]
+**Checks que falharam (se FAIL):** [lista]
+
 ### [A2 — ...]
 ...
 
@@ -230,6 +291,11 @@ Motivo resumido (1-2 frases):
 ### [M1 — ID do critério]
 **Status:** PASS | FAIL
 **Teste executado:** [comando]
+**Evidência:** [resultado]
+
+### M_INJECT — Injeção de dependências
+**Status:** PASS | FAIL
+**Teste executado:** pytest -m staging tests/staging/agents/test_ui_injection.py
 **Evidência:** [resultado]
 
 ### [M2 — ...]
@@ -248,14 +314,23 @@ em sprint futuro]
 [Comandos completos para o Generator reproduzir a avaliação localmente]
 
 \`\`\`bash
-# Ambiente
-infisical run --env=dev -- pytest -m unit -v
+# Testes unitários (sem infra)
+pytest -m unit -v
+
+# Testes staging (mac-lablz)
+pytest -m staging -v
+
+# Smoke gate (mac-lablz)
+python scripts/smoke_sprint_N.py
+
+# Linter e segurança
 lint-imports
 grep -rn "print(" output/src/
 \`\`\`
 
 ## Próximos passos
-[Se APROVADO: o que o Generator deve fazer antes de finalizar o sprint]
+[Se APROVADO: Generator deve preparar ambiente de homologação — smoke gate
+passou, Generator confirma ao usuário que homologação humana pode iniciar]
 [Se REPROVADO: lista priorizada do que corrigir, em ordem de impacto]
 ```
 
@@ -269,7 +344,19 @@ grep -rn "print(" output/src/
 3. Se houver débitos de Média: adicionar em `docs/exec-plans/tech-debt-tracker.md`
 4. Se sprint completo: mover `docs/exec-plans/active/sprint-N.md` para
    `docs/exec-plans/completed/`
-5. Comunicar ao usuário: *"Sprint [N] APROVADO. Relatório em artifacts/qa_sprint_N.md"*
+5. Comunicar ao usuário:
+
+```
+Sprint [N] APROVADO pelo Evaluator. Relatório em artifacts/qa_sprint_N.md.
+
+Smoke gate passou — ambiente staging pronto para homologação humana.
+
+Próximo passo: execute os cenários em
+docs/exec-plans/active/homologacao_sprint-N.md
+usando WhatsApp real e registre o resultado.
+
+Só avançar para o Sprint [N+1] após APROVADO na homologação humana.
+```
 
 **Se REPROVADO — primeira vez:**
 1. Salvar `artifacts/qa_sprint_N.md` com falhas em ordem de prioridade:
@@ -287,6 +374,7 @@ será escalado para o usuário.
 Falhas por prioridade em artifacts/qa_sprint_N.md:
 - Segurança: [N falhas]
 - Funcionalidade: [N falhas]
+- Smoke gate: [PASS | FAIL]
 - Média (threshold excedido): [N falhas, se aplicável]
 ```
 
@@ -295,8 +383,7 @@ Falhas por prioridade em artifacts/qa_sprint_N.md:
 
 **Se REPROVADO — segunda vez (após rodada de correção):**
 1. Salvar `artifacts/qa_sprint_N_r2.md`
-2. **Não comunicar ao Generator** — o protocolo dele determina que ele
-   escala para o usuário automaticamente após segunda reprovação
+2. **Não comunicar ao Generator** — escala para o usuário automaticamente
 3. No relatório, incluir seção comparativa obrigatória:
 
 ```markdown
@@ -314,7 +401,30 @@ Falhas novas introduzidas na correção: [lista, se houver]
 4. Aguardar instrução do usuário — não tomar nenhuma ação adicional
 
 **Nunca:**
-- Aprovar sem evidência de testes executados
+- Aprovar sem evidência de testes executados (incluindo smoke gate)
+- Aprovar sem rodar `pytest -m staging` no mac-lablz
 - Reprovar sem arquivo, linha e causa raiz
 - Editar código em output/ — apenas ler e executar
 - Dar uma "terceira chance" informal ao Generator sem aprovação do usuário
+- Considerar "fora do escopo" a verificação de smoke gate ou testes staging
+  quando o sprint toca Runtime ou UI — esses checks são Alta, não opcionais
+
+---
+
+## Lição aprendida — Sprint 2
+
+A homologação do Sprint 2 encontrou 8 bugs que passaram pelo Evaluator porque:
+
+1. **Testes unitários com mocks completos não detectam bugs de integração.**
+   asyncpg + pgvector ORDER BY, session.commit() ausente, e deps None em ui.py
+   são invisíveis quando tudo é mockado.
+
+2. **O contrato não exigia smoke gate.** Sem execução real contra infra,
+   esses bugs chegaram ao usuário.
+
+3. **`ui.py` não tinha testes.** A camada de injeção de deps não estava
+   no escopo de nenhum critério.
+
+A partir do Sprint 3, os critérios A_SMOKE e M_INJECT são **obrigatórios**
+em todo sprint que toca Runtime ou UI. O Evaluator deve rejeitar qualquer
+contrato que os omita.
