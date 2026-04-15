@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Sales Agent",
         description="Agente de vendas B2B via WhatsApp para distribuidoras brasileiras",
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
     )
 
@@ -104,7 +104,7 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         """Endpoint de health check — excluído do TenantProvider."""
-        return {"status": "ok", "version": "0.2.0"}
+        return {"status": "ok", "version": "0.3.0"}
 
     return app
 
