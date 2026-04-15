@@ -127,20 +127,30 @@ def parse_mensagem(payload: WebhookPayload) -> Mensagem:
 
 
 def validate_webhook_signature(body: bytes, signature_header: str) -> bool:
-    """Valida assinatura HMAC-SHA256 do webhook da Evolution API.
+    """Valida assinatura do webhook da Evolution API.
+
+    Suporta dois modos (detectado automaticamente pelo formato do header):
+    - Token simples: Evolution envia o secret diretamente como X-Evolution-Signature.
+      Usado no MVP/staging pois a Evolution API v2 não assina payloads nativamente.
+    - HMAC-SHA256: header contém hexdigest — compatível com proxies futuros.
 
     Args:
         body: corpo da requisição em bytes.
         signature_header: valor do header X-Evolution-Signature.
 
     Returns:
-        True se assinatura válida, False caso contrário.
+        True se autenticação válida, False caso contrário.
     """
     secret = os.getenv("EVOLUTION_WEBHOOK_SECRET", "")
     if not secret:
         log.error("evolution_webhook_secret_ausente")
         return False
 
+    # Modo token simples (64 chars hex = HMAC, caso contrário = token direto)
+    if len(signature_header) != 64:
+        return hmac.compare_digest(secret, signature_header)
+
+    # Modo HMAC-SHA256
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_header)
 
