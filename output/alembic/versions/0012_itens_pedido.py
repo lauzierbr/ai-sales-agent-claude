@@ -24,7 +24,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Cria tabela itens_pedido com FK para pedidos e produtos."""
+    """Cria tabela itens_pedido com FK para pedidos.
+
+    Nota: produto_id é TEXT (referência lógica ao código externo do produto).
+    Não há FK para produtos.id pois produtos.id é UUID — tipos incompatíveis.
+    A integridade é gerenciada em Python pela camada de serviço.
+    """
     op.create_table(
         "itens_pedido",
         sa.Column("id", sa.Text(), nullable=False, server_default=sa.text("gen_random_uuid()::text")),
@@ -37,7 +42,6 @@ def upgrade() -> None:
         sa.Column("subtotal", sa.Numeric(12, 2), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.ForeignKeyConstraint(["pedido_id"], ["pedidos.id"], name="fk_itens_pedido_id", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["produto_id"], ["produtos.id"], name="fk_itens_produto_id", ondelete="RESTRICT"),
         sa.CheckConstraint("quantidade > 0", name="ck_itens_quantidade_positiva"),
         sa.CheckConstraint("preco_unitario >= 0", name="ck_itens_preco_nao_negativo"),
     )
