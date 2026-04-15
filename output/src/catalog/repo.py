@@ -407,11 +407,13 @@ class CatalogRepo:
         """
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
-        # O vetor é interpolado diretamente no SQL (não como parâmetro bind)
-        # porque asyncpg não consegue inferir o tipo 'vector' automaticamente.
-        # A interpolação é segura: vec_str contém apenas floats gerados internamente.
-        # status_enriquecimento também é literal para evitar problema de IN (...)
-        # com prepared statements no asyncpg.
+        # Notas de implementação:
+        # 1. O vetor é interpolado diretamente no SQL (não como parâmetro bind)
+        #    porque asyncpg não consegue inferir o tipo 'vector' do pgvector.
+        #    A interpolação é segura: vec_str contém apenas floats gerados internamente.
+        # 2. ORDER BY usa a expressão completa (não o alias 'distancia') porque
+        #    asyncpg com prepared statements retorna 0 rows ao ordenar por alias
+        #    de expressão vetorial — bug confirmado em testes de isolamento.
         sql = text(f"""
             SELECT
                 id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
@@ -423,7 +425,7 @@ class CatalogRepo:
               AND embedding IS NOT NULL
               AND status_enriquecimento IN ('enriquecido', 'ativo')
               AND embedding <=> '{vec_str}'::vector < :distancia_maxima
-            ORDER BY distancia ASC
+            ORDER BY embedding <=> '{vec_str}'::vector ASC
             LIMIT :limit
         """)
 
