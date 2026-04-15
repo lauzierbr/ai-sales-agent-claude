@@ -425,7 +425,6 @@ class CatalogRepo:
               AND embedding IS NOT NULL
               AND status_enriquecimento IN ('enriquecido', 'ativo')
               AND embedding <=> '{vec_str}'::vector < :distancia_maxima
-            ORDER BY embedding <=> '{vec_str}'::vector ASC
             LIMIT :limit
         """)
 
@@ -440,7 +439,10 @@ class CatalogRepo:
             )
             rows = result.fetchall()
 
-        return [(self._row_to_produto(row), float(row.distancia)) for row in rows]
+        # ORDER BY na query com expressão vetorial causa 0 rows no asyncpg (bug confirmado).
+        # Ordenamos em Python após fetch — correto e sem overhead para os limites usados.
+        sorted_rows = sorted(rows, key=lambda r: float(r.distancia))
+        return [(self._row_to_produto(row), float(row.distancia)) for row in sorted_rows]
 
     # ─────────────────────────────────────────────
     # Preços diferenciados
