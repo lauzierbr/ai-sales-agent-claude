@@ -124,6 +124,101 @@ class ClienteB2BRepo:
             criado_em=row["criado_em"],
         )
 
+    async def listar_por_representante(
+        self,
+        tenant_id: str,
+        representante_id: str,
+        session: AsyncSession,
+    ) -> list[ClienteB2B]:
+        """Retorna todos os clientes B2B ativos vinculados ao representante.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            representante_id: ID do representante — filtro obrigatório.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de ClienteB2B ordenados por nome ASC.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, nome, cnpj, telefone, ativo, criado_em, representante_id
+                FROM clientes_b2b
+                WHERE tenant_id = :tenant_id
+                  AND representante_id = :representante_id
+                  AND ativo = true
+                ORDER BY nome ASC
+            """),
+            {"tenant_id": tenant_id, "representante_id": representante_id},
+        )
+        rows = result.mappings().all()
+        return [
+            ClienteB2B(
+                id=r["id"],
+                tenant_id=r["tenant_id"],
+                nome=r["nome"],
+                cnpj=r["cnpj"],
+                telefone=r["telefone"],
+                ativo=r["ativo"],
+                criado_em=r["criado_em"],
+                representante_id=r["representante_id"],
+            )
+            for r in rows
+        ]
+
+    async def buscar_por_nome(
+        self,
+        tenant_id: str,
+        representante_id: str,
+        query: str,
+        session: AsyncSession,
+    ) -> list[ClienteB2B]:
+        """Busca clientes B2B ativos pelo nome usando unaccent + ILIKE.
+
+        Cobre acentuação incorreta no celular ("sao" → "são",
+        "farmacia" → "farmácia"). Filtra obrigatoriamente por tenant_id
+        E representante_id.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            representante_id: ID do representante — filtro obrigatório.
+            query: texto livre para busca no nome do cliente.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de ClienteB2B que correspondem à busca, ordenados por nome ASC.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, nome, cnpj, telefone, ativo, criado_em, representante_id
+                FROM clientes_b2b
+                WHERE tenant_id = :tenant_id
+                  AND representante_id = :representante_id
+                  AND ativo = true
+                  AND unaccent(lower(nome)) ILIKE unaccent(lower('%' || :query || '%'))
+                ORDER BY nome ASC
+            """),
+            {
+                "tenant_id": tenant_id,
+                "representante_id": representante_id,
+                "query": query,
+            },
+        )
+        rows = result.mappings().all()
+        return [
+            ClienteB2B(
+                id=r["id"],
+                tenant_id=r["tenant_id"],
+                nome=r["nome"],
+                cnpj=r["cnpj"],
+                telefone=r["telefone"],
+                ativo=r["ativo"],
+                criado_em=r["criado_em"],
+                representante_id=r["representante_id"],
+            )
+            for r in rows
+        ]
+
     async def create(
         self, tenant_id: str, cliente: ClienteB2B, session: AsyncSession
     ) -> ClienteB2B:

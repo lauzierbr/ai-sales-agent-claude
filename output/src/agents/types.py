@@ -66,6 +66,7 @@ class ClienteB2B(BaseModel):
     telefone: str   # E.164 digits apenas, sem @s.whatsapp.net
     ativo: bool = True
     criado_em: datetime
+    representante_id: str | None = None
 
 
 class Representante(BaseModel):

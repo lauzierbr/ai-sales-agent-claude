@@ -1,39 +1,21 @@
-# Sprint Contract — Sprint 2 — Agente Cliente Completo
+# Sprint Contract — Sprint 3 — AgentRep + Hardening de Linguagem Brasileira
 
 **Status:** ACEITO
-**Data:** 2026-04-15
+**Data:** 2026-04-16
 
 ---
 
 ## Entregas comprometidas
 
-1. `output/alembic/versions/0007_clientes_b2b.py` — tabela `clientes_b2b` (já criada)
-2. `output/alembic/versions/0008_representantes.py` — tabela `representantes` (já criada)
-3. `output/alembic/versions/0009_conversas.py` — tabela `conversas` (já criada)
-4. `output/alembic/versions/0010_mensagens_conversa.py` — tabela `mensagens_conversa` (já criada)
-5. `output/alembic/versions/0011_pedidos.py` — tabela `pedidos` (já criada)
-6. `output/alembic/versions/0012_itens_pedido.py` — tabela `itens_pedido` (já criada)
-7. `output/src/agents/types.py` — adição de: `ClienteB2B`, `Representante`, `Conversa`, `MensagemConversa`, `ItemIntento`, `IntentoPedido`
-8. `output/src/orders/types.py` — novo: `StatusPedido`, `ItemPedidoInput`, `ItemPedido`, `CriarPedidoInput`, `Pedido`
-9. `output/src/agents/repo.py` — adição de: `ClienteB2BRepo`, `RepresentanteRepo`, `ConversaRepo`
-10. `output/src/orders/repo.py` — novo: `OrderRepo` com 4 métodos
-11. `output/src/orders/config.py` — novo: `OrderConfig` (pdf_storage_path)
-12. `output/src/orders/service.py` — novo: `OrderService` com 3 métodos
-13. `output/src/agents/config.py` — adição de: `AgentClienteConfig`
-14. `output/src/agents/service.py` — reescrita de `IdentityRouter.resolve()` (real); adição de `send_whatsapp_media()`
-15. `output/src/orders/runtime/__init__.py` — novo (vazio)
-16. `output/src/orders/runtime/pdf_generator.py` — novo: `PDFGenerator.gerar_pdf_pedido(pedido, tenant) -> bytes`
-17. `output/src/agents/runtime/agent_cliente.py` — **REESCRITA COMPLETA** com Claude SDK, ferramentas, memória Redis, fluxo de pedido
-18. `output/src/agents/ui.py` — atualização de `_process_message`: injeção de deps no AgentCliente
-19. `output/src/main.py` — adição: `mkdir pdfs` no lifespan; mount `/pdfs` StaticFiles
-20. `output/pyproject.toml` — adição: `fpdf2>=2.7.0`
-21. `output/src/tests/unit/agents/test_identity_router.py` — reescrita com 5 casos reais
-22. `output/src/tests/unit/agents/test_agent_cliente.py` — reescrita com 7 casos Claude SDK
-23. `output/src/tests/unit/orders/__init__.py` — novo (vazio)
-24. `output/src/tests/unit/orders/test_types.py` — novo (3 casos)
-25. `output/src/tests/unit/orders/test_repo.py` — novo (4 casos)
-26. `output/src/tests/unit/orders/test_service.py` — novo (3 casos)
-27. `output/src/tests/unit/orders/test_pdf_generator.py` — novo (4 casos)
+1. `output/alembic/versions/0013_clientes_b2b_representante_id.py` — coluna `representante_id` + FK + índice
+2. `output/src/agents/types.py` — campo `representante_id: str | None = None` em `ClienteB2B`
+3. `output/src/agents/repo.py` — `ClienteB2BRepo.listar_por_representante()` + `ClienteB2BRepo.buscar_por_nome()` com `unaccent + ILIKE`
+4. `output/src/agents/config.py` — `AgentRepConfig` + `AgentClienteConfig.system_prompt_template` expandido com vocabulário coloquial brasileiro
+5. `output/src/agents/runtime/agent_rep.py` — `AgentRep` completo (substitui stub): 3 ferramentas, loop tool_use, memória Redis, validação de carteira
+6. `output/src/agents/ui.py` — wiring do `AgentRep` quando `Persona.REPRESENTANTE`; deps não-None verificadas
+7. `output/src/tests/unit/agents/test_agent_cliente_linguagem_br.py` — 30 casos (grupos A–H): consultas informais, saudações, pedidos diretos, confirmações coloquiais, cancelamentos, multi-produto, quantidade ausente, regressão Sprint 2
+8. `output/src/tests/unit/agents/test_agent_rep.py` — reescrita do stub: 8 casos (R01–R08)
+9. `output/src/tests/staging/agents/test_agent_rep_staging.py` — smoke `@pytest.mark.staging` + isolamento de carteira por tenant
 
 ---
 
@@ -41,91 +23,141 @@
 
 **A1. import-linter — zero violações de camadas**
 Teste: `lint-imports` na raiz do projeto
-Evidência esperada: saída contendo `Kept` para todos os 5 contratos; zero linhas `Broken`
+Evidência esperada: `Kept` para todos os contratos configurados; zero linhas `Broken`
 
 **A2. Sem secrets hardcoded**
 Teste:
 ```bash
 grep -r --include="*.py" \
   -E "(password|secret|api_key|apikey)\s*=\s*['\"][^'\"]{4,}" \
-  output/src/ \
-  --exclude-dir=tests
+  output/src/ --exclude-dir=tests
 ```
 Evidência esperada: saída vazia
 
-**A3. tenant_id obrigatório em todos os repos novos**
-Teste: `pytest -m unit -k "test_todo_metodo_repo_tem_tenant_id"`
-Evidência esperada: `PASSED` — inspeção de assinatura via `inspect.signature` confirma `tenant_id: str` em todos os métodos públicos de `ClienteB2BRepo`, `RepresentanteRepo`, `ConversaRepo`, `OrderRepo` que executam queries
-
-**A4. pytest -m unit — 100% dos testes passam**
-Teste: `pytest -m unit -v`
-Evidência esperada: `0 failed, 0 error`
-
-**A5. IdentityRouter: telefone em clientes_b2b → CLIENTE_B2B**
-Teste: `pytest -m unit -k "test_identity_router_retorna_cliente_b2b"`
-Evidência esperada: `PASSED`
-
-**A6. IdentityRouter: telefone desconhecido → DESCONHECIDO**
-Teste: `pytest -m unit -k "test_identity_router_retorna_desconhecido"`
-Evidência esperada: `PASSED`
-
-**A7. IdentityRouter: strip do sufixo @s.whatsapp.net**
-Teste: `pytest -m unit -k "test_identity_router_strip_whatsapp_suffix"`
-Evidência esperada: `PASSED` — repo chamado com digits apenas, sem sufixo
-
-**A8. AgentCliente: confirmar_pedido executa cadeia completa (pedido + PDF + notificação)**
-Teste: `pytest -m unit -k "test_agent_cliente_confirmar_pedido_cadeia_completa"`
-Evidência esperada: `PASSED` — o teste verifica que, ao receber tool_use com `confirmar_pedido`:
-(1) `OrderService.criar_pedido_from_intent` é chamado;
-(2) `PDFGenerator.gerar_pdf_pedido` é chamado com o pedido retornado;
-(3) `send_whatsapp_media` é chamado com pdf_bytes e número do gestor (tenant.whatsapp_number)
-
-**A9. AgentCliente: max_iterations impede loop infinito**
-Teste: `pytest -m unit -k "test_agent_cliente_max_iterations_nao_loop_infinito"`
-Evidência esperada: `PASSED` — mock sempre retorna tool_use; agente encerra após 5 iterações
-
-**A10. PDFGenerator retorna bytes não vazio**
-Teste: `pytest -m unit -k "test_gerar_pdf_retorna_bytes"`
-Evidência esperada: `PASSED`; `isinstance(result, bytes)` e `len(result) > 1024`
-
-**A11. Sem print() em output/src/**
+**A3. Sem print() em output/src/**
 Teste:
 ```bash
 grep -r --include="*.py" "print(" output/src/ --exclude-dir=tests
 ```
 Evidência esperada: saída vazia
 
-**A12. OrderService calcula total_estimado em Python**
-Teste: `pytest -m unit -k "test_criar_pedido_from_intent_calcula_total"`
-Evidência esperada: `PASSED` — 3 itens com preços conhecidos → `total_estimado` correto sem acesso ao DB
+**A4. pytest -m unit — 100% dos testes passam**
+Teste: `pytest -m unit -v`
+Evidência esperada: `0 failed, 0 error`
+
+**A5. AgentRep: buscar_clientes_carteira filtra por tenant_id E representante_id**
+Teste: `pytest -m unit -k "test_agent_rep_buscar_clientes_carteira_filtra_por_rep"`
+Evidência esperada: `PASSED` — o mock de `ClienteB2BRepo.buscar_por_nome` captura os
+argumentos da chamada e o teste asserta **explicitamente**:
+(1) `tenant_id="jmb"` foi passado como argumento;
+(2) `representante_id` do representante injetado foi passado como argumento;
+(3) mock com `representante_id="rep-outro-tenant"` + `tenant_id="outro"` **nunca**
+é chamado — verifica cross-tenant: se AgentRep do tenant "jmb" chamar buscar_por_nome,
+o tenant_id na chamada deve ser sempre "jmb".
+
+**A6. AgentRep: confirmar_pedido_em_nome_de com cliente fora da carteira não cria pedido**
+Teste: `pytest -m unit -k "test_agent_rep_confirmar_cliente_invalido_nao_cria_pedido"`
+Evidência esperada: `PASSED` — `OrderService.criar_pedido_from_intent` **não chamado**;
+resultado da ferramenta contém `{"erro": ...}` com texto legível
+
+**A7. AgentCliente: confirmações coloquiais disparam confirmar_pedido (D01–D07)**
+Teste:
+```bash
+pytest -m unit -k "grupo_d" -v 2>&1 | grep -E "PASSED|FAILED|collected"
+```
+Evidência esperada:
+- Linha `collected N items` onde N ≥ 7 (se N < 7: critério FAIL por coleta insuficiente)
+- 7 testes PASSED com nomes no padrão `test_grupo_d_d0[1-7]_*`
+- Mensagens: "pode mandar", "vai lá", "fecha!", "beleza, pode ir", "FECHA",
+  "sim confirmo", "tô dentro, manda tudo" — cada uma como test separado
+- `OrderService.criar_pedido_from_intent` chamado 1x em cada caso
+
+Convenção obrigatória de nomenclatura: `test_grupo_d_d01_pode_mandar`,
+`test_grupo_d_d02_vai_la`, ..., `test_grupo_d_d07_to_dentro_manda_tudo`
+
+**A8. AgentCliente: cancelamentos não disparam confirmar_pedido (E01–E05)**
+Teste:
+```bash
+pytest -m unit -k "grupo_e" -v 2>&1 | grep -E "PASSED|FAILED|collected"
+```
+Evidência esperada:
+- Linha `collected N items` onde N ≥ 5 (se N < 5: critério FAIL por coleta insuficiente)
+- 5 testes PASSED com nomes no padrão `test_grupo_e_e0[1-5]_*`
+- Mensagens: "não, deixa", "cancela", "esquece", "peraí vou ver com o chefe",
+  "não quero mais" — cada uma como test separado
+- `OrderService.criar_pedido_from_intent` **não chamado** em nenhum caso
+
+Convenção obrigatória de nomenclatura: `test_grupo_e_e01_nao_deixa`,
+`test_grupo_e_e02_cancela`, ..., `test_grupo_e_e05_nao_quero_mais`
+
+**A9. AgentRep: conversa persistida com Persona.REPRESENTANTE**
+Teste: `pytest -m unit -k "test_agent_rep_persona_representante"`
+Evidência esperada: `PASSED` — `ConversaRepo.get_or_create_conversa` chamado com
+`persona=Persona.REPRESENTANTE` (não CLIENTE_B2B)
+
+**A10. AgentRep: session.commit() chamado após confirmar pedido**
+Teste: `pytest -m unit -k "test_agent_rep_commit_apos_pedido"`
+Evidência esperada: `PASSED` — `session.commit` chamado ao menos 1x quando
+`confirmar_pedido_em_nome_de` é executada com sucesso
+
+**A11. buscar_por_nome usa unaccent + ILIKE**
+Teste: inspeção de `output/src/agents/repo.py`
+```bash
+grep -A 5 "def buscar_por_nome" output/src/agents/repo.py | grep -i unaccent
+```
+Evidência esperada: linha contendo `unaccent` no corpo do método
+
+**A12. Migration 0013 aplica e reverte sem erro**
+Teste:
+```bash
+alembic upgrade head   # aplica 0013
+alembic downgrade -1   # reverte 0013
+alembic upgrade head   # reaaplica
+```
+Evidência esperada: nenhum erro nas 3 execuções; coluna `representante_id` existe
+após `upgrade head`, ausente após `downgrade -1`
+
+**A_SMOKE. Staging smoke: AgentRep responde sem crash (Postgres + Redis reais)**
+Teste: `pytest -m staging -k "test_agent_rep_smoke"`
+Evidência esperada: `PASSED` — `AgentRep.responder` executa com Claude real + banco real;
+conversa e mensagem persistidas; nenhuma exceção não tratada
+
+**M_INJECT. Dependências não-None no wiring do AgentRep em ui.py**
+Teste: `pytest -m unit -k "test_webhook_agent_rep_deps_nao_none"`
+Evidência esperada: `PASSED` — quando `Persona.REPRESENTANTE` é identificada,
+`catalog_service`, `order_service` e `pdf_generator` passados ao `AgentRep` são
+todos não-None; test verifica via mock de construtor
 
 ---
 
 ## Critérios de aceitação — Média (não bloqueantes individualmente)
 
-**M1. mypy --strict sem erros**
-Teste: `mypy --strict output/src/`
+**M1. mypy --strict sem erros nos arquivos novos/modificados**
+Teste: `mypy --strict output/src/agents/ output/src/tests/unit/agents/`
 Evidência esperada: `Found 0 errors`
 
-**M2. OTel span em IdentityRouter e AgentCliente**
-Teste: inspeção manual de `agents/service.py` e `agents/runtime/agent_cliente.py`
-Evidência esperada: `tracer.start_as_current_span("identity_router_resolve")` com atributo `tenant_id`; `tracer.start_as_current_span("agent_cliente_responder")` com atributo `tenant_id`
+**M2. OTel span em AgentRep.responder**
+Teste: inspeção manual de `output/src/agents/runtime/agent_rep.py`
+Evidência esperada: `tracer.start_as_current_span("agent_rep_responder")` com
+atributos `tenant_id` e `rep_id`
 
-**M3. send_whatsapp_media usa base64 e endpoint /sendMedia**
-Teste: inspeção manual de `agents/service.py`
-Evidência esperada: `base64.b64encode(pdf_bytes).decode()` no corpo; URL contém `/message/sendMedia/`; erro não propaga
+**M3. Cobertura ≥ 80% em agents/runtime/agent_rep.py**
+Teste: `pytest -m unit --cov=output/src/agents/runtime/agent_rep --cov-report=term-missing`
+Evidência esperada: cobertura de linhas ≥ 80%
 
-**M4. Cobertura ≥ 80% em agents/service.py e orders/service.py**
-Teste: `pytest -m unit --cov=output/src/agents/service --cov=output/src/orders/service --cov-report=term-missing`
-Evidência esperada: ambos ≥ 80% de cobertura de linhas
+**M4. Cobertura ≥ 60% em agents/repo.py (novos métodos)**
+Teste: `pytest -m unit --cov=output/src/agents/repo --cov-report=term-missing`
+Evidência esperada: cobertura de linhas ≥ 60%
 
-**M5. Cobertura ≥ 60% em agents/repo.py e orders/repo.py**
-Teste: `pytest -m unit --cov=output/src/agents/repo --cov=output/src/orders/repo --cov-report=term-missing`
-Evidência esperada: ambos ≥ 60%
+**M5. Regressão Sprint 2: 4 testes H01–H04 passam sem modificação**
+Teste: `pytest -m unit -k "grupo_h"`
+Evidência esperada: todos os 4 casos do grupo H passam — confirma que o
+system_prompt_template expandido não quebrou comportamentos existentes
 
-**M6. Docstrings em todos os métodos públicos de Repo e Service novos**
-Teste: inspeção manual
-Evidência esperada: cada método público tem docstring mínima com Args e Returns
+**M6. Docstrings em todos os métodos públicos novos de Repo e Runtime**
+Teste: inspeção manual de `repo.py` (`buscar_por_nome`, `listar_por_representante`)
+e `agent_rep.py` (métodos públicos)
+Evidência esperada: cada método público tem docstring com Args e Returns
 
 ---
 
@@ -133,60 +165,80 @@ Evidência esperada: cada método público tem docstring mínima com Args e Retu
 
 Máximo de falhas de Média permitidas: **1 de 6**
 
-Se 2 ou mais critérios de Média falharem, o sprint é reprovado mesmo com todos os de Alta passando.
+Se 2 ou mais critérios de Média falharem, o sprint é reprovado mesmo com
+todos os de Alta passando.
 
 ---
 
 ## Fora do escopo deste contrato
 
 O Evaluator **não** testa neste sprint:
-- AgentRep com Claude SDK (stub de template é comportamento correto em Sprint 2)
-- Envio real de WhatsApp (100% mockado nos testes unit)
-- Busca semântica real no pgvector (mockada em testes unit)
-- Execução real do crawler (sem alteração no Sprint 2)
-- Loja Integrada API (fora do MVP)
-- resolve_preco() com preços diferenciados (fora do MVP)
-- Painel de pedidos REST
-- Refresh token JWT
+
+- Preço de custo ou margem visível ao representante
+- Alertas proativos de clientes inativos
+- Busca por trigrama (`pg_trgm`) — ILIKE + unaccent é o contratado
+- Envio real de WhatsApp para o representante (mockado em unit tests)
+- Cadastro ou edição de clientes da carteira via painel (Sprint 4)
 - Segundo tenant real
+- Upload de planilha de preços diferenciados por rep
+- Avaliação do evaluator.py (sem alteração neste sprint)
 
 ---
 
 ## Ambiente de testes
 
 ```
-pytest -m unit        → roda sem I/O externo
-                        PostgreSQL, Redis, Evolution API, Anthropic API: todos mockados
-                        Requerido: 100% pass, 0 falhas
+pytest -m unit      → sem I/O externo; PostgreSQL, Redis, Anthropic API: todos mockados
+                      Requerido: 100% pass, 0 falhas — inclui A_SMOKE? NÃO
 
-pytest -m integration → NÃO roda no Evaluator
-                        Valida após aprovação: alembic upgrade head + curl /health
+pytest -m staging   → Postgres + Redis reais (mac-lablz); sem Evolution API; Claude real
+                      Requerido para A_SMOKE: 1 teste smoke do AgentRep
 
-pytest -m slow        → nunca roda no loop automático
+pytest -m integration → NÃO roda no Evaluator; valida após aprovação no mac-lablz
+
+pytest -m slow      → nunca roda no loop automático
 ```
 
-**Regra crítica:** teste marcado como `unit` que realizar conexão TCP, acesso ao filesystem fora de `/tmp` ou chamada HTTP real é tratado como **falha de Alta**, independentemente do resultado.
+**Regra crítica (herdada do Sprint 2):** teste `@pytest.mark.unit` que realiza
+conexão TCP, acesso ao filesystem fora de `/tmp` ou chamada HTTP real é tratado
+como **falha de Alta**, independentemente do resultado.
 
 ---
 
 ## Notas de implementação (binding para o Generator)
 
-1. **Ordem de implementação:** E1(migrations — já criadas) → E2(types) → E3(repos) → E4(services+config) → E5(pdf_generator) → E6(agent_cliente) → E7(ui+main+pyproject) → E8(testes)
+1. **Ordem de implementação:**
+   E1 (migration 0013) → E2 (types + repo) → E3 (AgentRepConfig + system prompt) →
+   E4 (AgentRep runtime) → E8 (unit tests AgentRep) → E5 (wiring ui.py) →
+   E7 (hardening linguagem) → E9 (staging smoke)
 
-2. **fpdf2:** `bytes(pdf.output())` — encapsular em `bytes()` pois fpdf2 2.x retorna `bytearray`
+2. **unaccent:** extensão já disponível no PostgreSQL — ativar com
+   `CREATE EXTENSION IF NOT EXISTS unaccent;` no `upgrade()` da migration 0013.
+   Query: `unaccent(lower(nome)) ILIKE unaccent(lower('%' || :query || '%'))`
 
-3. **subtotal em itens_pedido:** calcular em Python (`quantidade * preco_unitario`) e passar para repo. Não usar SQLAlchemy `Computed`.
+3. **Validação de carteira em confirmar_pedido_em_nome_de:** chamar
+   `ClienteB2BRepo.listar_por_representante()` e verificar se `cliente_b2b_id`
+   está na lista antes de chamar `OrderService`. Não confiar no `cliente_b2b_id`
+   vindo do Claude sem validar — evita que rep crie pedido para cliente de outro rep.
 
-4. **AgentCliente construtor:** dependências injetadas via `__init__` — permite mock completo nos testes sem monkey-patching. `_process_message` em `agents/ui.py` instancia e injeta.
+4. **AgentRep e session.commit():** mesmo padrão do AgentCliente (linha 265 de
+   `agent_cliente.py`) — commit após `add_mensagem` do assistente, antes de enviar
+   WhatsApp.
 
-5. **Redis key para histórico:** `conv:{tenant_id}:{telefone_normalizado}` onde `telefone_normalizado = telefone.split("@")[0]`. Normalization em método privado `_normalize_phone` dentro de `ConversaRepo`.
+5. **Testes grupo D e E:** cada caso é um teste independente com mock Anthropic
+   diferente. Usar `@pytest.mark.parametrize` é permitido mas cada case_id deve
+   aparecer no nome do teste para facilitar debug (`grupo_d_d01_pode_mandar`, etc.).
 
-6. **Tool use sem TextBlock:** quando `stop_reason == "tool_use"`, a resposta pode não conter nenhum `TextBlock`. Não tentar extrair texto nesse caso — apenas executar a ferramenta e iterar.
+6. **Testes grupo C e F (multi-produto / pedido direto):** mock Anthropic com
+   `side_effect` lista a sequência completa: `[tool_use_busca, tool_use_confirma, end_turn]`.
+   O teste não verifica a query de busca — apenas que `OrderService` foi chamado
+   com `n_itens` ≥ 1.
 
-7. **Imports cross-domain em Runtime:** `agents/runtime/agent_cliente.py` importa `catalog/service` e `orders/service` — permitido pela arquitetura (Runtime pode importar qualquer Service). `orders/runtime/pdf_generator.py` importa apenas `orders/types` e `tenants/types`.
+7. **System prompt do AgentRep:** `{rep_nome}` resolvido em `AgentRep.__init__` a
+   partir do `representante.nome` injetado — não lido em tempo de execução por request.
 
-8. **PDF path:** `{pdf_storage_path}/{tenant_id}/{pedido_id}.pdf` — criar diretório com `Path.mkdir(parents=True, exist_ok=True)` antes de escrever.
+8. **Gotcha asyncpg + pgvector (herdado Sprint 2):** `buscar_por_nome` usa SQL
+   puro (não pgvector) — sem ORDER BY vetorial. Safe.
 
-9. **Notificação após confirmar_pedido:** envia para `tenant.whatsapp_number`. Se `representante_id` presente no pedido, busca telefone do representante e envia cópia. Ambos usam `send_whatsapp_media`.
-
-10. **Migrations 0007–0012 já existem no repositório** — Generator Fase 2 não deve recriá-las. Verificar que `alembic upgrade head` as aplica sem conflito.
+9. **Staging seed:** o seed do representante de teste (`5519000000001`) deve ser
+   aplicado em script separado `scripts/seed_homologacao_sprint-3.py`, não em migration.

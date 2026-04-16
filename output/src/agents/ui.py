@@ -74,7 +74,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
 
     import openai as _openai
 
-    from src.agents.config import AgentClienteConfig
+    from src.agents.config import AgentClienteConfig, AgentRepConfig
     from src.agents.repo import ClienteB2BRepo, ConversaRepo, RepresentanteRepo
     from src.agents.runtime.agent_cliente import AgentCliente
     from src.agents.runtime.agent_rep import AgentDesconhecido, AgentRep
@@ -99,6 +99,21 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
         enricher=None,  # type: ignore[arg-type]  # não usado na busca
         embedding_client=_embedding_client,
     )
+
+    # Dependências compartilhadas — verificadas antes de uso
+    _order_service = OrderService(
+        repo=OrderRepo(),
+        config=OrderConfig(),
+    )
+    _pdf_generator = PDFGenerator()
+
+    # Validação de deps não-None
+    if _catalog_service is None:
+        log.error("deps_catalog_service_none", msg="CatalogService é None — falha na inicialização")
+    if _order_service is None:
+        log.error("deps_order_service_none", msg="OrderService é None — falha na inicialização")
+    if _pdf_generator is None:
+        log.error("deps_pdf_generator_none", msg="PDFGenerator é None — falha na inicialização")
 
     try:
         payload = WebhookPayload.model_validate(payload_dict)
@@ -159,18 +174,15 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     cliente_b2b_id = cliente.id
 
                 # Instancia AgentCliente com dependências injetadas
-                agent = AgentCliente(
-                    order_service=OrderService(
-                        repo=OrderRepo(),
-                        config=OrderConfig(),
-                    ),
+                agent_cliente = AgentCliente(
+                    order_service=_order_service,
                     conversa_repo=ConversaRepo(),
-                    pdf_generator=PDFGenerator(),
+                    pdf_generator=_pdf_generator,
                     config=AgentClienteConfig(),
                     catalog_service=_catalog_service,
                     redis_client=_redis,
                 )
-                await agent.responder(
+                await agent_cliente.responder(
                     mensagem=mensagem,
                     tenant=tenant,
                     session=session,
@@ -179,17 +191,34 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                 )
 
             elif persona == Persona.REPRESENTANTE:
-                # Identifica representante para injetar ID
-                representante_id: str | None = None
+                # Identifica representante para injetar no AgentRep
                 telefone_norm_rep = mensagem.de.split("@")[0]
                 rep = await RepresentanteRepo().get_by_telefone(
                     tenant_id, telefone_norm_rep, session
                 )
-                if rep is not None:
-                    representante_id = rep.id
+                if rep is None:
+                    log.warning(
+                        "representante_nao_encontrado",
+                        tenant_id=tenant_id,
+                        telefone_hash=hashlib.sha256(telefone_norm_rep.encode()).hexdigest(),
+                    )
+                    return
 
-                # AgentRep permanece stub em Sprint 2
-                await AgentRep().responder(mensagem, tenant, session)
+                # Instancia AgentRep com dependências injetadas
+                agent_rep = AgentRep(
+                    order_service=_order_service,
+                    conversa_repo=ConversaRepo(),
+                    pdf_generator=_pdf_generator,
+                    config=AgentRepConfig(),
+                    representante=rep,
+                    catalog_service=_catalog_service,
+                    redis_client=_redis,
+                )
+                await agent_rep.responder(
+                    mensagem=mensagem,
+                    tenant=tenant,
+                    session=session,
+                )
 
             else:
                 await AgentDesconhecido().responder(mensagem, tenant, session)
