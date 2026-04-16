@@ -70,12 +70,26 @@ Escopo previsto:
 - Resposta básica WhatsApp por persona
 - OpenTelemetry instrumentado desde o início
 
-### Sprint 2 — Agente cliente completo
-- Loja Integrada API (catálogo, pedidos)
-- Fluxo completo de pedido via WhatsApp
-- Memória por cliente (ConversaRepo + Redis)
-- Evaluator em produção
-- resolve_preco() (padrão + diferenciado)
+### Sprint 2 — Agente cliente completo ✅ APROVADO — v0.3.0
+Homologado em 2026-04-15. Tag v0.3.0.
+
+Entregue:
+- AgentCliente com Claude SDK (claude-sonnet-4-6), ferramentas buscar_produtos e confirmar_pedido
+- Domínio Orders: OrderService, OrderRepo, PDFGenerator (fpdf2), migrations 0007–0012
+- IdentityRouter real (lookup DB: clientes_b2b, representantes)
+- ConversaRepo + Redis TTL 24h (memória de conversa)
+- send_whatsapp_media (PDF para gestor via Evolution API)
+- Busca semântica com text-embedding-3-small (pgvector) + lookup exato por código
+- Webhook signature: token simples (não HMAC) + filtro fromMe=True
+
+Bugs corrigidos na homologação (pós-QA):
+- asyncpg + pgvector ORDER BY silencioso → sort em Python
+- session.commit() ausente → rollback silencioso
+- catalog_service=None em ui.py
+- distancia_maxima 0.4 → 0.75
+
+RCA documentado → prompts atualizados com @pytest.mark.staging, smoke gate
+obrigatório, critérios A_SMOKE e M_INJECT no contrato.
 
 ### Sprint 3 — Agente representante
 - AgentRep com ferramentas específicas
