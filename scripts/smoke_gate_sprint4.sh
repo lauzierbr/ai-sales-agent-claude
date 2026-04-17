@@ -154,14 +154,12 @@ fi
 # ─────────────────────────────────────────────
 echo "[S9] Import linter..."
 LINT_OUT=$("$VENV_LINT" 2>&1 || true)
-if echo "$LINT_OUT" | grep -qi "kept"; then
-  if echo "$LINT_OUT" | grep -qi "broken"; then
-    _fail "S9" "lint-imports encontrou violações de camada"
-  else
-    _pass "S9: lint-imports → zero violações (Kept)"
-  fi
+if echo "$LINT_OUT" | grep -q "0 broken"; then
+  _pass "S9: lint-imports → zero violações"
+elif echo "$LINT_OUT" | grep -q "BROKEN"; then
+  _fail "S9" "lint-imports encontrou contratos violados (BROKEN)"
 else
-  _fail "S9" "lint-imports falhou — $(echo "$LINT_OUT" | tail -3)"
+  _fail "S9" "lint-imports não executou — $(echo "$LINT_OUT" | tail -2)"
 fi
 
 # ─────────────────────────────────────────────
