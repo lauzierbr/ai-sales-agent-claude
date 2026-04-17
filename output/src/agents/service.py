@@ -60,19 +60,36 @@ class IdentityRouter:
 
             telefone = mensagem.de.split("@")[0]
 
-            cliente = await self._cliente_repo.get_by_telefone(
-                tenant_id, telefone, session
-            )
-            if cliente is not None:
-                span.set_attribute("persona", "cliente_b2b")
-                return Persona.CLIENTE_B2B
-
             rep = await self._rep_repo.get_by_telefone(
                 tenant_id, telefone, session
             )
+            cliente = await self._cliente_repo.get_by_telefone(
+                tenant_id, telefone, session
+            )
+
+            # Detecta conflito cross-table — mesmo telefone em representantes E clientes_b2b
+            # Indica erro de cadastro: o número deve existir em apenas uma tabela.
+            if rep is not None and cliente is not None:
+                log.warning(
+                    "identity_router_conflito_telefone",
+                    tenant_id=tenant_id,
+                    telefone_hash=hashlib.sha256(telefone.encode()).hexdigest()[:12],
+                    rep_id=str(rep.id),
+                    cliente_id=str(cliente.id),
+                    msg=(
+                        "Mesmo telefone cadastrado como representante E cliente_b2b. "
+                        "Prioridade: REPRESENTANTE. Corrija o cadastro do cliente."
+                    ),
+                )
+
+            # Representante tem prioridade sobre cliente
             if rep is not None:
                 span.set_attribute("persona", "representante")
                 return Persona.REPRESENTANTE
+
+            if cliente is not None:
+                span.set_attribute("persona", "cliente_b2b")
+                return Persona.CLIENTE_B2B
 
             span.set_attribute("persona", "desconhecido")
             return Persona.DESCONHECIDO
@@ -173,6 +190,69 @@ def validate_webhook_signature(body: bytes, signature_header: str) -> bool:
     # Modo HMAC-SHA256
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_header)
+
+
+async def mark_message_as_read(
+    instancia_id: str, remote_jid: str, message_id: str
+) -> None:
+    """Marca mensagem como lida (✓✓ azul) via Evolution API.
+
+    Chamado imediatamente após receber o webhook — feedback visual rápido
+    que o bot "viu" a mensagem.
+
+    Args:
+        instancia_id: nome da instância Evolution API.
+        remote_jid: JID do remetente (ex: 5519...@s.whatsapp.net).
+        message_id: ID da mensagem recebida.
+    """
+    api_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+    api_key = os.getenv("EVOLUTION_API_KEY", "")
+
+    url = f"{api_url}/chat/markMessageAsRead/{instancia_id}"
+    payload = {
+        "readMessages": [
+            {"id": message_id, "fromMe": False, "remoteJid": remote_jid}
+        ]
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, json=payload, headers={"apikey": api_key})
+            resp.raise_for_status()
+    except Exception as exc:
+        # Não crítico — falha silenciosa para não bloquear o processamento
+        log.debug("mark_as_read_erro", instancia_id=instancia_id, error=str(exc))
+
+
+async def send_typing_indicator(
+    instancia_id: str, remote_jid: str, duration_ms: int = 8000
+) -> None:
+    """Envia indicador "digitando..." via Evolution API.
+
+    Chamado antes de processar a resposta do agente — o indicador desaparece
+    automaticamente quando a mensagem chega ou após duration_ms.
+
+    Args:
+        instancia_id: nome da instância Evolution API.
+        remote_jid: JID do destinatário (ex: 5519...@s.whatsapp.net).
+        duration_ms: duração do indicador em ms (padrão 8s cobre a maioria das respostas).
+    """
+    api_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+    api_key = os.getenv("EVOLUTION_API_KEY", "")
+
+    url = f"{api_url}/chat/sendPresence/{instancia_id}"
+    payload = {
+        "number": remote_jid,
+        "delay": duration_ms,
+        "presence": "composing",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, json=payload, headers={"apikey": api_key})
+            resp.raise_for_status()
+    except Exception as exc:
+        log.debug("typing_indicator_erro", instancia_id=instancia_id, error=str(exc))
 
 
 async def send_whatsapp_message(

@@ -11,7 +11,8 @@ esperado do ponto de vista do usuario, independente da implementacao.
 | Agente cliente WhatsApp | agent-cliente.md | pendente |
 | Agente representante WhatsApp | agent-rep.md | pendente |
 | Resolucao de preco | price-resolution.md | pendente |
-| Painel do gestor | manager-panel.md | pendente |
+| Agente gestor WhatsApp | agent-gestor.md | ✅ especificado (Sprint 4) |
+| Painel do gestor (web) | manager-panel.md | pendente |
 | Onboarding de tenant | tenant-onboarding.md | pendente |
 
 Specs sao criados pelo Planner antes de cada sprint e refinados

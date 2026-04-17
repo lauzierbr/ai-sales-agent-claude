@@ -11,7 +11,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 0 | ✅ | Produto | Catálogo — crawler + enriquecimento |
 | Sprint 1 | ✅ | Produto | Infraestrutura da aplicação |
 | Sprint 2 | ✅ | Produto | Agente cliente completo |
-| Sprint 3 | 🔲 | Produto | Agente representante |
+| Sprint 3 | ✅ | Produto | AgentRep + Hardening linguagem brasileira |
 | Sprint 4 | 🔲 | Produto | Painel do gestor |
 | Sprint 5 | 🔲 | Produto | Inteligência e escala |
 
@@ -97,12 +97,21 @@ obrigatório, critérios A_SMOKE e M_INJECT no contrato.
 - Preço de custo e margem (visível apenas para rep)
 - Alertas proativos de clientes inativos
 
-### Sprint 4 — Painel do gestor
-- Dashboard de pedidos em tempo real
-- Monitor de conversas ativas
-- Gestão de clientes e representantes
-- Upload de planilha de preços
-- Configuração do agente por tenant
+### Sprint 4 — Gestor/Admin: persona WhatsApp + dashboard web
+- **Nova persona `GESTOR`** no IdentityRouter (tabela `gestores`; prioridade sobre rep)
+  - Gestor pode também ser rep no mesmo número (perfil cumulativo — DP-02)
+- **AgentGestor via WhatsApp**: acesso irrestrito a clientes e pedidos
+  - Consulta catálogo e faz pedido para qualquer cliente do tenant
+  - Busca clientes por nome/CNPJ (todos, não só carteira)
+  - Pedido para cliente com rep → herda `representante_id` do cliente (DP-03)
+  - Relatório de vendas: totais por rep, por cliente, por período
+  - Ranking de representantes, clientes inativos, GMV da empresa
+- **Dashboard web** (ambos no Sprint 4 — DP-01):
+  - Dashboard de pedidos em tempo real
+  - Monitor de conversas ativas
+  - Gestão de clientes e representantes
+  - Upload de planilha de preços
+  - Configuração do agente por tenant
 
 ### Sprint 5 — Inteligência e escala
 - Sugestão proativa por ciclo de compra

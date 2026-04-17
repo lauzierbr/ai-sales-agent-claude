@@ -152,6 +152,7 @@ markers = [
     "unit: testes unitários (sem I/O externo)",
     "integration: testes de integração (requerem serviços rodando)",
     "slow: testes lentos (crawler, enriquecimento)",
+    "staging: testes de staging (requerem Postgres+Redis reais, sem WhatsApp)",
 ]
 
 # ─────────────────────────────────────────────

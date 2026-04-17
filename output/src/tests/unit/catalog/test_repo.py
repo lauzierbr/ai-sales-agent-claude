@@ -146,8 +146,10 @@ def test_sql_busca_embedding_usa_operador_pgvector() -> None:
     """buscar_por_embedding deve usar o operador <=> (cosine distance) do pgvector."""
     source = inspect.getsource(CatalogRepo.buscar_por_embedding)
     assert "<=>" in source, "buscar_por_embedding deve usar operador <=> do pgvector"
-    assert "CAST(:embedding AS vector)" in source, (
-        "buscar_por_embedding deve fazer CAST para o tipo vector do pgvector"
+    # Implementação usa interpolação f-string ('vec_str'::vector) em vez de CAST bind param
+    # porque asyncpg não infere o tipo 'vector' em prepared statements (workaround Sprint 2).
+    assert "::vector" in source, (
+        "buscar_por_embedding deve fazer cast para o tipo vector do pgvector"
     )
 
 
@@ -423,10 +425,11 @@ async def test_buscar_por_embedding_retorna_pares_produto_distancia() -> None:
     produto, distancia = resultado[0]
     assert produto.codigo_externo == "SKU001"
     assert distancia == 0.15
-    # Confirma que tenant_id e embedding foram passados
+    # Confirma que tenant_id e distancia_maxima foram passados como bind params.
+    # embedding NÃO é bind param — é interpolado no f-string SQL (workaround asyncpg Sprint 2).
     call_params = mock_session.execute.call_args[0][1]
     assert call_params["tenant_id"] == "jmb"
-    assert call_params["embedding"].startswith("[0.1,")
+    assert "distancia_maxima" in call_params
 
 
 @pytest.mark.unit

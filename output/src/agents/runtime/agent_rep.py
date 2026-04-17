@@ -1,34 +1,168 @@
-"""Agente Representante — resposta básica via WhatsApp.
+"""Agente Representante Comercial — Claude SDK com ferramentas e memória Redis.
 
-Camada Runtime: pode importar Types, Config, Repo e Service.
-Sprint 1: resposta fixa por template. Sprint 3: funcionalidades completas.
+Camada Runtime: pode importar Types, Config, Repo e Service de qualquer domínio.
+Não importa UI.
+
+Ferramentas expostas ao modelo:
+  - buscar_produtos: busca semântica no catálogo
+  - buscar_clientes_carteira: busca clientes da carteira do representante
+  - confirmar_pedido_em_nome_de: cria pedido em nome de um cliente da carteira
+
+Memória:
+  - Redis: histórico de conversa (TTL 24h, máx 20 mensagens)
+  - PostgreSQL: persistência de longo prazo via ConversaRepo
+
+Segurança:
+  - confirmar_pedido_em_nome_de valida que cliente_b2b_id pertence à carteira
+    do representante (tenant_id + representante_id) antes de criar pedido.
 """
 
 from __future__ import annotations
+
+import json
+from typing import Any
 
 import structlog
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents.service import send_whatsapp_message
-from src.agents.types import Mensagem
+from src.agents.config import AgentRepConfig
+from src.agents.repo import ClienteB2BRepo, ConversaRepo
+from src.agents.service import send_whatsapp_media, send_whatsapp_message
+from src.agents.types import Mensagem, Persona, Representante
+from src.orders.service import OrderService
+from src.orders.types import CriarPedidoInput, ItemPedidoInput
+from src.orders.runtime.pdf_generator import PDFGenerator
 from src.tenants.types import Tenant
 
 log = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
-_TEMPLATE = (
-    "Olá! Use este canal para consultar catálogo, "
-    "registrar pedidos da sua carteira ou verificar metas."
-)
-
-_TEMPLATE_DESCONHECIDO = (
-    "Olá! Para atendimento, entre em contato pelo WhatsApp {whatsapp_number}."
-)
+# Definição das ferramentas expostas ao Claude
+_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "buscar_produtos",
+        "description": (
+            "Busca produtos no catálogo do tenant por texto livre. "
+            "Use quando o representante perguntar sobre produtos, preços ou disponibilidade."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Texto de busca — nome, categoria, código ou descrição do produto.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de resultados. Padrão: 5.",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "buscar_clientes_carteira",
+        "description": (
+            "Busca clientes na carteira do representante por nome. "
+            "Retorna nome, CNPJ e telefone dos clientes encontrados. "
+            "Use ANTES de confirmar um pedido para identificar o cliente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Nome ou parte do nome do cliente para busca.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "confirmar_pedido_em_nome_de",
+        "description": (
+            "Confirma e registra um pedido em nome de um cliente da carteira do representante. "
+            "SEMPRE chame buscar_clientes_carteira primeiro para obter o cliente_b2b_id correto. "
+            "Use APENAS quando o representante confirmar explicitamente o pedido."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_b2b_id": {
+                    "type": "string",
+                    "description": "ID UUID do cliente B2B obtido via buscar_clientes_carteira.",
+                },
+                "itens": {
+                    "type": "array",
+                    "description": "Lista de itens do pedido.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "produto_id": {"type": "string", "description": "ID UUID do produto."},
+                            "codigo_externo": {"type": "string", "description": "Código do produto no ERP."},
+                            "nome_produto": {"type": "string", "description": "Nome comercial do produto."},
+                            "quantidade": {"type": "integer", "description": "Quantidade pedida."},
+                            "preco_unitario": {"type": "string", "description": "Preço unitário como string decimal."},
+                        },
+                        "required": ["produto_id", "codigo_externo", "nome_produto", "quantidade", "preco_unitario"],
+                    },
+                },
+                "observacao": {
+                    "type": "string",
+                    "description": "Observação opcional sobre o pedido.",
+                },
+            },
+            "required": ["cliente_b2b_id", "itens"],
+        },
+    },
+]
 
 
 class AgentRep:
-    """Agente de atendimento ao representante via WhatsApp."""
+    """Agente de atendimento ao representante comercial via WhatsApp com Claude SDK.
+
+    Dependências injetadas no construtor para facilitar testes unitários.
+    """
+
+    def __init__(
+        self,
+        order_service: OrderService,
+        conversa_repo: ConversaRepo,
+        pdf_generator: PDFGenerator,
+        config: AgentRepConfig,
+        representante: Representante,
+        catalog_service: Any | None = None,  # CatalogService — Any para evitar import circular
+        anthropic_client: Any | None = None,  # anthropic.AsyncAnthropic
+        redis_client: Any | None = None,  # redis.asyncio.Redis
+        cliente_b2b_repo: ClienteB2BRepo | None = None,
+    ) -> None:
+        """Inicializa AgentRep com dependências injetadas.
+
+        Args:
+            order_service: serviço de pedidos para criar_pedido_from_intent.
+            conversa_repo: repositório de conversas e mensagens.
+            pdf_generator: gerador de PDF de pedido.
+            config: configuração do agente (model, max_tokens, etc.).
+            representante: objeto Representante identificado pelo webhook.
+            catalog_service: serviço de catálogo para busca semântica (opcional).
+            anthropic_client: cliente Anthropic assíncrono (opcional — criado internamente se None).
+            redis_client: cliente Redis assíncrono (opcional — sem memória Redis se None).
+            cliente_b2b_repo: repositório de clientes B2B (opcional — instanciado internamente).
+        """
+        self._order_service = order_service
+        self._conversa_repo = conversa_repo
+        self._pdf_generator = pdf_generator
+        self._config = config
+        self._representante = representante
+        self._catalog_service = catalog_service
+        self._anthropic = anthropic_client
+        self._redis = redis_client
+        self._cliente_b2b_repo = cliente_b2b_repo or ClienteB2BRepo()
+
+        # System prompt resolvido na inicialização com nome do representante
+        self._system_prompt_cache: str | None = None
 
     async def responder(
         self,
@@ -36,27 +170,491 @@ class AgentRep:
         tenant: Tenant,
         session: AsyncSession,
     ) -> None:
-        """Responde mensagem do representante com template fixo.
+        """Responde mensagem do representante usando Claude SDK com tool use.
+
+        Fluxo:
+        1. Obtém/cria conversa com Persona.REPRESENTANTE no PostgreSQL
+        2. Carrega histórico do Redis (se disponível)
+        3. Chama Claude com ferramentas disponíveis
+        4. Executa ferramentas se solicitado (máx max_iterations)
+        5. Persiste resposta no banco + commit
+        6. Envia resposta final via WhatsApp
 
         Args:
             mensagem: mensagem recebida do representante.
-            tenant: dados do tenant.
-            session: sessão SQLAlchemy (reservado para Sprint 3).
+            tenant: dados do tenant para personalização e notificação.
+            session: sessão SQLAlchemy assíncrona.
         """
-        with tracer.start_as_current_span("agent_response") as span:
+        with tracer.start_as_current_span("agent_rep_responder") as span:
             span.set_attribute("tenant_id", tenant.id)
-            span.set_attribute("persona", "representante")
-            span.set_attribute("mensagem_len", len(mensagem.texto))
+            span.set_attribute("rep_id", self._representante.id)
 
             numero = mensagem.de.split("@")[0]
 
-            log.info(
-                "agent_rep_respondendo",
+            # 1. Obtém conversa ativa com Persona.REPRESENTANTE
+            conversa = await self._conversa_repo.get_or_create_conversa(
                 tenant_id=tenant.id,
-                instancia_id=mensagem.instancia_id,
+                telefone=mensagem.de,
+                persona=Persona.REPRESENTANTE,
+                session=session,
             )
 
-            await send_whatsapp_message(mensagem.instancia_id, numero, _TEMPLATE)
+            # 2. Carrega histórico do Redis
+            messages = await self._carregar_historico_redis(tenant.id, numero)
+
+            # 3. Adiciona mensagem do usuário
+            messages.append({"role": "user", "content": mensagem.texto})
+
+            # 4. Persiste mensagem do usuário no banco
+            await self._conversa_repo.add_mensagem(
+                conversa_id=conversa.id,
+                role="user",
+                conteudo=mensagem.texto,
+                session=session,
+            )
+
+            # 5. System prompt — resolve {tenant_nome} e {rep_nome}
+            system_prompt = self._get_system_prompt(tenant)
+
+            # 6. Loop de tool use (máx max_iterations)
+            resposta_final: str | None = None
+            client = self._get_anthropic_client()
+
+            for iteration in range(self._config.max_iterations):
+                response = await client.messages.create(
+                    model=self._config.model,
+                    max_tokens=self._config.max_tokens,
+                    system=system_prompt,
+                    tools=_TOOLS,
+                    messages=messages,
+                )
+
+                if response.stop_reason == "end_turn":
+                    for block in response.content:
+                        if block.type == "text":
+                            resposta_final = block.text
+                            break
+                    break
+
+                if response.stop_reason == "tool_use":
+                    messages.append({"role": "assistant", "content": response.content})
+
+                    tool_results = []
+                    for block in response.content:
+                        if block.type == "tool_use":
+                            resultado = await self._executar_ferramenta(
+                                tool_name=block.name,
+                                tool_input=block.input,
+                                tenant=tenant,
+                                session=session,
+                                instancia_id=mensagem.instancia_id,
+                                numero=numero,
+                            )
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": json.dumps(resultado, ensure_ascii=False, default=str),
+                            })
+
+                    messages.append({"role": "user", "content": tool_results})
+                    log.info(
+                        "agent_rep_tool_executada",
+                        tenant_id=tenant.id,
+                        rep_id=self._representante.id,
+                        iteration=iteration + 1,
+                        n_tools=len(tool_results),
+                    )
+                else:
+                    break
+
+            # 7. Fallback se max_iterations atingido
+            if resposta_final is None:
+                resposta_final = (
+                    "Desculpe, não consegui processar sua solicitação. "
+                    "Por favor, tente novamente."
+                )
+                log.warning(
+                    "agent_rep_max_iter_atingido",
+                    tenant_id=tenant.id,
+                    rep_id=self._representante.id,
+                    max_iterations=self._config.max_iterations,
+                )
+
+            # 8. Persiste resposta do assistente no banco
+            await self._conversa_repo.add_mensagem(
+                conversa_id=conversa.id,
+                role="assistant",
+                conteudo=resposta_final,
+                session=session,
+            )
+
+            # 8.1 Commit — persiste conversa, mensagens (e pedido se tool foi chamada)
+            await session.commit()
+
+            # 9. Atualiza Redis com histórico
+            messages.append({"role": "assistant", "content": resposta_final})
+            await self._salvar_historico_redis(tenant.id, numero, messages)
+
+            # 10. Envia resposta via WhatsApp para o representante
+            await send_whatsapp_message(mensagem.instancia_id, numero, resposta_final)
+
+            log.info(
+                "agent_rep_respondeu",
+                tenant_id=tenant.id,
+                rep_id=self._representante.id,
+                conversa_id=conversa.id,
+                resposta_len=len(resposta_final),
+            )
+
+    def _get_system_prompt(self, tenant: Tenant) -> str:
+        """Retorna system prompt resolvido com tenant_nome e rep_nome.
+
+        Args:
+            tenant: dados do tenant.
+
+        Returns:
+            System prompt com variáveis substituídas.
+        """
+        if self._system_prompt_cache is None:
+            self._system_prompt_cache = self._config.system_prompt_template.format(
+                tenant_nome=tenant.nome,
+                rep_nome=self._representante.nome,
+            )
+        return self._system_prompt_cache
+
+    def _get_anthropic_client(self) -> Any:
+        """Retorna cliente Anthropic (injetado ou criado internamente).
+
+        Returns:
+            Cliente anthropic.AsyncAnthropic.
+        """
+        if self._anthropic is not None:
+            return self._anthropic
+
+        import anthropic
+
+        return anthropic.AsyncAnthropic()
+
+    async def _carregar_historico_redis(
+        self, tenant_id: str, telefone_normalizado: str
+    ) -> list[dict[str, Any]]:
+        """Carrega histórico de conversa do Redis.
+
+        Args:
+            tenant_id: ID do tenant.
+            telefone_normalizado: número sem @s.whatsapp.net.
+
+        Returns:
+            Lista de mensagens em formato anthropic (role + content).
+        """
+        if self._redis is None:
+            return []
+
+        key = f"conv:{tenant_id}:{telefone_normalizado}"
+        try:
+            data = await self._redis.get(key)
+            if data is None:
+                return []
+            historico: list[dict[str, Any]] = json.loads(data)
+            return historico[-self._config.historico_max_msgs:]
+        except Exception as exc:
+            log.warning("redis_historico_erro", tenant_id=tenant_id, error=str(exc))
+            return []
+
+    async def _salvar_historico_redis(
+        self,
+        tenant_id: str,
+        telefone_normalizado: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Salva histórico de conversa no Redis com TTL.
+
+        Args:
+            tenant_id: ID do tenant.
+            telefone_normalizado: número sem @s.whatsapp.net.
+            messages: lista de mensagens para persistir.
+        """
+        if self._redis is None:
+            return
+
+        key = f"conv:{tenant_id}:{telefone_normalizado}"
+        salvavel = [
+            m for m in messages
+            if isinstance(m.get("content"), str)
+        ]
+        salvavel = salvavel[-self._config.historico_max_msgs:]
+
+        try:
+            await self._redis.setex(
+                key,
+                self._config.redis_ttl,
+                json.dumps(salvavel, ensure_ascii=False, default=str),
+            )
+        except Exception as exc:
+            log.warning("redis_salvar_erro", tenant_id=tenant_id, error=str(exc))
+
+    async def _executar_ferramenta(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tenant: Tenant,
+        session: AsyncSession,
+        instancia_id: str,
+        numero: str,
+    ) -> dict[str, Any]:
+        """Executa ferramenta solicitada pelo modelo.
+
+        Args:
+            tool_name: nome da ferramenta.
+            tool_input: parâmetros da ferramenta.
+            tenant: dados do tenant.
+            session: sessão SQLAlchemy.
+            instancia_id: ID da instância WhatsApp.
+            numero: número do remetente.
+
+        Returns:
+            Resultado da ferramenta como dict serializável.
+        """
+        if tool_name == "buscar_produtos":
+            return await self._buscar_produtos(
+                query=tool_input.get("query", ""),
+                limit=tool_input.get("limit", 5),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "buscar_clientes_carteira":
+            return await self._buscar_clientes_carteira(
+                query=tool_input.get("query", ""),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "confirmar_pedido_em_nome_de":
+            return await self._confirmar_pedido_em_nome_de(
+                tool_input=tool_input,
+                tenant=tenant,
+                session=session,
+                instancia_id=instancia_id,
+                numero=numero,
+            )
+
+        log.warning("ferramenta_desconhecida", tool_name=tool_name)
+        return {"erro": f"Ferramenta desconhecida: {tool_name}"}
+
+    async def _buscar_produtos(
+        self,
+        query: str,
+        limit: int,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict[str, Any]:
+        """Executa busca semântica no catálogo.
+
+        Args:
+            query: texto de busca.
+            limit: máximo de resultados.
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy.
+
+        Returns:
+            Dict com lista de produtos encontrados.
+        """
+        if self._catalog_service is None:
+            return {"produtos": [], "aviso": "Catálogo não disponível."}
+
+        try:
+            resultados = []
+
+            query_stripped = query.strip()
+            if query_stripped.isdigit() and len(query_stripped) >= 4:
+                por_codigo = await self._catalog_service.get_por_codigo(
+                    tenant_id=tenant_id,
+                    codigo_externo=query_stripped,
+                )
+                if por_codigo is not None:
+                    resultados = [por_codigo]
+
+            if not resultados:
+                resultados = await self._catalog_service.buscar_semantico(
+                    tenant_id=tenant_id,
+                    query=query,
+                    limit=limit,
+                )
+
+            produtos = [
+                {
+                    "produto_id": str(r.produto.id),
+                    "codigo_externo": r.produto.codigo_externo,
+                    "nome": r.produto.nome or r.produto.nome_bruto,
+                    "marca": r.produto.marca,
+                    "categoria": r.produto.categoria,
+                    "preco_padrao": str(r.produto.preco_padrao) if r.produto.preco_padrao else None,
+                    "score": r.score,
+                }
+                for r in resultados
+            ]
+            return {"produtos": produtos, "total": len(produtos)}
+        except Exception as exc:
+            log.error("buscar_produtos_erro", tenant_id=tenant_id, error=str(exc))
+            return {"produtos": [], "erro": "Erro ao buscar produtos."}
+
+    async def _buscar_clientes_carteira(
+        self,
+        query: str,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict[str, Any]:
+        """Busca clientes na carteira do representante por nome.
+
+        Filtra por tenant_id E representante_id — nunca retorna clientes
+        de outro representante ou tenant.
+
+        Args:
+            query: texto de busca no nome do cliente.
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy.
+
+        Returns:
+            Dict com lista de clientes encontrados (cliente_id, nome, cnpj, telefone).
+        """
+        try:
+            clientes = await self._cliente_b2b_repo.buscar_por_nome(
+                tenant_id=tenant_id,
+                representante_id=self._representante.id,
+                query=query,
+                session=session,
+            )
+            return {
+                "clientes": [
+                    {
+                        "cliente_id": c.id,
+                        "nome": c.nome,
+                        "cnpj": c.cnpj,
+                        "telefone": c.telefone,
+                    }
+                    for c in clientes
+                ],
+                "total": len(clientes),
+            }
+        except Exception as exc:
+            log.error(
+                "buscar_clientes_carteira_erro",
+                tenant_id=tenant_id,
+                rep_id=self._representante.id,
+                error=str(exc),
+            )
+            return {"clientes": [], "erro": "Erro ao buscar clientes."}
+
+    async def _confirmar_pedido_em_nome_de(
+        self,
+        tool_input: dict[str, Any],
+        tenant: Tenant,
+        session: AsyncSession,
+        instancia_id: str,
+        numero: str,
+    ) -> dict[str, Any]:
+        """Valida carteira e cria pedido em nome de um cliente.
+
+        Segurança: verifica que cliente_b2b_id pertence à carteira do representante
+        (filtra por tenant_id + representante_id) antes de criar o pedido.
+
+        Args:
+            tool_input: parâmetros da ferramenta confirmar_pedido_em_nome_de.
+            tenant: dados do tenant.
+            session: sessão SQLAlchemy.
+            instancia_id: ID da instância WhatsApp.
+            numero: número do representante remetente.
+
+        Returns:
+            Dict com pedido_id e status, ou {"erro": ...} se cliente não na carteira.
+        """
+        from decimal import Decimal
+
+        cliente_b2b_id: str = tool_input.get("cliente_b2b_id", "")
+
+        # Validação de segurança: cliente deve estar na carteira do representante
+        clientes_carteira = await self._cliente_b2b_repo.listar_por_representante(
+            tenant_id=tenant.id,
+            representante_id=self._representante.id,
+            session=session,
+        )
+        ids_carteira = {c.id for c in clientes_carteira}
+
+        if cliente_b2b_id not in ids_carteira:
+            log.warning(
+                "confirmar_pedido_cliente_invalido",
+                tenant_id=tenant.id,
+                rep_id=self._representante.id,
+                cliente_b2b_id=cliente_b2b_id,
+            )
+            return {"erro": "Cliente não encontrado na sua carteira."}
+
+        itens_input = tool_input.get("itens", [])
+        itens = [
+            ItemPedidoInput(
+                produto_id=item["produto_id"],
+                codigo_externo=item["codigo_externo"],
+                nome_produto=item["nome_produto"],
+                quantidade=item["quantidade"],
+                preco_unitario=Decimal(str(item["preco_unitario"])),
+            )
+            for item in itens_input
+        ]
+
+        pedido_input = CriarPedidoInput(
+            tenant_id=tenant.id,
+            cliente_b2b_id=cliente_b2b_id,
+            representante_id=self._representante.id,
+            itens=itens,
+        )
+
+        # Cria pedido no banco
+        pedido = await self._order_service.criar_pedido_from_intent(
+            pedido_input=pedido_input,
+            session=session,
+        )
+
+        # Gera PDF
+        pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido, tenant)
+
+        # Notifica gestor via WhatsApp
+        if tenant.whatsapp_number:
+            total_br = f"{pedido.total_estimado:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            caption = (
+                f"Novo pedido PED-{pedido.id[:8].upper()} | "
+                f"Rep: {self._representante.nome} | "
+                f"{len(pedido.itens)} iten(s) | "
+                f"R$ {total_br}"
+            )
+            await send_whatsapp_media(
+                instancia_id=instancia_id,
+                numero=tenant.whatsapp_number,
+                pdf_bytes=pdf_bytes,
+                caption=caption,
+                file_name=f"pedido-{pedido.id[:8]}.pdf",
+            )
+
+        log.info(
+            "pedido_rep_confirmado",
+            tenant_id=tenant.id,
+            rep_id=self._representante.id,
+            pedido_id=pedido.id,
+            cliente_b2b_id=cliente_b2b_id,
+            total=str(pedido.total_estimado),
+        )
+
+        return {
+            "pedido_id": pedido.id,
+            "status": "confirmado",
+            "total_estimado": str(pedido.total_estimado),
+            "n_itens": len(pedido.itens),
+            "representante_id": self._representante.id,
+            "mensagem": (
+                f"Pedido PED-{pedido.id[:8].upper()} registrado com sucesso em nome do cliente! "
+                "O gestor foi notificado."
+            ),
+        }
 
 
 class AgentDesconhecido:
@@ -81,7 +679,9 @@ class AgentDesconhecido:
             span.set_attribute("mensagem_len", len(mensagem.texto))
 
             whatsapp = tenant.whatsapp_number or "da distribuidora"
-            texto = _TEMPLATE_DESCONHECIDO.format(whatsapp_number=whatsapp)
+            texto = (
+                f"Olá! Para atendimento, entre em contato pelo WhatsApp {whatsapp}."
+            )
             numero = mensagem.de.split("@")[0]
 
             log.info(
