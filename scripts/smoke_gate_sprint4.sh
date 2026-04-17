@@ -18,7 +18,10 @@ FAILURES=()
 VENV_ROOT="${VENV_ROOT:-$HOME/ai-sales-agent-claude/.venv}"
 VENV_PYTHON="$VENV_ROOT/bin/python"
 VENV_LINT="$VENV_ROOT/bin/lint-imports"
-export PYTHONPATH="${PYTHONPATH:-output}"
+# PYTHONPATH forçado (infisical pode sobrescrever env vars)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+export PYTHONPATH="$PROJECT_ROOT/output"
 
 _pass() { echo "  [PASS] $1"; PASSED=$((PASSED + 1)); }
 _fail() { echo "  [FAIL] $1 — $2"; FAILED=$((FAILED + 1)); FAILURES+=("$1: $2"); }
