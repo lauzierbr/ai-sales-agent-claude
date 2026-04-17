@@ -1,0 +1,18 @@
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="kpi-label">GMV Hoje</div>
+    <div class="kpi-value accent">R$ {{ "%.2f"|format(kpis.total_gmv|float) }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Pedidos Hoje</div>
+    <div class="kpi-value">{{ kpis.n_pedidos }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Ticket Médio</div>
+    <div class="kpi-value">R$ {{ "%.2f"|format(kpis.ticket_medio|float) }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Atualizado às</div>
+    <div class="kpi-value" style="font-size: 1.1rem; color: #aaa;">{{ kpis.atualizado_em }}</div>
+  </div>
+</div>

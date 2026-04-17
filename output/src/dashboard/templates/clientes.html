@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Clientes{% endblock %}
+{% block content %}
+<h1>Clientes</h1>
+<form method="get" action="/dashboard/clientes" class="search-bar">
+  <input type="text" name="q" value="{{ q }}" placeholder="Buscar por nome ou CNPJ...">
+  <button type="submit" class="btn btn-primary">Buscar</button>
+</form>
+<div class="card">
+  {% if clientes %}
+  <table>
+    <thead>
+      <tr><th>Nome</th><th>CNPJ</th><th>Telefone</th><th>Representante</th><th>Ativo</th></tr>
+    </thead>
+    <tbody>
+    {% for c in clientes %}
+    <tr>
+      <td>{{ c.nome }}</td>
+      <td class="text-muted">{{ c.cnpj }}</td>
+      <td class="text-muted">{{ c.telefone or "—" }}</td>
+      <td class="text-muted">{{ c.representante_id[:8] if c.representante_id else "—" }}</td>
+      <td>{% if c.ativo %}<span class="badge badge-ok">sim</span>{% else %}<span class="badge">não</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Nenhum cliente encontrado.</p>
+  {% endif %}
+</div>
+{% endblock %}

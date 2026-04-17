@@ -1,29 +1,29 @@
 # Exec Plan: Sprint Infra-Staging
 
 **Status:** ✅ Concluído (2026-04-13)
-**Ambiente:** mac-mini-lablz (staging)
-**Executado via:** Claude Code com SSH ao mac-mini-lablz
+**Ambiente:** macmini-lablz (staging)
+**Executado via:** Claude Code com SSH ao macmini-lablz
 **Pré-requisito para:** Sprint 0 em diante em staging
 
 ---
 
 ## Objetivo
 
-mac-mini-lablz com infraestrutura espelhando o development do mac-lablz.
+macmini-lablz com infraestrutura espelhando o development do mac-lablz.
 Deploy funcional via `scripts/deploy.sh`. Serviços com auto-start via launchd.
 
 ## Pré-condições
 
 - Sprint Infra-Dev concluído no mac-lablz
-- SSH configurado: `ssh mac-mini-lablz` funciona sem senha
-- mac-mini-lablz com macOS e acesso à internet
+- SSH configurado: `ssh macmini-lablz` funciona sem senha
+- macmini-lablz com macOS e acesso à internet
 
 ## Entregas
 
 ### 1. SSH e acesso remoto
-- [ ] Chave SSH do mac-lablz copiada para mac-mini-lablz
-- [ ] `ssh mac-mini-lablz` funciona sem senha
-- [ ] `ssh mac-mini-lablz "hostname"` retorna correto
+- [ ] Chave SSH do mac-lablz copiada para macmini-lablz
+- [ ] `ssh macmini-lablz` funciona sem senha
+- [ ] `ssh macmini-lablz "hostname"` retorna correto
 
 ### 2. Pré-requisitos no mac-mini
 - [ ] Homebrew instalado
@@ -71,10 +71,10 @@ A partir do mac-lablz:
 ./scripts/deploy.sh
 
 # Health check remoto
-ssh mac-mini-lablz "cd ~/ai-sales-agent && ./scripts/health-check.sh"
+ssh macmini-lablz "cd ~/ai-sales-agent && ./scripts/health-check.sh"
 
 # Infisical staging
-ssh mac-mini-lablz "cd ~/ai-sales-agent && infisical run --env=staging -- python -c 'print(\"ok\")'"
+ssh macmini-lablz "cd ~/ai-sales-agent && infisical run --env=staging -- python -c 'print(\"ok\")'"
 ```
 
 ## Log de decisões

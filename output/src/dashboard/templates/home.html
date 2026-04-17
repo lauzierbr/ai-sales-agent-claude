@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div id="kpis-section"
+     hx-get="/dashboard/home/partials/kpis"
+     hx-trigger="every 30s"
+     hx-swap="innerHTML">
+  {% include "_partials/kpis.html" %}
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.5rem;">
+  <div class="card">
+    <h2>Pedidos recentes</h2>
+    <div id="pedidos-recentes-section"
+         hx-get="/dashboard/home/partials/pedidos_recentes"
+         hx-trigger="every 30s"
+         hx-swap="innerHTML">
+      {% include "_partials/pedidos_recentes.html" %}
+    </div>
+    <div style="margin-top: 0.75rem;">
+      <a href="/dashboard/pedidos" class="text-muted">Ver todos →</a>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Conversas ativas (24h)</h2>
+    <div id="conversas-section"
+         hx-get="/dashboard/home/partials/conversas_ativas"
+         hx-trigger="every 30s"
+         hx-swap="innerHTML">
+      {% include "_partials/conversas_ativas.html" %}
+    </div>
+    <div style="margin-top: 0.75rem;">
+      <a href="/dashboard/conversas" class="text-muted">Ver todas →</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

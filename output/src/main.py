@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.catalog.ui import router as catalog_router
+from src.dashboard.ui import router as dashboard_router
 from src.providers.telemetry import setup_telemetry
 from src.providers.tenant_context import TenantProvider
 from src.tenants.ui import auth_router, router as tenants_router
@@ -40,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler = create_scheduler()
     await start_scheduler_from_db(scheduler, get_session_factory())
 
-    log.info("app_iniciada", versao="0.3.0")
+    log.info("app_iniciada", versao="0.4.0")
     yield
 
     if scheduler.running:
@@ -55,7 +56,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Sales Agent",
         description="Agente de vendas B2B via WhatsApp para distribuidoras brasileiras",
-        version="0.3.0",
+        version="0.4.0",
         lifespan=lifespan,
     )
 
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(tenants_router)
     app.include_router(agents_router)
+    app.include_router(dashboard_router)
 
     # ─────────────────────────────────────────────
     # Static files — imagens do crawler
@@ -104,7 +106,7 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         """Endpoint de health check — excluído do TenantProvider."""
-        return {"status": "ok", "version": "0.3.0"}
+        return {"status": "ok", "version": "0.4.0"}
 
     return app
 

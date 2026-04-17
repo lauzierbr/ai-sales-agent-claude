@@ -1,0 +1,17 @@
+{% if pedidos %}
+<table>
+  <thead><tr><th>Pedido</th><th>Cliente</th><th>Total</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for p in pedidos %}
+  <tr>
+    <td>{{ p.numero_pedido or p.id[:8] }}</td>
+    <td>{{ p.cliente_nome or "—" }}</td>
+    <td>R$ {{ "%.2f"|format(p.total_estimado|float) }}</td>
+    <td><span class="badge badge-ok">{{ p.status }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-muted">Nenhum pedido hoje.</p>
+{% endif %}

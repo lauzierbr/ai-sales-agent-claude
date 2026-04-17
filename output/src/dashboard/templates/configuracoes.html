@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Configurações{% endblock %}
+{% block content %}
+<h1>Configurações do Tenant</h1>
+<div class="card">
+  <p class="text-muted" style="margin-bottom: 1rem;">Somente leitura nesta versão.</p>
+  {% if config %}
+  <table>
+    <tr><th>ID</th><td>{{ config.id }}</td></tr>
+    <tr><th>Nome</th><td>{{ config.nome }}</td></tr>
+    <tr><th>CNPJ</th><td>{{ config.cnpj }}</td></tr>
+    <tr><th>WhatsApp</th><td>{{ config.whatsapp_number or "—" }}</td></tr>
+  </table>
+  {% else %}
+  <p class="text-muted">Configurações indisponíveis.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -153,3 +153,46 @@ class AgentRepConfig:
             f"AgentRepConfig(model={self.model!r}, "
             f"max_iterations={self.max_iterations})"
         )
+
+
+class AgentGestorConfig:
+    """Configuração do AgentGestor — Claude SDK para gestor/dono do tenant."""
+
+    def __init__(self) -> None:
+        self.model: str = os.getenv("AGENT_GESTOR_MODEL", "claude-sonnet-4-6")
+        self.max_tokens: int = int(os.getenv("AGENT_GESTOR_MAX_TOKENS", "4096"))
+        self.redis_ttl: int = int(os.getenv("AGENT_GESTOR_REDIS_TTL", "86400"))  # 24h
+        self.max_iterations: int = int(os.getenv("AGENT_GESTOR_MAX_ITER", "8"))
+        self.historico_max_msgs: int = int(os.getenv("AGENT_GESTOR_HIST_MAX", "20"))
+        self.system_prompt_template: str = (
+            "Você é o assistente do gestor {gestor_nome} da {tenant_nome}. "
+            "Você tem acesso irrestrito a todos os clientes, pedidos e relatórios da empresa.\n\n"
+
+            "## Ferramentas disponíveis\n"
+            "- buscar_clientes: busca qualquer cliente do tenant por nome (sem filtro de carteira).\n"
+            "- buscar_produtos: busca produtos no catálogo por texto livre.\n"
+            "- confirmar_pedido_em_nome_de: registra pedido em nome de qualquer cliente.\n"
+            "- relatorio_vendas: gera relatório de vendas por período.\n"
+            "- clientes_inativos: lista clientes sem pedido nos últimos N dias.\n\n"
+
+            "## Regras obrigatórias\n"
+            "1. Ao fechar pedido, sempre busque o cliente via buscar_clientes para obter o ID correto.\n"
+            "2. Nunca invente clientes ou produtos — use apenas os retornados pelas ferramentas.\n"
+            "3. Ao criar pedido para cliente com representante, o representante_id do pedido "
+            "herda automaticamente do cliente (regra DP-03 — você não precisa informar).\n"
+            "4. Para relatórios de período, use as opções: hoje, semana, mes, 30d.\n"
+            "5. Confirme itens e quantidades antes de fechar pedido.\n\n"
+
+            "## Acesso irrestrito\n"
+            "Você pode ver todos os clientes do tenant, independente do representante. "
+            "Pode fechar pedido para qualquer cliente.\n\n"
+
+            "## Abreviações aceitas\n"
+            "cx=caixa, und/un=unidade, pct=pacote, fdo/frd=fardo, dz=dúzia."
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"AgentGestorConfig(model={self.model!r}, "
+            f"max_iterations={self.max_iterations})"
+        )

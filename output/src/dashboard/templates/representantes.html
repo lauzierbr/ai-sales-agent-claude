@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Representantes{% endblock %}
+{% block content %}
+<h1>Representantes — GMV do mês</h1>
+<div class="card">
+  {% if representantes %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>Nome</th><th>Pedidos</th><th>GMV (R$)</th></tr>
+    </thead>
+    <tbody>
+    {% for i, r in representantes|enumerate %}
+    <tr>
+      <td class="text-muted">{{ i + 1 }}</td>
+      <td>{{ r.rep_nome }}</td>
+      <td>{{ r.n_pedidos }}</td>
+      <td style="color: var(--accent); font-weight: 600;">R$ {{ "%.2f"|format(r.total_gmv|float) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Nenhum representante com pedidos este mês.</p>
+  {% endif %}
+</div>
+{% endblock %}

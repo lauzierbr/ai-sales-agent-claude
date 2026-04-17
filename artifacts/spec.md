@@ -1,396 +1,354 @@
-# Sprint 3 — AgentRep + Hardening de Linguagem Brasileira
+# Sprint 4 — Gestor/Admin
 
 **Status:** Em planejamento
-**Data:** 2026-04-16
-**Pré-requisitos:** Sprint 2 APROVADO (v0.3.0), migrations 0001–0012 aplicadas
-
----
+**Data:** 2026-04-17
+**Pré-requisitos:** Sprint 3 APROVADO (v0.4.0 + AgentRep funcional)
 
 ## Objetivo
 
-Ao final deste sprint existem dois agentes funcionais (AgentCliente e AgentRep) e
-uma suite de regressão que garante robustez a linguagem natural coloquial brasileira —
-incluindo abreviações, gírias, confirmações informais e typos comuns de celular.
-
----
+Ao final deste sprint existe um terceiro perfil `GESTOR` que acessa o sistema
+via WhatsApp com visão 360° (todos os clientes, pedidos, relatórios) e via
+dashboard web com painel de pedidos em tempo real, gestão de clientes e
+representantes, upload de preços e configuração por tenant.
 
 ## Contexto
 
-O AgentCliente está em produção e funcional. O AgentRep permaneceu como stub
-desde o Sprint 2 (arquivo: `src/agents/runtime/agent_rep.py`). O representante
-comercial da JMB precisa de um canal WhatsApp próprio para consultar catálogo e
-criar pedidos em nome dos clientes da sua carteira, sem precisar de acesso ao painel.
-
-Paralelamente, a homologação do Sprint 2 revelou que o AgentCliente funciona bem
-em cenários formais mas não foi testado com a linguagem que brasileiros realmente
-usam no WhatsApp. Esta lacuna precisa ser fechada antes de ir a múltiplos clientes.
-
----
+Sprint 3 entregou AgentRep com acesso restrito à carteira do representante.
+O gestor precisa de acesso irrestrito: fechar pedido por qualquer cliente,
+ver relatórios por rep/período, identificar clientes inativos e monitorar
+operações. O dashboard web é entregue no mesmo sprint (DP-01). Isso fecha
+o ciclo dos três perfis WhatsApp antes do Sprint 5 (inteligência e escala).
 
 ## Domínios e camadas afetadas
 
 | Domínio | Camadas |
 |---------|---------|
-| agents  | Types, Config, Repo, Runtime |
-| orders  | Service, Runtime (reutilização) |
-| db      | Migration (0013) |
-| tests   | unit, staging |
-
----
+| agents | Types, Config, Repo, Service, Runtime, UI |
+| dashboard (novo) | Config, Runtime, UI |
 
 ## Considerações multi-tenant
 
-- AgentRep filtra `clientes_b2b` por `tenant_id` E `representante_id` — nunca retorna
-  clientes de outro representante ou outro tenant.
-- `confirmar_pedido_em_nome_de` passa `tenant_id` explicitamente para `OrderService`.
-- A migration 0013 adiciona coluna `representante_id NULLABLE` em `clientes_b2b` —
-  clientes sem representante vinculado continuam funcionando (valor NULL).
-- Testes de isolamento devem verificar que `buscar_clientes_carteira` de rep do tenant
-  A não retorna clientes do tenant B.
-
----
+- Tabela `gestores` tem `tenant_id NOT NULL` — toda query filtra obrigatoriamente.
+- `RelatorioRepo`: todas as queries recebem `tenant_id` como primeiro argumento.
+- Dashboard: JWT no cookie contém `tenant_id` — todos os endpoints usam TenantProvider.
+- `/dashboard` excluído do TenantProvider middleware (tenant resolvido via cookie, não X-Tenant-ID).
+- Teste de isolamento obrigatório: gestor do tenant A não acessa dados do tenant B.
 
 ## Secrets necessários (Infisical)
 
-Nenhum secret novo. Sprint 3 reutiliza os existentes:
-
 | Variável | Ambiente | Descrição |
 |----------|----------|-----------|
-| ANTHROPIC_API_KEY | development, staging | Claude SDK |
-| AGENT_REP_MODEL | development | Modelo do AgentRep (padrão: claude-sonnet-4-6) |
-| AGENT_REP_MAX_TOKENS | development | Max tokens (padrão: 4096) |
+| `JWT_SECRET` | dev + staging | Já existe (D021) — reutilizado para cookie dashboard |
+| `DASHBOARD_SECRET` | dev + staging | Senha do gestor para o dashboard web |
+| `DASHBOARD_TENANT_ID` | dev + staging | tenant_id resolvido no login do dashboard (ex: `"jmb"`) |
 
-`AGENT_REP_MODEL` e `AGENT_REP_MAX_TOKENS` são opcionais — o sistema usa os defaults
-se não estiverem definidos. Adicionar ao Infisical development antes da execução.
+## Gotchas conhecidos
 
----
+| Área | Gotcha | Workaround obrigatório |
+|------|--------|------------------------|
+| asyncpg + pgvector | ORDER BY com vetor → 0 rows silencioso | Fetch all, sort em Python |
+| asyncpg + pgvector | CAST(:param AS vector) falha | Interpolar f-string diretamente no SQL |
+| SQLAlchemy AsyncSession | auto-commit ausente | `await session.commit()` explícito após toda escrita |
+| fpdf2 2.x | `pdf.output()` retorna bytearray | `bytes(pdf.output())` |
+| Evolution API | Envia webhook fromMe=True | Ignorar fromMe=True em parse_mensagem |
+| DATE_TRUNC PostgreSQL | 'week' usa domingo como início da semana | Usar `now - timedelta(days=7)` em Python; nunca DATE_TRUNC('week') |
+| htmx + FastAPI | Partial precisa de Content-Type text/html | Usar `HTMLResponse` explicitamente em todos os endpoints de partial |
+| DP-03 | Pedido do gestor precisa do rep do cliente | `ClienteB2BRepo.get_by_id` antes de criar pedido; usa `cliente.representante_id` |
+| conversas CHECK CONSTRAINT | Migration 0009 tem `persona IN ('cliente_b2b', 'representante', 'desconhecido')` | Migration 0015 DEVE alterar o constraint para incluir `'gestor'`; sem isso, `ConversaRepo.get_or_create_conversa` falha no runtime |
 
 ## Entregas
 
-### E1 — Migration 0013: representante_id em clientes_b2b
+### E1 — Migration 0015: tabela `gestores` + índice de pedidos + fix CHECK CONSTRAINT
 
-**Camadas:** DB (Alembic)
-**Arquivo(s):** `output/alembic/versions/0013_clientes_b2b_representante_id.py`
-
+**Camadas:** Types (DB schema)
+**Arquivo:** `output/alembic/versions/0015_gestores_pedidos_index.py`
 **Critérios de aceitação:**
-- [ ] Coluna `representante_id TEXT NULLABLE` adicionada a `clientes_b2b`
-- [ ] FK para `representantes.id` com `ON DELETE SET NULL`
-- [ ] Índice `ix_clientes_b2b_rep` em `(tenant_id, representante_id)`
-- [ ] `downgrade()` reverte sem perda de dados (DROP COLUMN IF EXISTS)
-- [ ] `alembic upgrade head` aplica sem erro partindo de 0012
+- [ ] Tabela `gestores` criada: `id TEXT PK DEFAULT gen_random_uuid()`, `tenant_id TEXT NOT NULL`, `telefone TEXT NOT NULL`, `nome TEXT NOT NULL`, `ativo BOOLEAN NOT NULL DEFAULT true`, `criado_em TIMESTAMPTZ NOT NULL DEFAULT now()`
+- [ ] `UNIQUE (tenant_id, telefone)` presente em `gestores`
+- [ ] `CREATE INDEX ix_pedidos_tenant_criado_em ON pedidos(tenant_id, criado_em)` criado
+- [ ] CHECK CONSTRAINT `ck_conversas_persona` alterado: DROP antigo + ADD novo com `persona IN ('cliente_b2b', 'representante', 'desconhecido', 'gestor')`
+- [ ] `alembic upgrade head` executa sem erro
+- [ ] `alembic downgrade -1` reverte tudo: drop index, drop table gestores, restaura constraint original
 
----
+### E2 — Types: `Persona.GESTOR` + `Gestor` model
 
-### E2 — ClienteB2B.representante_id no tipo e no repo
-
-**Camadas:** Types, Repo
-**Arquivo(s):**
-- `output/src/agents/types.py`
-- `output/src/agents/repo.py`
-
+**Camadas:** Types
+**Arquivo:** `output/src/agents/types.py`
 **Critérios de aceitação:**
-- [ ] `ClienteB2B` tem campo `representante_id: str | None = None`
-- [ ] `ClienteB2BRepo.listar_por_representante(tenant_id, representante_id, session)`
-  retorna `list[ClienteB2B]` — só clientes com `representante_id` igual ao informado
-  E `tenant_id` igual — ordenados por `nome ASC`
-- [ ] `ClienteB2BRepo.buscar_por_nome(tenant_id, representante_id, query, session)`
-  retorna `list[ClienteB2B]` usando `ILIKE '%query%'` no campo `nome`
-  — sempre com filtro `tenant_id` E `representante_id`
-- [ ] import-linter passa sem violações (Repo não importa Service)
+- [ ] `Persona.GESTOR = "gestor"` adicionado ao StrEnum `Persona`
+- [ ] `class Gestor(BaseModel)` com campos: `id: str`, `tenant_id: str`, `telefone: str`, `nome: str`, `ativo: bool = True`, `criado_em: datetime`
+- [ ] `model_config = ConfigDict(from_attributes=True)` presente
+- [ ] `Persona("gestor") == Persona.GESTOR` sem exceção
+- [ ] Nenhuma alteração nos valores existentes (`CLIENTE_B2B`, `REPRESENTANTE`, `DESCONHECIDO`)
 
----
+### E3 — Repo: `GestorRepo` + `RelatorioRepo` + adições em `ClienteB2BRepo`
 
-### E3 — AgentRepConfig
+**Camadas:** Repo
+**Arquivo:** `output/src/agents/repo.py`
+**Critérios de aceitação:**
+- [ ] `GestorRepo.get_by_telefone(tenant_id, telefone, session) -> Gestor | None` — filtra `ativo=true`
+- [ ] `ClienteB2BRepo.buscar_todos_por_nome(tenant_id, query, session) -> list[ClienteB2B]` — sem filtro de `representante_id`; usa `unaccent + ILIKE`
+- [ ] `ClienteB2BRepo.get_by_id(id, tenant_id, session) -> ClienteB2B | None` — lookup por PK com filtro tenant_id
+- [ ] `RelatorioRepo.totais_periodo(tenant_id, data_inicio, data_fim, session) -> dict` retorna `{"total_gmv": Decimal, "n_pedidos": int, "ticket_medio": Decimal}`
+- [ ] `RelatorioRepo.totais_por_rep(tenant_id, data_inicio, data_fim, session) -> list[dict]` — `[{"rep_id", "rep_nome", "n_pedidos", "total_gmv"}]` ordenado por `total_gmv` DESC em Python
+- [ ] `RelatorioRepo.totais_por_cliente(tenant_id, data_inicio, data_fim, session) -> list[dict]` — `[{"cliente_id", "nome", "cnpj", "n_pedidos", "total_gmv"}]` ordenado por `total_gmv` DESC em Python
+- [ ] `RelatorioRepo.clientes_inativos(tenant_id, dias, session) -> list[dict]` — clientes sem pedido ≥ `dias` dias; ordenado por `ultimo_pedido_em` ASC em Python (None primeiro)
+- [ ] Todas as queries filtram por `tenant_id` (isolamento multi-tenant)
+- [ ] Nenhum `ORDER BY` em SQL — sort sempre em Python (padrão do projeto)
+- [ ] `pytest -m unit` passa para todos os métodos novos
+
+**Query SQL orientativa para `RelatorioRepo.clientes_inativos`:**
+```sql
+SELECT c.id, c.nome, c.cnpj,
+       MAX(p.criado_em) AS ultimo_pedido_em
+FROM clientes_b2b c
+LEFT JOIN pedidos p
+    ON p.cliente_b2b_id = c.id
+   AND p.tenant_id = :tenant_id
+   AND p.status != 'cancelado'
+WHERE c.tenant_id = :tenant_id AND c.ativo = true
+GROUP BY c.id, c.nome, c.cnpj
+HAVING MAX(p.criado_em) IS NULL
+    OR MAX(p.criado_em) < NOW() - CAST(:dias || ' days' AS INTERVAL)
+```
+
+### E4 — Config: `AgentGestorConfig`
 
 **Camadas:** Config
-**Arquivo(s):** `output/src/agents/config.py`
-
+**Arquivo:** `output/src/agents/config.py`
 **Critérios de aceitação:**
-- [ ] Classe `AgentRepConfig` adicionada ao arquivo (ao lado de `AgentClienteConfig`)
-- [ ] Campos: `model`, `max_tokens`, `redis_ttl`, `max_iterations`, `historico_max_msgs`,
-  `system_prompt_template`
-- [ ] `system_prompt_template` parametrizado com `{tenant_nome}` e `{rep_nome}`
-- [ ] System prompt instrui o agente a:
-  - Sempre confirmar o nome do cliente antes de fechar pedido
-  - Exibir nome + CNPJ do cliente ao localizá-lo
-  - Usar linguagem direta com representante (mais técnica que com cliente)
-  - Nunca inventar clientes — usar apenas os retornados por `buscar_clientes_carteira`
-- [ ] `repr()` retorna string com model e max_iterations
+- [ ] `AgentGestorConfig` com campos: `model`, `max_tokens`, `redis_ttl`, `max_iterations=8`, `historico_max_msgs`, `system_prompt_template`
+- [ ] Todos os valores lidos de `os.getenv()` com defaults (sem dependência de env na instanciação)
+- [ ] System prompt define: papel gestor/dono, acesso irrestrito, ferramentas disponíveis, linguagem coloquial BR, regra DP-03 (preservar `representante_id` do cliente ao fechar pedido)
+- [ ] `system_prompt_template` interpolável com `.format(tenant_nome=..., gestor_nome=...)`
+- [ ] `max_iterations=8` (maior que AgentRep=5; relatórios podem exigir múltiplas ferramentas)
 
----
-
-### E4 — AgentRep (substitui stub)
+### E5 — Runtime: `AgentGestor` com 5 ferramentas
 
 **Camadas:** Runtime
-**Arquivo(s):** `output/src/agents/runtime/agent_rep.py`
+**Arquivo:** `output/src/agents/runtime/agent_gestor.py` (novo)
 
-**Ferramentas expostas ao Claude:**
+**Ferramentas (`_TOOLS` no módulo):**
 
-```
-buscar_produtos(query: str, limit: int = 5)
-  → mesmo CatalogService do AgentCliente
+1. `buscar_clientes(query: str)` → `ClienteB2BRepo.buscar_todos_por_nome` (sem filtro de rep)
+2. `buscar_produtos(query: str)` → idêntico ao AgentRep (lookup exato + semântico)
+3. `confirmar_pedido_em_nome_de(cliente_b2b_id: str, itens: list[{produto_id, nome_produto, quantidade, preco_unitario}])` → sem validação de carteira; `representante_id` herdado de `cliente.representante_id` (DP-03); requer `ClienteB2BRepo.get_by_id` antes de criar
+4. `relatorio_vendas(periodo: str, tipo: str)` — `periodo` em `["hoje","semana","mes","30d"]`; `tipo` em `["totais","por_rep","por_cliente"]`; cálculo de datas em Python (nunca DATE_TRUNC); delega a `RelatorioRepo`
+5. `clientes_inativos(dias: int = 30)` → `RelatorioRepo.clientes_inativos`
 
-buscar_clientes_carteira(query: str)
-  → ClienteB2BRepo.buscar_por_nome() filtrado por representante_id do rep atual
-  → retorna lista de {cliente_id, nome, cnpj, telefone}
-
-confirmar_pedido_em_nome_de(cliente_b2b_id: str, itens: list[ItemInput], observacao: str | None)
-  → valida que cliente_b2b_id pertence à carteira do rep (tenant_id + representante_id)
-  → chama OrderService.criar_pedido_from_intent()
-  → gera PDF e envia para tenant.whatsapp_number (gestor)
-  → envia confirmação texto para o rep (não para o cliente)
-```
+**Mapeamento período → datas (em Python, dentro de `_executar_ferramenta`):**
+- `"hoje"` → `data_inicio = now.replace(hour=0, minute=0, second=0, microsecond=0)`, `data_fim = data_inicio + timedelta(days=1)`
+- `"semana"` → `data_inicio = now - timedelta(days=7)`, `data_fim = now`
+- `"mes"` → `data_inicio = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)`, `data_fim = now`
+- `"30d"` → `data_inicio = now - timedelta(days=30)`, `data_fim = now`
 
 **Critérios de aceitação:**
-- [ ] `AgentRep.__init__` recebe as mesmas dependências injetáveis do AgentCliente
-  (order_service, conversa_repo, pdf_generator, config, catalog_service,
-  anthropic_client, redis_client) mais `representante: Representante`
-- [ ] `AgentRep.responder(mensagem, tenant, session)` — mesmo fluxo do AgentCliente
-  (histórico Redis, loop tool_use, persiste no banco, commit, envia WhatsApp)
-- [ ] Validação de segurança: `confirmar_pedido_em_nome_de` verifica que
-  `cliente_b2b_id` existe na carteira do rep antes de criar pedido.
-  Se não existir: retorna `{"erro": "Cliente não encontrado na sua carteira."}`
-- [ ] Se Claude chamar `confirmar_pedido_em_nome_de` sem ter chamado
-  `buscar_clientes_carteira` antes (cliente_b2b_id desconhecido): a validação
-  acima captura isso e retorna erro sem criar pedido
-- [ ] `Persona.REPRESENTANTE` usado em `get_or_create_conversa`
-- [ ] import-linter passa (Runtime não importa UI)
-- [ ] OpenTelemetry: span `agent_rep_responder` com atributos `tenant_id`, `rep_id`
+- [ ] Padrão idêntico ao `AgentRep`: injeção de dependências, Redis memory (TTL 24h), persistência PostgreSQL via `ConversaRepo`, `Persona.GESTOR` passado para `get_or_create_conversa`
+- [ ] `confirmar_pedido_em_nome_de` NÃO verifica pertencimento à carteira
+- [ ] DP-03: `representante_id` no pedido = `cliente.representante_id` (None se cliente não tiver rep)
+- [ ] `relatorio_vendas(periodo="semana")` usa `now - timedelta(days=7)` — teste G06 cobre isso
+- [ ] `session.commit()` chamado após criação de pedido (verificar se `OrderService.criar_pedido_from_intent` já faz commit; NÃO double-commit)
+- [ ] `catalog_service=None` não levanta exceção em `buscar_produtos`
+- [ ] `pytest -m unit` passa com todas as dependências mockadas
 
----
+### E6 — Service: IdentityRouter atualizado
 
-### E5 — Wiring do AgentRep no webhook (ui.py)
+**Camadas:** Service
+**Arquivo:** `output/src/agents/service.py`
+**Nova prioridade de lookup:** `gestores → representantes → clientes_b2b → DESCONHECIDO`
+
+**Critérios de aceitação:**
+- [ ] `GestorRepo.get_by_telefone()` verificado **antes** de `representantes` e `clientes_b2b`
+- [ ] Número em `gestores` E `representantes` → retorna `Persona.GESTOR` (DP-02); log INFO `identity_router_gestor_rep_cumulativo` (não WARNING — comportamento esperado)
+- [ ] Número só em `representantes` → `Persona.REPRESENTANTE` (sem regressão)
+- [ ] Número só em `clientes_b2b` → `Persona.CLIENTE_B2B` (sem regressão)
+- [ ] Número desconhecido → `Persona.DESCONHECIDO` (sem regressão)
+- [ ] `pytest -m unit` cobre os 4 cenários (IR-G1 a IR-G4)
+
+### E7 — UI: wiring do `AgentGestor` no webhook handler
 
 **Camadas:** UI
-**Arquivo(s):** `output/src/agents/ui.py`
+**Arquivo:** `output/src/agents/ui.py`
 
 **Critérios de aceitação:**
-- [ ] Quando `identity_router` retorna `Persona.REPRESENTANTE`, instancia `AgentRep`
-  com `representante=` o objeto obtido do `RepresentanteRepo`
-- [ ] AgentRep injetado com as mesmas dependências já construídas para AgentCliente
-  (mesmos singletons: catalog_service, order_service, etc.)
-- [ ] Dependências nunca None: `catalog_service`, `order_service`, `pdf_generator`
-  verificados no startup ou no handler — log.error + return 500 se None
-- [ ] `@pytest.mark.staging` smoke: POST /webhook/whatsapp com payload de representante
-  real → 200 OK (sem verificar resposta Claude)
+- [ ] `_process_message()` instancia `AgentGestor` quando `persona == Persona.GESTOR`
+- [ ] Branch inserido entre `REPRESENTANTE` e o `else` (DESCONHECIDO)
+- [ ] Injeção de dependências: `GestorRepo`, `RelatorioRepo`, `ConversaRepo`, `OrderService`, `PDFGenerator`, `AgentGestorConfig`, `catalog_service`, `anthropic_client`, `redis_client`, `ClienteB2BRepo`
+- [ ] Exceção em `AgentGestor.responder` capturada e logada — não crasha o background task
+- [ ] `import-linter` passa sem violações de camada
 
----
+### E8 — Dashboard web (MVP)
 
-### E6 — Hardening do system prompt do AgentCliente
+**Camadas:** Config, Runtime, UI (domínio novo `dashboard`)
+**Arquivos:** `output/src/dashboard/` (novo módulo)
+**Stack:** FastAPI + Jinja2 + htmx (`hx-trigger="every 30s"`) + CSS puro (paleta de `catalog/templates/`)
+**ADR:** D023 — registrar antes de implementar
 
-**Camadas:** Config
-**Arquivo(s):** `output/src/agents/config.py`
+**Estrutura de arquivos:**
+```
+output/src/dashboard/
+    __init__.py
+    ui.py
+    templates/
+        base.html
+        login.html
+        home.html
+        pedidos.html
+        conversas.html
+        clientes.html
+        representantes.html
+        precos.html
+        configuracoes.html
+        _partials/
+            kpis.html
+            pedidos_recentes.html
+            conversas_ativas.html
+```
 
-**Critérios de aceitação:**
-- [ ] `AgentClienteConfig.system_prompt_template` expandido com seção
-  `## Linguagem coloquial brasileira` contendo:
-  - Mapeamento de expressões de pedido: "manda", "me manda", "quero", "bota",
-    "coloca", "pega", "preciso de" → intenção de consulta ou compra
-  - Mapeamento de confirmações: "pode mandar", "fecha", "fecha aí", "vai lá",
-    "beleza", "tá bom", "confirmo", "sim", "pode ir", "manda tudo",
-    "FECHA", "vai!" → `confirmar_pedido`
-  - Mapeamento de cancelamentos: "não", "cancela", "esquece", "para",
-    "peraí", "deixa pra lá", "não quero mais" → não confirmar pedido
-  - Abreviações numéricas: "cx" = caixa, "und" / "un" = unidade,
-    "pct" = pacote, "fdo" / "frd" = fardo, "dz" = dúzia
-  - Instrução: se quantidade não for especificada, perguntar antes de confirmar
-  - Instrução: se mensagem for só saudação ("oi", "bom dia", "e aí"), responder
-    com saudação + oferta de ajuda, sem chamar ferramentas
-- [ ] Nenhuma outra lógica do AgentCliente alterada — só o template de string
+**Endpoints:**
+| Endpoint | Método | Auth | Comportamento |
+|----------|--------|------|---------------|
+| `/dashboard/login` | GET | Sem auth | Renderiza `login.html` |
+| `/dashboard/login` | POST | Sem auth | Valida `DASHBOARD_SECRET` com `hmac.compare_digest`; sucesso → cookie `dashboard_session` (JWT HttpOnly SameSite=Lax 8h) + redirect `/dashboard/home`; falha → `login.html` com `error=True` |
+| `/dashboard/logout` | GET | Cookie | Limpa cookie + redirect `/dashboard/login` |
+| `/dashboard/home` | GET | Cookie | KPIs do dia via `RelatorioRepo.totais_periodo`; seção KPI com htmx auto-refresh |
+| `/dashboard/home/partials/kpis` | GET | Cookie | `HTMLResponse` do fragmento `_partials/kpis.html` |
+| `/dashboard/pedidos` | GET | Cookie | Lista pedidos; params `status`, `data_inicio`, `data_fim` |
+| `/dashboard/conversas` | GET | Cookie | Conversas das últimas 24h via `ConversaRepo` |
+| `/dashboard/clientes` | GET | Cookie | Todos os clientes; param `q` para busca por nome/CNPJ |
+| `/dashboard/representantes` | GET | Cookie | Lista reps com GMV do mês via `RelatorioRepo.totais_por_rep` |
+| `/dashboard/precos` | GET | Cookie | Form de upload |
+| `/dashboard/precos/upload` | POST | Cookie | Delega a `CatalogService.upload_excel_precos`; retorna `HTMLResponse` inline (htmx) |
+| `/dashboard/configuracoes` | GET | Cookie | Exibe configurações do tenant (read-only) |
 
----
-
-### E7 — Suite de testes de linguagem coloquial brasileira (AgentCliente)
-
-**Camadas:** Tests (unit)
-**Arquivo(s):** `output/src/tests/unit/agents/test_agent_cliente_linguagem_br.py`
-
-Esta suite verifica que o AgentCliente reage corretamente quando Claude (mockado)
-retorna respostas consistentes com o system prompt expandido.
-
-**Estrutura dos testes:**
-Cada teste injeta um mock do Anthropic que responde como Claude responderia dado
-o system prompt correto. O teste verifica o COMPORTAMENTO DO AGENTE (ferramentas
-chamadas, respostas enviadas), não o texto gerado pelo Claude.
-
-**Critérios de aceitação — cada item abaixo é um test case individual:**
-
-#### Grupo A: Consultas informais → buscar_produtos chamado
-
-- [ ] `A01` "oi, tem shampoo?" → Claude retorna tool_use buscar_produtos(query="shampoo")
-      → agente executa busca → envia resposta via WhatsApp
-- [ ] `A02` "manda o preço da heineken" → buscar_produtos(query="heineken") chamado
-- [ ] `A03` "qual o valor do nescau?" → buscar_produtos(query="nescau") chamado
-- [ ] `A04` "tem alguma coisa de higiene?" → buscar_produtos(query="higiene") chamado
-- [ ] `A05` "me mostra condicionadro" (typo) → buscar_produtos chamado (query não vazia)
-- [ ] `A06` "quero ver o catálogo de bebê" → buscar_produtos(query contém "bebê")
-
-#### Grupo B: Saudações → sem ferramenta chamada
-
-- [ ] `B01` "oi" → Claude retorna end_turn (sem tool_use) → agente envia saudação
-- [ ] `B02` "bom dia" → end_turn, nenhuma tool chamada
-- [ ] `B03` "boa tarde, tudo bem?" → end_turn, nenhuma tool chamada
-- [ ] `B04` "olá posso fazer um pedido?" → end_turn com resposta orientando o cliente,
-      sem buscar_produtos (ainda não há produto mencionado)
-
-#### Grupo C: Pedidos diretos → buscar_produtos + confirmar_pedido em sequência
-
-- [ ] `C01` "manda 10 shampoo 300ml" →
-      iter 1: buscar_produtos(query="shampoo 300ml")
-      iter 2: confirmar_pedido(itens=[{quantidade: 10, ...}])
-      → OrderService.criar_pedido_from_intent chamado 1x
-- [ ] `C02` "quero 2 cx de heineken long neck" →
-      buscar_produtos("heineken long neck") chamado, depois confirmar_pedido
-- [ ] `C03` "fecha aí, 3 de shampoo e 2 de condicionador" →
-      buscar_produtos chamado (pode ser 1 ou 2x), confirmar_pedido com 2 itens
-- [ ] `C04` "me manda: 10 heineken 600ml e 5 skol" →
-      confirmar_pedido com pelo menos 2 itens no final do loop
-
-#### Grupo D: Confirmações coloquiais → confirmar_pedido acionado
-
-Cenário base: agente já mostrou produtos, cliente responde com confirmação.
-Mock do histórico Redis contém os produtos apresentados.
-
-- [ ] `D01` "pode mandar" → Claude retorna confirmar_pedido → pedido criado
-- [ ] `D02` "vai lá" → confirmar_pedido → OrderService chamado
-- [ ] `D03` "fecha!" → confirmar_pedido → pedido criado
-- [ ] `D04` "beleza, pode ir" → confirmar_pedido → pedido criado
-- [ ] `D05` "FECHA" (maiúsculas) → confirmar_pedido → pedido criado
-- [ ] `D06` "sim confirmo" → confirmar_pedido → pedido criado
-- [ ] `D07` "tô dentro, manda tudo" → confirmar_pedido → pedido criado
-
-#### Grupo E: Cancelamentos → confirmar_pedido NÃO chamado
-
-- [ ] `E01` "não, deixa" → end_turn sem confirmar_pedido, OrderService não chamado
-- [ ] `E02` "cancela" → end_turn, OrderService não chamado
-- [ ] `E03` "esquece" → end_turn, OrderService não chamado
-- [ ] `E04` "peraí vou ver com o chefe" → end_turn, OrderService não chamado
-- [ ] `E05` "não quero mais" → end_turn, OrderService não chamado
-
-#### Grupo F: Multi-produto em uma mensagem
-
-- [ ] `F01` "quero 3 shampoo e 2 condicionador" →
-      buscar_produtos chamado pelo menos 1x → confirmar_pedido com 2 itens distintos
-- [ ] `F02` "me manda: 10 heineken, 5 skol, 3 brahma" →
-      confirmar_pedido final tem 3 itens (ou agente pede confirmação com 3 itens)
-
-#### Grupo G: Quantidade ausente → agente pede esclarecimento
-
-- [ ] `G01` "quero shampoo" (sem quantidade) →
-      Claude retorna end_turn perguntando a quantidade → OrderService NÃO chamado
-- [ ] `G02` "tem nescau? quero" (sem quantidade) →
-      end_turn perguntando quantidade → OrderService NÃO chamado
-
-#### Grupo H: Regressão dos testes do Sprint 2 (não deve quebrar)
-
-- [ ] `H01` Equivalente ao antigo `test_agent_cliente_confirmar_pedido_cadeia_completa`
-      ainda passa após mudança no system_prompt_template
-- [ ] `H02` Equivalente ao `test_agent_cliente_max_iterations_nao_loop_infinito` ainda passa
-- [ ] `H03` Equivalente ao `test_agent_cliente_persiste_mensagens_db` ainda passa
-- [ ] `H04` Equivalente ao `test_agent_cliente_buscar_produtos_sem_catalog_service` ainda passa
-
-**Observação de implementação para o Generator:**
-Os testes dos grupos A–G são parametrizados via factory de mock: dado que Claude
-retornaria tool_use X com input Y, o AgentCliente executa corretamente a ferramenta
-e envia a resposta. O mock do Anthropic é construído com `side_effect` para simular
-a sequência de chamadas. Não é necessário verificar o texto da mensagem enviada ao
-WhatsApp — apenas que a ferramenta correta foi (ou não foi) chamada.
-
----
-
-### E8 — Testes unitários do AgentRep
-
-**Camadas:** Tests (unit)
-**Arquivo(s):** `output/src/tests/unit/agents/test_agent_rep.py`
-(reescrever o stub existente)
+**Alterações obrigatórias em outros arquivos:**
+- `output/src/main.py`: `app.include_router(dashboard_router)`
+- `output/src/providers/tenant_context.py`: adicionar `/dashboard` a `_EXCLUDED_PREFIXES`
 
 **Critérios de aceitação:**
+- [ ] `GET /dashboard/home` sem cookie → 302 para `/dashboard/login`
+- [ ] `POST /dashboard/login` com senha errada → re-renderiza login com erro (não 302)
+- [ ] `POST /dashboard/login` com senha correta → seta cookie + redirect home
+- [ ] Todos os endpoints de partial retornam `HTMLResponse` (não JSONResponse)
+- [ ] Upload de preço delega ao `CatalogService` existente (sem duplicar lógica)
+- [ ] `/dashboard` excluído do TenantProvider middleware
+- [ ] `pytest -m unit` cobre login, `require_dashboard_session`, upload
 
-- [ ] `R01` AgentRep.responder com buscar_produtos → CatalogService chamado
-- [ ] `R02` AgentRep.responder com buscar_clientes_carteira →
-      ClienteB2BRepo.buscar_por_nome chamado com tenant_id e representante_id corretos
-- [ ] `R03` confirmar_pedido_em_nome_de com cliente válido (na carteira) →
-      OrderService.criar_pedido_from_intent chamado, PDF gerado, gestor notificado
-- [ ] `R04` confirmar_pedido_em_nome_de com cliente_b2b_id inválido (não na carteira) →
-      OrderService NÃO chamado, resultado contém {"erro": ...}
-- [ ] `R05` Pedido criado pelo rep tem representante_id preenchido no OrderService
-- [ ] `R06` Persona.REPRESENTANTE usado em get_or_create_conversa
-- [ ] `R07` AgentRep instanciado com catalog_service=None não lança exceção
-      (retorna {"aviso": "Catálogo não disponível."} quando busca é chamada)
-- [ ] `R08` max_iterations impede loop infinito (mesmo padrão do AgentCliente)
+### E9 — ADR D023: Dashboard tech stack + auth
 
----
+**Arquivo:** `docs/design-docs/index.md`
+**Ação:** Adicionar linha `| D023 | Dashboard: Jinja2+htmx+CSS, auth DASHBOARD_SECRET cookie HttpOnly | Sprint 4 | ok |` + bloco D023 no estilo D022.
 
-### E9 — Staging smoke do AgentRep
+### E10 — Testes, smoke gate e seed
 
-**Camadas:** Tests (staging)
-**Arquivo(s):** `output/src/tests/staging/agents/test_agent_rep_staging.py`
+**Arquivos:**
+- `output/src/tests/unit/agents/test_agent_gestor.py` (novo — 12+ testes `@pytest.mark.unit`)
+- `output/src/tests/unit/agents/test_identity_router.py` (editar — IR-G1 a IR-G4)
+- `output/src/tests/staging/agents/test_agent_gestor_staging.py` (novo — `@pytest.mark.staging`)
+- `scripts/seed_homologacao_sprint4.py` (novo)
+- `scripts/smoke_gate_sprint4.sh` (novo)
 
-**Critérios de aceitação:**
-- [ ] `@pytest.mark.staging` — requer Postgres + Redis reais, sem WhatsApp real
-- [ ] Seed: representante de teste com telefone `5519000000001`, tenant `jmb`,
-      vinculado a pelo menos 1 cliente na tabela `clientes_b2b`
-- [ ] Teste chama `AgentRep.responder` com Claude real + banco real
-- [ ] Verificação: `conversa` e `mensagem` persistidos no banco para o rep de teste
-- [ ] Teste de isolamento: `buscar_clientes_carteira` retorna só clientes
-      do representante do tenant jmb, não de outro tenant
+**Casos de teste unitário obrigatórios (AgentGestor):**
 
----
+| ID | Cenário | O que verifica |
+|----|---------|----------------|
+| G01 | `buscar_clientes` | Chama `buscar_todos_por_nome` (sem `representante_id`) |
+| G02 | `buscar_produtos` | Chama `CatalogService` |
+| G03 | `confirmar_pedido_em_nome_de` | Cria pedido sem validar carteira |
+| G04 | DP-03 — rep presente | `representante_id` do pedido = `cliente.representante_id` |
+| G05 | DP-03 — sem rep | `representante_id` do pedido = None quando cliente não tem rep |
+| G06 | `relatorio_vendas(periodo="semana")` | Usa `now - timedelta(days=7)` (não DATE_TRUNC) |
+| G07 | `relatorio_vendas(tipo="por_rep")` | Chama `RelatorioRepo.totais_por_rep` |
+| G08 | `clientes_inativos(dias=30)` | Chama `RelatorioRepo.clientes_inativos` |
+| G09 | `catalog_service=None` | `buscar_produtos` retorna aviso sem levantar exceção |
+| G10 | `ConversaRepo.get_or_create_conversa` | Chamado com `Persona.GESTOR` |
+| G11 | `session.commit()` | Chamado após criação de pedido |
+| G12 | Isolamento multi-tenant | `tenant_id` sempre passado para `RelatorioRepo` |
+
+**Casos de teste IdentityRouter (adições):**
+
+| ID | Cenário |
+|----|---------|
+| IR-G1 | Telefone em `gestores` → `Persona.GESTOR` |
+| IR-G2 | Telefone em `gestores` E `representantes` → `Persona.GESTOR` (DP-02) |
+| IR-G3 | Telefone só em `representantes` → `Persona.REPRESENTANTE` (sem regressão) |
+| IR-G4 | Telefone só em `clientes_b2b` → `Persona.CLIENTE_B2B` (sem regressão) |
+
+**Seed script (`seed_homologacao_sprint4.py`):**
+1. Upsert gestor de teste (`tenant_id="jmb"`, `nome="Lauzier Gestor Teste"`, `telefone` = número real do gestor)
+2. Garantir 2 pedidos antigos (≥31 dias) para um cliente existente → `clientes_inativos` retorna ≥1 resultado
+3. Print summary com contagens
+
+**Smoke gate (`smoke_gate_sprint4.sh`):**
+
+| ID | Verificação |
+|----|-------------|
+| S1 | Health check → `{"status":"ok"}` |
+| S2 | Unit tests IR-G1 (IdentityRouter GESTOR) passam |
+| S3 | `GET /dashboard/home` sem cookie → 302 |
+| S4 | `POST /dashboard/login` com senha errada → NÃO 302 |
+| S5 | `POST /dashboard/login` com senha correta → seta cookie |
+| S6 | `GET /dashboard/home` com cookie → 200 |
+| S7 | `GET /dashboard/home/partials/kpis` → HTML contém "GMV" ou "R$" |
+| S8 | `pytest -m unit output/src/tests/unit/agents/test_agent_gestor.py` passa |
+| S9 | `lint-imports` sem violações |
+
+Execução: `infisical run --env=staging -- bash scripts/smoke_gate_sprint4.sh` → `=== SMOKE GATE: PASSED ===`
+
+## Critério de smoke staging (obrigatório)
+
+Script: `scripts/smoke_gate_sprint4.sh`
+Verifica S1–S9 listados em E10.
+Execução: `infisical run --env=staging -- bash scripts/smoke_gate_sprint4.sh` → saída `PASSED`
+
+## Checklist de homologação humana
+
+| ID | Canal | Ação | Resultado esperado |
+|----|-------|------|--------------------|
+| H1 | WhatsApp (gestor) | "busca cliente Muzel" | Lista clientes com "muzel" de qualquer rep; mostra CNPJ |
+| H2 | WhatsApp (gestor) | "quanto vendeu essa semana?" | Total R$, número de pedidos, ticket médio dos últimos 7 dias |
+| H3 | WhatsApp (gestor) | "ranking dos reps esse mês" | Lista ordenada por GMV DESC com nomes dos reps |
+| H4 | WhatsApp (gestor) | "clientes inativos" | Lista com ≥1 cliente sem pedido há 30+ dias |
+| H5 | WhatsApp (gestor) | "fecha 2 shampoo anticaspa pro Muzel" + confirmação | Pedido criado; PDF enviado ao gestor; `representante_id` no pedido = rep do cliente (verificar no banco) |
+| H6 | WhatsApp (rep `5519000000001`) | Qualquer mensagem | Resposta de AgentRep, não de AgentGestor |
+| H7 | WhatsApp (cliente `5519992066177`) | "oi" | Resposta de AgentCliente, não de AgentGestor |
+| H8 | Browser | GET `/dashboard/home` sem login | Redireciona para `/dashboard/login` |
+| H9 | Browser | Login com senha correta | Redireciona para home; mostra KPIs do dia |
+| H10 | Browser | Aguardar 30s na home | Seção KPI atualiza via htmx sem reload da página inteira |
+| H11 | Browser | Upload Excel em `/dashboard/precos` com arquivo válido | Mensagem de sucesso inline; sem reload de página |
+| H12 | Browser | `/dashboard/representantes` | Tabela com nomes dos reps e GMV do mês |
 
 ## Decisões pendentes
 
-### DP-01 — Busca textual de clientes ✅ APROVADO
-
-**Decisão:** `unaccent + ILIKE` — aprovado pelo usuário em 2026-04-16.
-
-Implementar em `ClienteB2BRepo.buscar_por_nome()`:
-
-```sql
-AND unaccent(lower(nome)) ILIKE unaccent(lower('%' || :query || '%'))
-```
-
-`unaccent` é extensão nativa do PostgreSQL — sem migration extra além da 0013.
-Cobre o caso mais comum de acentuação errada no celular ("sao" → "são",
-"farmacia" → "farmácia") sem custo de trigrama.
-
-Tech debt registrado: trigrama (`pg_trgm`) pode entrar no Sprint 5 se representantes
-reportarem falhas de busca por typos mais graves.
-
----
+Nenhuma — D023 incluída neste spec como decisão aprovada.
+Generator deve registrar o ADR (E9) antes de implementar E8.
 
 ## Fora do escopo
 
-- Preço de custo e margem visível ao representante (Sprint 4)
-- Alertas proativos de clientes inativos (Sprint 5)
-- Pedido direto por cliente B2B para o representante (fluxo híbrido — Sprint 4)
-- Interface de cadastro de clientes da carteira (Sprint 4 — painel gestor)
-- Relatórios de performance por representante (Sprint 5)
-- Busca fonética ou trigrama de clientes (Sprint 5)
-- Segundo tenant (Sprint 5)
-- Modificação do evaluator.py ou do fluxo de homologação
-
----
+- `cancelar_pedido` via WhatsApp — "a definir" no product spec → Sprint 5
+- Criação/edição de clientes via WhatsApp
+- Autenticação multi-usuário no dashboard (senha única por tenant em Sprint 4)
+- 2FA ou autenticação por senha para WhatsApp
+- Edição de configurações do tenant via dashboard (só leitura em Sprint 4)
+- Página de catálogo no dashboard (já existe em `/catalog/painel`)
+- Regras de comissão por rep (DP-03 é placeholder até Sprint 5)
+- SSE/WebSockets (polling htmx suficiente para MVP)
+- Onboarding de segundo tenant
 
 ## Riscos
 
 | Risco | Probabilidade | Impacto | Mitigação |
-|-------|--------------|---------|-----------|
-| Migration 0013 em banco com dados reais (clientes_b2b já tem rows) | Alta | Baixo | ALTER TABLE ADD COLUMN NULLABLE — sem downtime, sem perda |
-| AgentRep validar cliente da carteira quando representante_id ainda NULL no banco | Média | Médio | Seed de homologação adiciona FK antes dos testes; staging smoke falha explicitamente |
-| Testes do grupo C/D/F dependem de sequência exata de tool_use do mock | Média | Baixo | Mock com side_effect lista completa; se sequência variar, ajustar mock — não o agente |
-| system_prompt_template muito longo → context window maior → latência | Baixa | Baixo | Medido em staging smoke — se p95 > 4s, truncar exemplos |
+|-------|---------------|---------|-----------|
+| CHECK CONSTRAINT `ck_conversas_persona` não atualizado | Alta | Bloqueante | Migration 0015 DEVE dropar e recriar o constraint com `'gestor'` incluído |
+| Double-commit após criar pedido via OrderService | Média | Médio | Verificar se `OrderService.criar_pedido_from_intent` já chama `session.commit()`; não duplicar |
+| TenantProvider bloqueia `/dashboard` | Alta | Médio | E8 critério: adicionar `/dashboard` a `_EXCLUDED_PREFIXES` em `tenant_context.py` |
+| Queries de relatório lentas sem índice | Média | Médio | Migration 0015 adiciona `ix_pedidos_tenant_criado_em` |
+| Dashboard scope expansion | Alta | Médio | Cada página tem funcionalidade mínima; sem charts em Sprint 4 |
 
----
+## Handoff para o próximo sprint
 
-## Handoff para Sprint 4
-
-Sprint 3 entrega:
-- `AgentRep` funcional com carteira de clientes e pedido em nome de
-- `ClienteB2B.representante_id` no schema e no tipo
-- Suite de regressão de linguagem brasileira (30+ cenários)
-
-Sprint 4 (Painel do gestor) pode partir de:
-- Endpoint para cadastrar/vincular clientes à carteira de um representante
-  (agora que a FK existe)
-- Dashboard que exibe pedidos criados por representante_id
-- Upload de planilha que inclui coluna `representante_responsavel`
+- Sprint 5 recebe: três perfis WhatsApp funcionais + dashboard operacional como base
+- `cancelar_pedido` backlog aberto para Sprint 5
+- DP-03 pode evoluir quando Sprint 5 adicionar regras de comissão por rep
+- SSE/real-time avançado avaliável em Sprint 5 se UX exigir
+- Auth multi-usuário para dashboard → Sprint 5

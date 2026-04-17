@@ -78,9 +78,10 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
 
     import openai as _openai
 
-    from src.agents.config import AgentClienteConfig, AgentRepConfig
-    from src.agents.repo import ClienteB2BRepo, ConversaRepo, RepresentanteRepo
+    from src.agents.config import AgentClienteConfig, AgentGestorConfig, AgentRepConfig
+    from src.agents.repo import ClienteB2BRepo, ConversaRepo, GestorRepo, RelatorioRepo, RepresentanteRepo
     from src.agents.runtime.agent_cliente import AgentCliente
+    from src.agents.runtime.agent_gestor import AgentGestor
     from src.agents.runtime.agent_rep import AgentDesconhecido, AgentRep
     from src.agents.service import IdentityRouter, get_instancia, parse_mensagem
     from src.agents.types import Persona, WebhookPayload
@@ -110,6 +111,8 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
         config=OrderConfig(),
     )
     _pdf_generator = PDFGenerator()
+    _relatorio_repo = RelatorioRepo()
+    _cliente_b2b_repo = ClienteB2BRepo()
 
     # Validação de deps não-None
     if _catalog_service is None:
@@ -181,7 +184,38 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
 
         # 5. Chama agente correspondente
         try:
-            if persona == Persona.CLIENTE_B2B:
+            if persona == Persona.GESTOR:
+                # Identifica gestor para injetar no AgentGestor
+                telefone_norm_gestor = mensagem.de.split("@")[0]
+                gestor = await GestorRepo().get_by_telefone(
+                    tenant_id, telefone_norm_gestor, session
+                )
+                if gestor is None:
+                    log.warning(
+                        "gestor_nao_encontrado",
+                        tenant_id=tenant_id,
+                        telefone_hash=hashlib.sha256(telefone_norm_gestor.encode()).hexdigest(),
+                    )
+                    return
+
+                agent_gestor = AgentGestor(
+                    order_service=_order_service,
+                    conversa_repo=ConversaRepo(),
+                    pdf_generator=_pdf_generator,
+                    config=AgentGestorConfig(),
+                    gestor=gestor,
+                    catalog_service=_catalog_service,
+                    redis_client=_redis,
+                    cliente_b2b_repo=_cliente_b2b_repo,
+                    relatorio_repo=_relatorio_repo,
+                )
+                await agent_gestor.responder(
+                    mensagem=mensagem,
+                    tenant=tenant,
+                    session=session,
+                )
+
+            elif persona == Persona.CLIENTE_B2B:
                 # Identifica cliente B2B para injetar ID no AgentCliente
                 cliente_b2b_id: str | None = None
                 telefone_norm = mensagem.de.split("@")[0]

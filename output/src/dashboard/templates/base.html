@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Dashboard{% endblock %} — AI Sales Agent</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --accent: #e94560;
+      --text: #eee;
+      --text-muted: #aaa;
+      --border: #2a2a4e;
+      --success: #4caf50;
+      --error: #e94560;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; min-height: 100vh; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 1.5rem; }
+    .nav-brand { font-weight: 700; font-size: 1.1rem; color: var(--accent); }
+    .nav a { color: var(--text-muted); font-size: 0.9rem; }
+    .nav a:hover { color: var(--text); text-decoration: none; }
+    .nav .spacer { flex: 1; }
+    .nav .logout { color: var(--text-muted); font-size: 0.85rem; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+    h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    .kpi-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi-value { font-size: 1.8rem; font-weight: 700; margin-top: 0.25rem; }
+    .kpi-value.accent { color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+    th { color: var(--text-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+    .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+    .badge-ok { background: #1e4d2b; color: #4caf50; }
+    .badge-pending { background: #3a2a00; color: #ffb300; }
+    .form-group { margin-bottom: 1rem; }
+    label { display: block; margin-bottom: 0.3rem; font-size: 0.9rem; color: var(--text-muted); }
+    input, select { width: 100%; padding: 0.5rem 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.9rem; }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    .btn { display: inline-block; padding: 0.5rem 1.2rem; border-radius: 4px; border: none; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: opacity 0.15s; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { opacity: 0.85; }
+    .msg { padding: 0.6rem 1rem; border-radius: 4px; margin-top: 0.75rem; }
+    .msg.success { background: #1e4d2b; color: #4caf50; }
+    .msg.error { background: #4d1e1e; color: var(--accent); }
+    .search-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .search-bar input { max-width: 300px; }
+    .text-muted { color: var(--text-muted); font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+{% block nav %}
+<nav class="nav">
+  <span class="nav-brand">AI Sales Agent</span>
+  <a href="/dashboard/home">Home</a>
+  <a href="/dashboard/pedidos">Pedidos</a>
+  <a href="/dashboard/conversas">Conversas</a>
+  <a href="/dashboard/clientes">Clientes</a>
+  <a href="/dashboard/representantes">Representantes</a>
+  <a href="/dashboard/precos">Preços</a>
+  <a href="/dashboard/configuracoes">Configs</a>
+  <span class="spacer"></span>
+  <a href="/dashboard/logout" class="logout">Sair</a>
+</nav>
+{% endblock %}
+<div class="container">
+  {% block content %}{% endblock %}
+</div>
+</body>
+</html>

@@ -31,6 +31,7 @@ _EXCLUDED_PATHS = frozenset({
 # Prefixos excluídos — qualquer path que comece com estes passa sem header
 _EXCLUDED_PREFIXES = (
     "/catalog/painel",  # painel de revisão usa tenant_id via query param
+    "/dashboard",       # dashboard resolve tenant via cookie JWT (D023)
 )
 
 _CACHE_TTL = int(os.getenv("TENANT_CACHE_TTL", "60"))

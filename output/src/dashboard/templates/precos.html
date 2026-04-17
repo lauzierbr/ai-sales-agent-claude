@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Preços{% endblock %}
+{% block content %}
+<h1>Upload de Preços Diferenciados</h1>
+<div class="card">
+  <p class="text-muted" style="margin-bottom: 1rem;">
+    Planilha Excel com colunas: <code>codigo_produto | ean | cliente_cnpj | preco_cliente</code>
+  </p>
+  <form hx-post="/dashboard/precos/upload"
+        hx-target="#upload-result"
+        hx-swap="innerHTML"
+        hx-encoding="multipart/form-data">
+    <div class="form-group">
+      <label for="arquivo">Arquivo Excel (.xlsx)</label>
+      <input type="file" id="arquivo" name="arquivo" accept=".xlsx,.xls">
+    </div>
+    <button type="submit" class="btn btn-primary">Enviar planilha</button>
+  </form>
+  <div id="upload-result"></div>
+</div>
+{% endblock %}

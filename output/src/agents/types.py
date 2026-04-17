@@ -19,6 +19,7 @@ class Persona(StrEnum):
     CLIENTE_B2B = "cliente_b2b"
     REPRESENTANTE = "representante"
     DESCONHECIDO = "desconhecido"
+    GESTOR = "gestor"
 
 
 class Mensagem(BaseModel):
@@ -125,3 +126,16 @@ class IntentoPedido(BaseModel):
     representante_id: str | None
     telefone_solicitante: str
     itens: list[ItemIntento]
+
+
+class Gestor(BaseModel):
+    """Gestor/dono do tenant — acesso irrestrito via WhatsApp e dashboard."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    telefone: str
+    nome: str
+    ativo: bool = True
+    criado_em: datetime

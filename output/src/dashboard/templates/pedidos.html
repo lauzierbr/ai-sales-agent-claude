@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Pedidos{% endblock %}
+{% block content %}
+<h1>Pedidos</h1>
+<div class="card">
+  {% if pedidos %}
+  <table>
+    <thead>
+      <tr><th>Número</th><th>Cliente</th><th>Total</th><th>Status</th><th>Data</th></tr>
+    </thead>
+    <tbody>
+    {% for p in pedidos %}
+    <tr>
+      <td>{{ p.numero_pedido or p.id[:8] }}</td>
+      <td>{{ p.cliente_nome or "—" }}</td>
+      <td>R$ {{ "%.2f"|format(p.total_estimado|float) }}</td>
+      <td><span class="badge badge-ok">{{ p.status }}</span></td>
+      <td class="text-muted">{{ p.criado_em.strftime("%d/%m %H:%M") if p.criado_em else "—" }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Nenhum pedido encontrado.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -13,7 +13,7 @@ Log de decisões técnicas. Atualizar sempre que uma nova decisão for tomada.
 | D005 | Preço padrão via crawler, diferenciados via Excel | Planejamento | ok |
 | D006 | Crawler apenas do site B2B | Planejamento | ok |
 | D007 | Harness com sprints (não rounds autônomos) | Planejamento | ok |
-| D008 | Deploy inicial no mac-mini-lablz | Planejamento | ok |
+| D008 | Deploy inicial no macmini-lablz | Planejamento | ok |
 | D009 | Crawler via Playwright (não API REST) | Planejamento | ok |
 | D010 | Sprints de infra antes do Sprint 0 | Planejamento | ok |
 | D011 | Sprints de infra via Claude Code direto | Planejamento | ok |
@@ -28,6 +28,7 @@ Log de decisões técnicas. Atualizar sempre que uma nova decisão for tomada.
 | D020 | Multi-tenant Sprint 1+: manter tabela compartilhada + tenant_id para todos os domínios | Sprint 1 | ok |
 | D021 | Auth JWT: PyJWT + HS256, access token 8h, sem refresh em Sprint 1 | Sprint 1 | ok |
 | D022 | Auth scope: TenantProvider via X-Tenant-ID; JWT apenas para ações privilegiadas; webhook via HMAC-SHA256 | Sprint 1 | ok |
+| D023 | Dashboard web: Jinja2+htmx+CSS puro, auth via DASHBOARD_SECRET + cookie HttpOnly JWT | Sprint 4 | ok |
 
 ---
 
@@ -113,6 +114,39 @@ No Sprint 0, o endpoint `POST /catalog/crawl` dispara crawl síncrono e retorna 
 **Rationale:** JWT para webhook WhatsApp seria over-engineering — Evolution API é self-hosted na mesma rede, HMAC-SHA256 é o padrão de webhooks. Endpoints /tenants/* são admin-only via script em Sprint 1; receberão auth de plataforma em Sprint futuro.
 
 **Variável Infisical:** `EVOLUTION_WEBHOOK_SECRET` (development + staging).
+
+---
+
+## D023 — Dashboard web: Jinja2 + htmx + CSS puro, auth via DASHBOARD_SECRET cookie
+
+**Contexto:** Sprint 4 introduz o primeiro dashboard web para o gestor. Decisão DP-01
+determina que o dashboard é entregue no mesmo sprint que o AgentGestor WhatsApp.
+Alternativas avaliadas: (a) Jinja2+htmx (sem build step), (b) Streamlit (serviço
+separado), (c) React/Next.js (build step + SPA).
+
+**Decisão:**
+- **Stack frontend:** Jinja2 templates + htmx + CSS puro, sem build step, sem framework JS
+  pesado. Paleta visual reutiliza `catalog/templates/` (dark navy #1a1a2e, accent #e94560).
+- **Real-time:** htmx polling `hx-trigger="every 30s"` nas KPIs do home. SSE/WebSocket
+  somente Sprint 5 se necessário.
+- **Auth:** `DASHBOARD_SECRET` (env var Infisical, senha compartilhada por tenant) +
+  `DASHBOARD_TENANT_ID` (env var Infisical). Login via `hmac.compare_digest` (imune a
+  timing attack). Sucesso → cookie `dashboard_session` (JWT HttpOnly SameSite=Lax 8h,
+  reutiliza `JWT_SECRET` de D021). Sem tabela de usuários em Sprint 4.
+- **Exclusão do TenantProvider:** prefixo `/dashboard` adicionado a `_EXCLUDED_PREFIXES`;
+  tenant resolvido via cookie, não via `X-Tenant-ID` header.
+
+**Rationale:** Jinja2+htmx já é o padrão do projeto (Sprint 0). Zero build step — funciona
+com `uvicorn` sem configuração extra. Streamlit exigiria processo separado + port forwarding
+adicional no mac-mini. React exigiria build pipeline não justificável para MVP single-tenant.
+`hmac.compare_digest` é obrigatório para evitar timing attack em comparação de senhas.
+Auth multi-usuário (um login por gestor com email/senha) entra no Sprint 5.
+
+**Trade-off:** Senha única por tenant = se vazar, todos os gestores do tenant precisam
+trocar. Mitigado em Sprint 5 com auth por usuário. Para piloto JMB (1 gestor = o próprio
+Lauzier), é aceitável.
+
+**Variáveis Infisical:** `DASHBOARD_SECRET` e `DASHBOARD_TENANT_ID` (development + staging).
 
 ---
 

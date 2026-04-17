@@ -7,12 +7,12 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint | Status | Tipo | Descrição |
 |--------|--------|------|-----------|
 | Infra-Dev | ✅ | Infra | Ambiente desenvolvimento (mac-lablz) |
-| Infra-Staging | ✅ | Infra | Ambiente staging (mac-mini-lablz) |
+| Infra-Staging | ✅ | Infra | Ambiente staging (macmini-lablz) |
 | Sprint 0 | ✅ | Produto | Catálogo — crawler + enriquecimento |
 | Sprint 1 | ✅ | Produto | Infraestrutura da aplicação |
 | Sprint 2 | ✅ | Produto | Agente cliente completo |
 | Sprint 3 | ✅ | Produto | AgentRep + Hardening linguagem brasileira |
-| Sprint 4 | 🔲 | Produto | Painel do gestor |
+| Sprint 4 | 🔄 | Produto | Painel do gestor |
 | Sprint 5 | 🔲 | Produto | Inteligência e escala |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
@@ -36,11 +36,11 @@ Entregas:
 - [ ] Script `scripts/health_check.py` validando todos os serviços
 - [ ] import-linter configurado no `pyproject.toml`
 
-### Sprint Infra-Staging — mac-mini-lablz
+### Sprint Infra-Staging — macmini-lablz
 **Pré-requisito:** Sprint Infra-Dev completo.
 
 Entregas:
-- [ ] SSH mac-lablz → mac-mini-lablz configurado e testado
+- [ ] SSH mac-lablz → macmini-lablz configurado e testado
 - [ ] Mesmos serviços do Infra-Dev no mac-mini
 - [ ] `docker-compose.staging.yml` commitado
 - [ ] Ambiente `staging` no Infisical com variáveis

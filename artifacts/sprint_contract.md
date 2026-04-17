@@ -1,29 +1,37 @@
-# Sprint Contract — Sprint 3 — AgentRep + Hardening de Linguagem Brasileira
+# Sprint Contract — Sprint 4 — Gestor/Admin
 
 **Status:** ACEITO
-**Data:** 2026-04-16
+**Data:** 2026-04-17
 
 ---
 
 ## Entregas comprometidas
 
-1. `output/alembic/versions/0013_clientes_b2b_representante_id.py` — coluna `representante_id` + FK + índice
-2. `output/src/agents/types.py` — campo `representante_id: str | None = None` em `ClienteB2B`
-3. `output/src/agents/repo.py` — `ClienteB2BRepo.listar_por_representante()` + `ClienteB2BRepo.buscar_por_nome()` com `unaccent + ILIKE`
-4. `output/src/agents/config.py` — `AgentRepConfig` + `AgentClienteConfig.system_prompt_template` expandido com vocabulário coloquial brasileiro
-5. `output/src/agents/runtime/agent_rep.py` — `AgentRep` completo (substitui stub): 3 ferramentas, loop tool_use, memória Redis, validação de carteira
-6. `output/src/agents/ui.py` — wiring do `AgentRep` quando `Persona.REPRESENTANTE`; deps não-None verificadas
-7. `output/src/tests/unit/agents/test_agent_cliente_linguagem_br.py` — 30 casos (grupos A–H): consultas informais, saudações, pedidos diretos, confirmações coloquiais, cancelamentos, multi-produto, quantidade ausente, regressão Sprint 2
-8. `output/src/tests/unit/agents/test_agent_rep.py` — reescrita do stub: 8 casos (R01–R08)
-9. `output/src/tests/staging/agents/test_agent_rep_staging.py` — smoke `@pytest.mark.staging` + isolamento de carteira por tenant
+1. `output/alembic/versions/0015_gestores_pedidos_index.py` — tabela `gestores` + `ix_pedidos_tenant_criado_em` + fix `ck_conversas_persona` (adiciona `'gestor'`)
+2. `output/src/agents/types.py` — `Persona.GESTOR = "gestor"` + `class Gestor(BaseModel)`
+3. `output/src/agents/repo.py` — `GestorRepo.get_by_telefone()` + `ClienteB2BRepo.buscar_todos_por_nome()` + `ClienteB2BRepo.get_by_id()` + `RelatorioRepo` (4 métodos)
+4. `output/src/agents/config.py` — `AgentGestorConfig` com `max_iterations=8` e `system_prompt_template`
+5. `output/src/agents/runtime/agent_gestor.py` — `AgentGestor` com 5 ferramentas: `buscar_clientes`, `buscar_produtos`, `confirmar_pedido_em_nome_de`, `relatorio_vendas`, `clientes_inativos`
+6. `output/src/agents/service.py` — `IdentityRouter.resolve()` com prioridade `gestores → representantes → clientes_b2b → DESCONHECIDO`
+7. `output/src/agents/ui.py` — wiring de `AgentGestor` quando `Persona.GESTOR`; deps não-None verificadas
+8. `output/src/dashboard/` (novo módulo) — 12 endpoints, Jinja2+htmx, auth via `DASHBOARD_SECRET` cookie HttpOnly (D023)
+9. `output/src/main.py` — `app.include_router(dashboard_router)` + `src/providers/tenant_context.py` com `/dashboard` em `_EXCLUDED_PREFIXES`
+10. `output/src/tests/unit/agents/test_agent_gestor.py` — 12 testes G01–G12 `@pytest.mark.unit`
+11. `output/src/tests/unit/agents/test_identity_router.py` — adição de IR-G1 a IR-G4
+12. `output/src/tests/staging/agents/test_agent_gestor_staging.py` — 2 testes `@pytest.mark.staging`
+13. `scripts/seed_homologacao_sprint4.py` — seed do gestor de teste + pedidos antigos para `clientes_inativos`
+14. `scripts/smoke_gate_sprint4.sh` — verifica S1–S9; saída `PASSED` com exit 0
+15. `docs/design-docs/index.md` — ADR D023 registrado (já presente — confirmar bloco inline)
+16. `artifacts/handoff_sprint_4.md` — handoff ao Sprint 5
 
 ---
 
 ## Critérios de aceitação — Alta (bloqueantes)
 
-**A1. import-linter — zero violações de camadas**
+**A1. import-linter — zero violações de camadas (incluindo `src.dashboard`)**
 Teste: `lint-imports` na raiz do projeto
-Evidência esperada: `Kept` para todos os contratos configurados; zero linhas `Broken`
+Evidência esperada: `Kept` para todos os contratos; zero linhas `Broken`
+Nota: `src.dashboard.ui` é UI layer — pode importar de `src.agents.repo`, `src.orders.repo` e outros. Sem violação.
 
 **A2. Sem secrets hardcoded**
 Teste:
@@ -41,122 +49,117 @@ grep -r --include="*.py" "print(" output/src/ --exclude-dir=tests
 ```
 Evidência esperada: saída vazia
 
-**A4. pytest -m unit — 100% dos testes passam**
+**A4. pytest -m unit — 100% dos testes passam (incluindo G01–G12 e IR-G1 a IR-G4)**
 Teste: `pytest -m unit -v`
 Evidência esperada: `0 failed, 0 error`
 
-**A5. AgentRep: buscar_clientes_carteira filtra por tenant_id E representante_id**
-Teste: `pytest -m unit -k "test_agent_rep_buscar_clientes_carteira_filtra_por_rep"`
-Evidência esperada: `PASSED` — o mock de `ClienteB2BRepo.buscar_por_nome` captura os
-argumentos da chamada e o teste asserta **explicitamente**:
-(1) `tenant_id="jmb"` foi passado como argumento;
-(2) `representante_id` do representante injetado foi passado como argumento;
-(3) mock com `representante_id="rep-outro-tenant"` + `tenant_id="outro"` **nunca**
-é chamado — verifica cross-tenant: se AgentRep do tenant "jmb" chamar buscar_por_nome,
-o tenant_id na chamada deve ser sempre "jmb".
+**A5. IdentityRouter: gestor tem prioridade sobre rep no mesmo número (DP-02)**
+Teste: `pytest -m unit -k "test_identity_router_gestor_rep_cumulativo_retorna_gestor"`
+Evidência esperada: `PASSED` — quando mock retorna gestor ativo E representante ativo para o mesmo telefone, `IdentityRouter.resolve()` retorna `Persona.GESTOR`; `GestorRepo.get_by_telefone` chamado antes de `RepresentanteRepo.get_by_telefone`
 
-**A6. AgentRep: confirmar_pedido_em_nome_de com cliente fora da carteira não cria pedido**
-Teste: `pytest -m unit -k "test_agent_rep_confirmar_cliente_invalido_nao_cria_pedido"`
-Evidência esperada: `PASSED` — `OrderService.criar_pedido_from_intent` **não chamado**;
-resultado da ferramenta contém `{"erro": ...}` com texto legível
+**A6. AgentGestor: buscar_clientes não filtra por representante_id (acesso irrestrito)**
+Teste: `pytest -m unit -k "test_agent_gestor_g01_buscar_clientes_sem_filtro_rep"`
+Evidência esperada: `PASSED` — mock de `ClienteB2BRepo.buscar_todos_por_nome` captura os argumentos; teste asserta **explicitamente** que `representante_id` **não** está nos argumentos passados
 
-**A7. AgentCliente: confirmações coloquiais disparam confirmar_pedido (D01–D07)**
+**A7. AgentGestor: confirmar_pedido_em_nome_de não valida carteira**
+Teste: `pytest -m unit -k "test_agent_gestor_g03_pedido_sem_validacao_carteira"`
+Evidência esperada: `PASSED` — cliente fora de qualquer carteira passa pelo teste sem erro; `OrderService.criar_pedido_from_intent` chamado 1x
+
+**A8. DP-03: representante_id do pedido herdado do cliente**
+Teste (dois casos):
+```bash
+pytest -m unit -k "test_agent_gestor_g04_dp03_herda_rep_do_cliente"
+pytest -m unit -k "test_agent_gestor_g05_dp03_sem_rep_none"
+```
+Evidência esperada: ambos `PASSED`
+- G04: `CriarPedidoInput.representante_id` = `cliente.representante_id` (não None quando cliente tem rep)
+- G05: `CriarPedidoInput.representante_id` = None quando `cliente.representante_id` é None
+
+**A9. relatorio_vendas("semana") usa timedelta(7), não DATE_TRUNC**
+Teste: `pytest -m unit -k "test_agent_gestor_g06_semana_usa_timedelta"`
+Evidência esperada: `PASSED` — o mock de `RelatorioRepo.totais_periodo` captura `data_inicio`; o teste asserta que `data_inicio ≈ now - timedelta(days=7)` (diferença < 5 segundos) e que nenhuma string `DATE_TRUNC` ou `TRUNC` foi passada como argumento
+
+**A10. Migration 0015: gestores + índice + fix CHECK CONSTRAINT**
 Teste:
 ```bash
-pytest -m unit -k "grupo_d" -v 2>&1 | grep -E "PASSED|FAILED|collected"
+alembic upgrade head     # aplica 0015
+alembic downgrade -1     # reverte 0015
+alembic upgrade head     # reaaplica
 ```
-Evidência esperada:
-- Linha `collected N items` onde N ≥ 7 (se N < 7: critério FAIL por coleta insuficiente)
-- 7 testes PASSED com nomes no padrão `test_grupo_d_d0[1-7]_*`
-- Mensagens: "pode mandar", "vai lá", "fecha!", "beleza, pode ir", "FECHA",
-  "sim confirmo", "tô dentro, manda tudo" — cada uma como test separado
-- `OrderService.criar_pedido_from_intent` chamado 1x em cada caso
+Evidência esperada: nenhum erro nas 3 execuções; após `upgrade head`:
+- `SELECT COUNT(*) FROM gestores;` retorna 0 (tabela vazia, criada com sucesso)
+- `SELECT indexname FROM pg_indexes WHERE indexname = 'ix_pedidos_tenant_criado_em';` retorna 1 linha
+- `SELECT consrc FROM pg_constraint WHERE conname = 'ck_conversas_persona';` contém `'gestor'`
 
-Convenção obrigatória de nomenclatura: `test_grupo_d_d01_pode_mandar`,
-`test_grupo_d_d02_vai_la`, ..., `test_grupo_d_d07_to_dentro_manda_tudo`
+**A11. Dashboard: sem cookie → 302 para /dashboard/login**
+Teste: `pytest -m unit -k "test_dashboard_home_sem_cookie_redireciona"`
+Evidência esperada: `PASSED` — `GET /dashboard/home` sem cookie retorna status 302 com `Location: /dashboard/login`
 
-**A8. AgentCliente: cancelamentos não disparam confirmar_pedido (E01–E05)**
+**A12. Dashboard: login correto → cookie dashboard_session setado**
+Teste: `pytest -m unit -k "test_dashboard_login_correto_seta_cookie"`
+Evidência esperada: `PASSED` — `POST /dashboard/login` com `DASHBOARD_SECRET` correto retorna resposta com `Set-Cookie: dashboard_session=...` com atributos `HttpOnly` e `SameSite=lax`
+
+**A13. AgentGestor: session.commit() chamado após resposta**
+Teste: `pytest -m unit -k "test_agent_gestor_g11_commit_chamado"`
+Evidência esperada: `PASSED` — `mock_session.commit` chamado ao menos 1x durante `AgentGestor.responder` (para persistência de ConversaRepo.add_mensagem); `OrderService` pode ser mockado neste teste
+
+**A14. AgentGestor: Persona.GESTOR passado ao ConversaRepo**
+Teste: `pytest -m unit -k "test_agent_gestor_g10_persona_gestor_em_conversa"`
+Evidência esperada: `PASSED` — `ConversaRepo.get_or_create_conversa` chamado com `persona=Persona.GESTOR` (não REPRESENTANTE nem CLIENTE_B2B)
+
+**A_SMOKE. Smoke gate staging — S1 a S9 passam com infra real**
 Teste:
 ```bash
-pytest -m unit -k "grupo_e" -v 2>&1 | grep -E "PASSED|FAILED|collected"
+infisical run --env=staging -- bash scripts/smoke_gate_sprint4.sh
 ```
-Evidência esperada:
-- Linha `collected N items` onde N ≥ 5 (se N < 5: critério FAIL por coleta insuficiente)
-- 5 testes PASSED com nomes no padrão `test_grupo_e_e0[1-5]_*`
-- Mensagens: "não, deixa", "cancela", "esquece", "peraí vou ver com o chefe",
-  "não quero mais" — cada uma como test separado
-- `OrderService.criar_pedido_from_intent` **não chamado** em nenhum caso
+Evidência esperada: saída `=== SMOKE GATE: PASSED ===`, exit code 0.
+Verifica obrigatoriamente:
+- S1: `/health` → 200 com `"status":"ok"`
+- S2: Unit tests IR-G1 (IdentityRouter GESTOR) passam
+- S3: `GET /dashboard/home` sem cookie → 302
+- S4: `POST /dashboard/login` com senha errada → NÃO 302
+- S5: `POST /dashboard/login` com senha correta → cookie setado
+- S6: `GET /dashboard/home` com cookie → 200
+- S7: `GET /dashboard/home/partials/kpis` → HTML com "GMV" ou "R$"
+- S8: `pytest -m unit test_agent_gestor.py` → 0 falhas
+- S9: `lint-imports` → zero violações
 
-Convenção obrigatória de nomenclatura: `test_grupo_e_e01_nao_deixa`,
-`test_grupo_e_e02_cancela`, ..., `test_grupo_e_e05_nao_quero_mais`
-
-**A9. AgentRep: conversa persistida com Persona.REPRESENTANTE**
-Teste: `pytest -m unit -k "test_agent_rep_persona_representante"`
-Evidência esperada: `PASSED` — `ConversaRepo.get_or_create_conversa` chamado com
-`persona=Persona.REPRESENTANTE` (não CLIENTE_B2B)
-
-**A10. AgentRep: session.commit() chamado após confirmar pedido**
-Teste: `pytest -m unit -k "test_agent_rep_commit_apos_pedido"`
-Evidência esperada: `PASSED` — `session.commit` chamado ao menos 1x quando
-`confirmar_pedido_em_nome_de` é executada com sucesso
-
-**A11. buscar_por_nome usa unaccent + ILIKE**
-Teste: inspeção de `output/src/agents/repo.py`
-```bash
-grep -A 5 "def buscar_por_nome" output/src/agents/repo.py | grep -i unaccent
-```
-Evidência esperada: linha contendo `unaccent` no corpo do método
-
-**A12. Migration 0013 aplica e reverte sem erro**
-Teste:
-```bash
-alembic upgrade head   # aplica 0013
-alembic downgrade -1   # reverte 0013
-alembic upgrade head   # reaaplica
-```
-Evidência esperada: nenhum erro nas 3 execuções; coluna `representante_id` existe
-após `upgrade head`, ausente após `downgrade -1`
-
-**A_SMOKE. Staging smoke: AgentRep responde sem crash (Postgres + Redis reais)**
-Teste: `pytest -m staging -k "test_agent_rep_smoke"`
-Evidência esperada: `PASSED` — `AgentRep.responder` executa com Claude real + banco real;
-conversa e mensagem persistidas; nenhuma exceção não tratada
-
-**M_INJECT. Dependências não-None no wiring do AgentRep em ui.py**
-Teste: `pytest -m unit -k "test_webhook_agent_rep_deps_nao_none"`
-Evidência esperada: `PASSED` — quando `Persona.REPRESENTANTE` é identificada,
-`catalog_service`, `order_service` e `pdf_generator` passados ao `AgentRep` são
-todos não-None; test verifica via mock de construtor
+**M_INJECT. Dependências não-None no wiring do AgentGestor em ui.py**
+Teste: `pytest -m unit -k "test_webhook_agent_gestor_deps_nao_none"`
+Evidência esperada: `PASSED` — quando `Persona.GESTOR` é identificada em `_process_message`, `catalog_service`, `order_service`, `pdf_generator`, `relatorio_repo` e `cliente_b2b_repo` passados ao `AgentGestor` são todos não-None
 
 ---
 
 ## Critérios de aceitação — Média (não bloqueantes individualmente)
 
-**M1. mypy --strict sem erros nos arquivos novos/modificados**
-Teste: `mypy --strict output/src/agents/ output/src/tests/unit/agents/`
+**M1. mypy sem erros nos arquivos novos/modificados**
+Teste: `mypy output/src/agents/types.py output/src/agents/repo.py output/src/agents/config.py output/src/agents/runtime/agent_gestor.py output/src/agents/service.py output/src/dashboard/ui.py`
 Evidência esperada: `Found 0 errors`
 
-**M2. OTel span em AgentRep.responder**
-Teste: inspeção manual de `output/src/agents/runtime/agent_rep.py`
-Evidência esperada: `tracer.start_as_current_span("agent_rep_responder")` com
-atributos `tenant_id` e `rep_id`
+**M2. OTel span em AgentGestor.responder**
+Teste: inspeção de `output/src/agents/runtime/agent_gestor.py`
+```bash
+grep "start_as_current_span" output/src/agents/runtime/agent_gestor.py
+```
+Evidência esperada: ao menos 1 linha contendo `start_as_current_span("agent_gestor_responder")` com atributos `tenant_id` e `gestor_id`
 
-**M3. Cobertura ≥ 80% em agents/runtime/agent_rep.py**
-Teste: `pytest -m unit --cov=output/src/agents/runtime/agent_rep --cov-report=term-missing`
+**M3. Cobertura ≥ 80% em agent_gestor.py**
+Teste: `pytest -m unit --cov=output/src/agents/runtime/agent_gestor --cov-report=term-missing`
 Evidência esperada: cobertura de linhas ≥ 80%
 
 **M4. Cobertura ≥ 60% em agents/repo.py (novos métodos)**
 Teste: `pytest -m unit --cov=output/src/agents/repo --cov-report=term-missing`
 Evidência esperada: cobertura de linhas ≥ 60%
 
-**M5. Regressão Sprint 2: 4 testes H01–H04 passam sem modificação**
-Teste: `pytest -m unit -k "grupo_h"`
-Evidência esperada: todos os 4 casos do grupo H passam — confirma que o
-system_prompt_template expandido não quebrou comportamentos existentes
+**M5. htmx partials retornam HTMLResponse (não JSONResponse)**
+Teste: inspeção de `output/src/dashboard/ui.py`
+```bash
+grep -A 3 "partials/kpis" output/src/dashboard/ui.py | grep "HTMLResponse"
+```
+Evidência esperada: linha contendo `HTMLResponse` no handler do partial `/home/partials/kpis`
 
 **M6. Docstrings em todos os métodos públicos novos de Repo e Runtime**
-Teste: inspeção manual de `repo.py` (`buscar_por_nome`, `listar_por_representante`)
-e `agent_rep.py` (métodos públicos)
+Teste: inspeção manual de `repo.py` (GestorRepo, RelatorioRepo, adições em ClienteB2BRepo) e `agent_gestor.py` (métodos públicos)
 Evidência esperada: cada método público tem docstring com Args e Returns
 
 ---
@@ -174,71 +177,60 @@ todos os de Alta passando.
 
 O Evaluator **não** testa neste sprint:
 
-- Preço de custo ou margem visível ao representante
-- Alertas proativos de clientes inativos
-- Busca por trigrama (`pg_trgm`) — ILIKE + unaccent é o contratado
-- Envio real de WhatsApp para o representante (mockado em unit tests)
-- Cadastro ou edição de clientes da carteira via painel (Sprint 4)
+- `cancelar_pedido` via WhatsApp
+- Criação ou edição de clientes via dashboard
+- Edição de configurações do tenant via dashboard (read-only)
+- Autenticação multi-usuário (múltiplos gestores com senhas individuais)
+- SSE ou WebSockets para real-time (polling htmx 30s é o contratado)
+- Regras de comissão por rep
 - Segundo tenant real
-- Upload de planilha de preços diferenciados por rep
-- Avaliação do evaluator.py (sem alteração neste sprint)
+- Envio real de WhatsApp no smoke gate (mockado em staging)
+- Comportamento do Evaluator.py (sem alteração neste sprint)
 
 ---
 
 ## Ambiente de testes
 
 ```
-pytest -m unit      → sem I/O externo; PostgreSQL, Redis, Anthropic API: todos mockados
-                      Requerido: 100% pass, 0 falhas — inclui A_SMOKE? NÃO
+pytest -m unit    → sem I/O externo; PostgreSQL, Redis, Anthropic API, Evolution API: todos mockados
+                    Requerido: 100% pass, 0 falhas (A1–A14, M_INJECT)
 
-pytest -m staging   → Postgres + Redis reais (mac-lablz); sem Evolution API; Claude real
-                      Requerido para A_SMOKE: 1 teste smoke do AgentRep
+pytest -m staging → Postgres + Redis reais (mac-lablz); sem Evolution API; Claude real para A_SMOKE
+                    Requerido para A_SMOKE: smoke gate passa S1–S9
 
 pytest -m integration → NÃO roda no Evaluator; valida após aprovação no mac-lablz
-
-pytest -m slow      → nunca roda no loop automático
 ```
 
-**Regra crítica (herdada do Sprint 2):** teste `@pytest.mark.unit` que realiza
-conexão TCP, acesso ao filesystem fora de `/tmp` ou chamada HTTP real é tratado
-como **falha de Alta**, independentemente do resultado.
+**Regra crítica (herdada Sprint 2/3):** teste `@pytest.mark.unit` que realiza conexão TCP, acesso ao filesystem fora de `/tmp` ou chamada HTTP real é tratado como **falha de Alta**, independentemente do resultado.
 
 ---
 
 ## Notas de implementação (binding para o Generator)
 
 1. **Ordem de implementação:**
-   E1 (migration 0013) → E2 (types + repo) → E3 (AgentRepConfig + system prompt) →
-   E4 (AgentRep runtime) → E8 (unit tests AgentRep) → E5 (wiring ui.py) →
-   E7 (hardening linguagem) → E9 (staging smoke)
+   E1 (migration 0015) → E2 (types) → E3 (repo) → E4 (config) → E5 (runtime agent_gestor) →
+   E6 (service IdentityRouter) → E7 (ui webhook) → E9 (ADR D023) → E8 (dashboard) →
+   E10 (testes + smoke + seed)
 
-2. **unaccent:** extensão já disponível no PostgreSQL — ativar com
-   `CREATE EXTENSION IF NOT EXISTS unaccent;` no `upgrade()` da migration 0013.
-   Query: `unaccent(lower(nome)) ILIKE unaccent(lower('%' || :query || '%'))`
+2. **unaccent:** extensão já ativada em migration 0013 — não reativar. `buscar_todos_por_nome` usa mesma query de `buscar_por_nome` mas sem filtro `representante_id`.
 
-3. **Validação de carteira em confirmar_pedido_em_nome_de:** chamar
-   `ClienteB2BRepo.listar_por_representante()` e verificar se `cliente_b2b_id`
-   está na lista antes de chamar `OrderService`. Não confiar no `cliente_b2b_id`
-   vindo do Claude sem validar — evita que rep crie pedido para cliente de outro rep.
+3. **CHECK CONSTRAINT `ck_conversas_persona`:** migration 0015 deve:
+   ```python
+   op.execute("ALTER TABLE conversas DROP CONSTRAINT ck_conversas_persona")
+   op.execute("""ALTER TABLE conversas ADD CONSTRAINT ck_conversas_persona
+                 CHECK (persona IN ('cliente_b2b', 'representante', 'desconhecido', 'gestor'))""")
+   ```
 
-4. **AgentRep e session.commit():** mesmo padrão do AgentCliente (linha 265 de
-   `agent_cliente.py`) — commit após `add_mensagem` do assistente, antes de enviar
-   WhatsApp.
+4. **session.commit() em AgentGestor:** chamar `await session.commit()` após `add_mensagem` da resposta do assistente — mesmo padrão de `AgentRep` linha 292. `OrderService.criar_pedido_from_intent` já chama `await session.commit()` internamente; isso resulta em dois commits em produção (pedido + conversa) — comportamento esperado e seguro.
 
-5. **Testes grupo D e E:** cada caso é um teste independente com mock Anthropic
-   diferente. Usar `@pytest.mark.parametrize` é permitido mas cada case_id deve
-   aparecer no nome do teste para facilitar debug (`grupo_d_d01_pode_mandar`, etc.).
+5. **DP-03 em confirmar_pedido_em_nome_de:** antes de chamar `OrderService.criar_pedido_from_intent`, chamar `ClienteB2BRepo.get_by_id(cliente_b2b_id, tenant.id, session)` para obter `cliente.representante_id`. Usar esse valor em `CriarPedidoInput.representante_id`. Verificar que `CriarPedidoInput` aceita `representante_id: str | None`.
 
-6. **Testes grupo C e F (multi-produto / pedido direto):** mock Anthropic com
-   `side_effect` lista a sequência completa: `[tool_use_busca, tool_use_confirma, end_turn]`.
-   O teste não verifica a query de busca — apenas que `OrderService` foi chamado
-   com `n_itens` ≥ 1.
+6. **Dashboard auth:** `hmac.compare_digest(stored_secret.encode(), received.encode())`. NUNCA `stored_secret == received` (timing attack). Token JWT do cookie usa `create_access_token` existente de `src.providers.auth` se disponível; se não, implementar com `python-jose` ou `PyJWT` (já no projeto por D021).
 
-7. **System prompt do AgentRep:** `{rep_nome}` resolvido em `AgentRep.__init__` a
-   partir do `representante.nome` injetado — não lido em tempo de execução por request.
+7. **TenantProvider exclusão:** em `src/providers/tenant_context.py`, adicionar `/dashboard` à lista `_EXCLUDED_PREFIXES` (ou equivalente). Verificar se existe constante ou lógica de exclusão no middleware atual.
 
-8. **Gotcha asyncpg + pgvector (herdado Sprint 2):** `buscar_por_nome` usa SQL
-   puro (não pgvector) — sem ORDER BY vetorial. Safe.
+8. **Test G01 (buscar_clientes sem rep filter):** usar `mocker.call_args` para capturar argumentos do mock de `ClienteB2BRepo.buscar_todos_por_nome` e verificar que `representante_id` não está nos `kwargs`.
 
-9. **Staging seed:** o seed do representante de teste (`5519000000001`) deve ser
-   aplicado em script separado `scripts/seed_homologacao_sprint-3.py`, não em migration.
+9. **Test G06 (timedelta vs DATE_TRUNC):** mock `datetime.now` ou `datetime.utcnow` no módulo `agent_gestor` para controlar `now`. Verificar que `data_inicio` passado ao `RelatorioRepo` está dentro de 5s de `mocked_now - timedelta(days=7)`.
+
+10. **Staging seed:** o telefone do gestor de teste deve ser `"5519000000002"` para não colidir com rep de teste (`5519000000001`) nem com cliente de teste (`5519992066177`). Verificar no seed se o número do gestor real (Lauzier) deve ser incluído separado.

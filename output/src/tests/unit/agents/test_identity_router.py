@@ -1,17 +1,19 @@
-"""Testes unitários de agents/service.py — IdentityRouter (Sprint 2 real).
+"""Testes unitários de agents/service.py — IdentityRouter (Sprint 2 + Sprint 4).
 
 Todos os testes são @pytest.mark.unit — sem I/O externo.
 PostgreSQL mockado via AsyncMock.
+
+Sprint 4 adiciona IR-G1 a IR-G4 para persona GESTOR.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.agents.types import ClienteB2B, Mensagem, Persona, Representante
+from src.agents.types import ClienteB2B, Gestor, Mensagem, Persona, Representante
 
 
 @pytest.fixture
@@ -70,6 +72,7 @@ async def test_identity_router_retorna_cliente_b2b(
     router = IdentityRouter()
 
     with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
         patch.object(
             router._cliente_repo,
             "get_by_telefone",
@@ -104,6 +107,7 @@ async def test_identity_router_retorna_desconhecido(
     router = IdentityRouter()
 
     with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
         patch.object(
             router._cliente_repo,
             "get_by_telefone",
@@ -143,7 +147,10 @@ async def test_identity_router_strip_whatsapp_suffix(
         chamadas.append(telefone)
         return cliente_b2b_fixture
 
-    with patch.object(router._cliente_repo, "get_by_telefone", new=mock_get_by_telefone):
+    with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+        patch.object(router._cliente_repo, "get_by_telefone", new=mock_get_by_telefone),
+    ):
         await router.resolve(mensagem_fixture, "jmb", session)
 
     assert len(chamadas) == 1
@@ -179,6 +186,7 @@ async def test_identity_router_retorna_representante(
     router = IdentityRouter()
 
     with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
         patch.object(
             router._cliente_repo,
             "get_by_telefone",
@@ -215,6 +223,7 @@ async def test_identity_router_cliente_tem_prioridade(
     router = IdentityRouter()
 
     with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
         patch.object(
             router._cliente_repo,
             "get_by_telefone",
@@ -407,6 +416,148 @@ async def test_send_whatsapp_media_erro_nao_propaga() -> None:
 
 # ─────────────────────────────────────────────
 # validate_webhook_signature (M4 coverage)
+# ─────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────
+# IR-G1: GESTOR identificado — retorna Persona.GESTOR
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_identity_router_gestor_retorna_gestor(
+    mensagem_fixture: Mensagem,
+) -> None:
+    """IR-G1: IdentityRouter retorna GESTOR quando número está em gestores."""
+    from src.agents.service import IdentityRouter
+
+    gestor = Gestor(
+        id="gest-001",
+        tenant_id="jmb",
+        telefone="5519999999999",
+        nome="Lauzier Gestor",
+        ativo=True,
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    session = AsyncMock()
+    router = IdentityRouter()
+
+    with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=gestor)),
+        patch.object(router._rep_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+        patch.object(router._cliente_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+    ):
+        persona = await router.resolve(mensagem_fixture, "jmb", session)
+
+    assert persona == Persona.GESTOR
+
+
+# ─────────────────────────────────────────────
+# IR-G2: GESTOR tem prioridade sobre REPRESENTANTE (perfis cumulativos, DP-02)
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_identity_router_gestor_rep_cumulativo_retorna_gestor(
+    mensagem_fixture: Mensagem,
+    representante_fixture: Representante,
+) -> None:
+    """IR-G2: Quando mock retorna gestor ativo E representante ativo para o mesmo telefone,
+    IdentityRouter.resolve() retorna Persona.GESTOR; GestorRepo chamado antes de RepresentanteRepo.
+    """
+    from src.agents.service import IdentityRouter
+
+    gestor = Gestor(
+        id="gest-001",
+        tenant_id="jmb",
+        telefone="5519999999999",
+        nome="Lauzier Gestor",
+        ativo=True,
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    session = AsyncMock()
+    router = IdentityRouter()
+
+    chamadas: list[str] = []
+
+    async def mock_gestor_get(tenant_id: str, telefone: str, session: AsyncMock) -> Gestor:
+        chamadas.append("gestor")
+        return gestor
+
+    async def mock_rep_get(tenant_id: str, telefone: str, session: AsyncMock) -> Representante:
+        chamadas.append("rep")
+        return representante_fixture
+
+    async def mock_cliente_get(tenant_id: str, telefone: str, session: AsyncMock) -> None:
+        chamadas.append("cliente")
+        return None
+
+    with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=mock_gestor_get),
+        patch.object(router._rep_repo, "get_by_telefone", new=mock_rep_get),
+        patch.object(router._cliente_repo, "get_by_telefone", new=mock_cliente_get),
+    ):
+        persona = await router.resolve(mensagem_fixture, "jmb", session)
+
+    assert persona == Persona.GESTOR
+    assert chamadas[0] == "gestor", "GestorRepo deve ser chamado antes de RepresentanteRepo"
+
+
+# ─────────────────────────────────────────────
+# IR-G3: Número só em representantes → REPRESENTANTE (sem regressão)
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_identity_router_gestor_ausente_retorna_representante(
+    mensagem_fixture: Mensagem,
+    representante_fixture: Representante,
+) -> None:
+    """IR-G3: Sem gestor, número em representantes → REPRESENTANTE (sem regressão)."""
+    from src.agents.service import IdentityRouter
+
+    session = AsyncMock()
+    router = IdentityRouter()
+
+    with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+        patch.object(router._rep_repo, "get_by_telefone", new=AsyncMock(return_value=representante_fixture)),
+        patch.object(router._cliente_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+    ):
+        persona = await router.resolve(mensagem_fixture, "jmb", session)
+
+    assert persona == Persona.REPRESENTANTE
+
+
+# ─────────────────────────────────────────────
+# IR-G4: Número desconhecido → DESCONHECIDO (com gestor_repo mockado)
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_identity_router_gestor_ausente_desconhecido(
+    mensagem_fixture: Mensagem,
+) -> None:
+    """IR-G4: Sem gestor, sem rep, sem cliente → DESCONHECIDO."""
+    from src.agents.service import IdentityRouter
+
+    session = AsyncMock()
+    router = IdentityRouter()
+
+    with (
+        patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+        patch.object(router._rep_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+        patch.object(router._cliente_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+    ):
+        persona = await router.resolve(mensagem_fixture, "jmb", session)
+
+    assert persona == Persona.DESCONHECIDO
+
+
+# ─────────────────────────────────────────────
+# validate_webhook_signature
 # ─────────────────────────────────────────────
 
 

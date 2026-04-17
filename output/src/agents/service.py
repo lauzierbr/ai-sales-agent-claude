@@ -18,7 +18,7 @@ from opentelemetry import trace
 from opentelemetry.metrics import get_meter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents.repo import ClienteB2BRepo, RepresentanteRepo, WhatsappInstanciaRepo
+from src.agents.repo import ClienteB2BRepo, GestorRepo, RepresentanteRepo, WhatsappInstanciaRepo
 from src.agents.types import Mensagem, Persona, WebhookPayload, WhatsappInstancia
 
 log = structlog.get_logger(__name__)
@@ -38,13 +38,14 @@ class IdentityRouter:
         self._instancia_repo = WhatsappInstanciaRepo()
         self._cliente_repo = ClienteB2BRepo()
         self._rep_repo = RepresentanteRepo()
+        self._gestor_repo = GestorRepo()
 
     async def resolve(
         self, mensagem: Mensagem, tenant_id: str, session: AsyncSession
     ) -> Persona:
         """Resolve persona do remetente pelo número de telefone.
 
-        Lookup em ordem: clientes_b2b → representantes → DESCONHECIDO.
+        Lookup em ordem: gestores → representantes → clientes_b2b → DESCONHECIDO.
         Remove sufixo @s.whatsapp.net antes da busca.
 
         Args:
@@ -53,12 +54,30 @@ class IdentityRouter:
             session: sessão SQLAlchemy assíncrona.
 
         Returns:
-            Persona identificada: CLIENTE_B2B, REPRESENTANTE ou DESCONHECIDO.
+            Persona identificada: GESTOR, REPRESENTANTE, CLIENTE_B2B ou DESCONHECIDO.
         """
         with tracer.start_as_current_span("identity_router_resolve") as span:
             span.set_attribute("tenant_id", tenant_id)
 
             telefone = mensagem.de.split("@")[0]
+
+            # Gestor tem prioridade máxima (DP-02: perfis cumulativos)
+            gestor = await self._gestor_repo.get_by_telefone(
+                tenant_id, telefone, session
+            )
+            if gestor is not None:
+                rep_also = await self._rep_repo.get_by_telefone(
+                    tenant_id, telefone, session
+                )
+                if rep_also is not None:
+                    log.info(
+                        "identity_router_gestor_rep_cumulativo",
+                        tenant_id=tenant_id,
+                        telefone_hash=hashlib.sha256(telefone.encode()).hexdigest()[:12],
+                        gestor_id=str(gestor.id),
+                    )
+                span.set_attribute("persona", "gestor")
+                return Persona.GESTOR
 
             rep = await self._rep_repo.get_by_telefone(
                 tenant_id, telefone, session
@@ -67,8 +86,7 @@ class IdentityRouter:
                 tenant_id, telefone, session
             )
 
-            # Detecta conflito cross-table — mesmo telefone em representantes E clientes_b2b
-            # Indica erro de cadastro: o número deve existir em apenas uma tabela.
+            # Detecta conflito cross-table
             if rep is not None and cliente is not None:
                 log.warning(
                     "identity_router_conflito_telefone",
@@ -82,7 +100,6 @@ class IdentityRouter:
                     ),
                 )
 
-            # Representante tem prioridade sobre cliente
             if rep is not None:
                 span.set_attribute("persona", "representante")
                 return Persona.REPRESENTANTE

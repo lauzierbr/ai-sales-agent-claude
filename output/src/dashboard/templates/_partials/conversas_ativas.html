@@ -1,0 +1,16 @@
+{% if conversas %}
+<table>
+  <thead><tr><th>Persona</th><th>Iniciada</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for c in conversas %}
+  <tr>
+    <td>{{ c.persona }}</td>
+    <td class="text-muted">{{ c.iniciada_em.strftime("%H:%M") if c.iniciada_em else "—" }}</td>
+    <td>{% if c.encerrada_em %}<span class="badge">encerrada</span>{% else %}<span class="badge badge-ok">ativa</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-muted">Nenhuma conversa nas últimas 24h.</p>
+{% endif %}

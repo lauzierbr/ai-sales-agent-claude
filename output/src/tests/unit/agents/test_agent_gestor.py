@@ -1,0 +1,898 @@
+"""Testes unitários de agents/runtime/agent_gestor.py — AgentGestor (Sprint 4).
+
+Todos os testes são @pytest.mark.unit — sem I/O externo.
+Claude SDK, Redis, PostgreSQL — todos mockados.
+
+Casos cobertos:
+  G01 — buscar_clientes chama buscar_todos_por_nome (sem rep filter)
+  G02 — buscar_produtos chama CatalogService
+  G03 — confirmar_pedido_em_nome_de cria pedido sem validar carteira
+  G04 — DP-03: representante_id do pedido = cliente.representante_id
+  G05 — DP-03: representante_id = None quando cliente não tem rep
+  G06 — relatorio_vendas(semana) usa timedelta(7), não DATE_TRUNC
+  G07 — relatorio_vendas(tipo=por_rep) chama RelatorioRepo.totais_por_rep
+  G08 — clientes_inativos(dias=30) chama RelatorioRepo.clientes_inativos
+  G09 — catalog_service=None não levanta exceção
+  G10 — ConversaRepo chamado com Persona.GESTOR
+  G11 — session.commit() chamado após resposta
+  G12 — tenant_id passado ao RelatorioRepo (isolamento)
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+import pytest
+
+from src.agents.config import AgentGestorConfig
+from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
+from src.agents.runtime.agent_gestor import AgentGestor
+from src.agents.types import ClienteB2B, Conversa, Gestor, Mensagem, Persona
+from src.orders.types import ItemPedido, Pedido, StatusPedido
+from src.tenants.types import Tenant
+
+
+# ─────────────────────────────────────────────
+# Fixtures
+# ─────────────────────────────────────────────
+
+
+@pytest.fixture
+def tenant_jmb() -> Tenant:
+    return Tenant(
+        id="jmb",
+        nome="JMB Distribuidora",
+        cnpj="00.000.000/0001-00",
+        ativo=True,
+        whatsapp_number="5519999990000",
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+@pytest.fixture
+def gestor_jmb() -> Gestor:
+    return Gestor(
+        id="gest-001",
+        tenant_id="jmb",
+        telefone="5519000000002",
+        nome="Lauzier Gestor",
+        ativo=True,
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+@pytest.fixture
+def mensagem_gestor() -> Mensagem:
+    return Mensagem(
+        id="msg-gest-01",
+        de="5519000000002@s.whatsapp.net",
+        para="inst-jmb-01",
+        texto="busca clientes muzel",
+        tipo="conversation",
+        instancia_id="inst-jmb-01",
+        timestamp=datetime(2026, 4, 17, 10, 0, 0, tzinfo=timezone.utc),
+    )
+
+
+@pytest.fixture
+def conversa_gestor() -> Conversa:
+    return Conversa(
+        id="conv-gest-001",
+        tenant_id="jmb",
+        telefone="5519000000002",
+        persona=Persona.GESTOR,
+        iniciada_em=datetime(2026, 4, 17, 10, 0, 0, tzinfo=timezone.utc),
+    )
+
+
+@pytest.fixture
+def cliente_com_rep() -> ClienteB2B:
+    return ClienteB2B(
+        id="cli-001",
+        tenant_id="jmb",
+        nome="José LZ Muzel",
+        cnpj="12.345.678/0001-90",
+        telefone="5519991111111",
+        ativo=True,
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        representante_id="rep-001",
+    )
+
+
+@pytest.fixture
+def cliente_sem_rep() -> ClienteB2B:
+    return ClienteB2B(
+        id="cli-002",
+        tenant_id="jmb",
+        nome="Farmácia Sem Rep",
+        cnpj="99.888.777/0001-11",
+        ativo=True,
+        criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        representante_id=None,
+    )
+
+
+@pytest.fixture
+def pedido_criado() -> Pedido:
+    return Pedido(
+        id="ped-001",
+        tenant_id="jmb",
+        numero_pedido="PED-001",
+        cliente_b2b_id="cli-001",
+        representante_id="rep-001",
+        status=StatusPedido.PENDENTE,
+        total_estimado=Decimal("299.80"),
+        itens=[],
+        criado_em=datetime(2026, 4, 17, tzinfo=timezone.utc),
+    )
+
+
+def _make_agent(
+    tenant: Tenant,
+    gestor: Gestor,
+    mock_session: AsyncMock,
+    mock_conversa_repo: AsyncMock,
+    mock_order_service: AsyncMock,
+    mock_pdf: MagicMock,
+    mock_anthropic: AsyncMock,
+    mock_cliente_repo: AsyncMock | None = None,
+    mock_relatorio_repo: AsyncMock | None = None,
+    catalog_service: Any | None = None,
+) -> AgentGestor:
+    return AgentGestor(
+        order_service=mock_order_service,
+        conversa_repo=mock_conversa_repo,
+        pdf_generator=mock_pdf,
+        config=AgentGestorConfig(),
+        gestor=gestor,
+        catalog_service=catalog_service,
+        anthropic_client=mock_anthropic,
+        redis_client=None,
+        cliente_b2b_repo=mock_cliente_repo,
+        relatorio_repo=mock_relatorio_repo,
+    )
+
+
+def _mock_anthropic_end_turn(texto: str = "Resposta do gestor.") -> AsyncMock:
+    """Mock do cliente Anthropic que retorna end_turn com texto."""
+    mock_block = MagicMock()
+    mock_block.type = "text"
+    mock_block.text = texto
+
+    mock_response = MagicMock()
+    mock_response.stop_reason = "end_turn"
+    mock_response.content = [mock_block]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    return mock_client
+
+
+# ─────────────────────────────────────────────
+# G01 — buscar_clientes sem filtro representante_id
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g01_buscar_clientes_sem_filtro_rep(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+    cliente_com_rep: ClienteB2B,
+) -> None:
+    """G01: buscar_clientes chama buscar_todos_por_nome sem representante_id."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_cliente_repo = AsyncMock(spec=ClienteB2BRepo)
+    mock_cliente_repo.buscar_todos_por_nome = AsyncMock(return_value=[cliente_com_rep])
+
+    mock_order_service = AsyncMock()
+    mock_pdf = MagicMock()
+    mock_pdf.gerar_pdf_pedido = MagicMock(return_value=b"fake-pdf")
+
+    # Anthropic: primeira chamada pede buscar_clientes, segunda retorna texto
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "buscar_clientes"
+    tool_block.id = "tool-001"
+    tool_block.input = {"query": "muzel"}
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Encontrei o cliente Muzel."
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb,
+        gestor=gestor_jmb,
+        mock_session=mock_session,
+        mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=mock_order_service,
+        mock_pdf=mock_pdf,
+        mock_anthropic=mock_anthropic,
+        mock_cliente_repo=mock_cliente_repo,
+    )
+
+    with patch("src.agents.service.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_cliente_repo.buscar_todos_por_nome.assert_called_once()
+    call_kwargs = mock_cliente_repo.buscar_todos_por_nome.call_args
+
+    # Asserta explicitamente que representante_id NÃO está nos argumentos
+    all_kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
+    all_args = call_kwargs.args if call_kwargs.args else ()
+    assert "representante_id" not in all_kwargs, "buscar_todos_por_nome não deve receber representante_id"
+
+
+# ─────────────────────────────────────────────
+# G02 — buscar_produtos chama CatalogService
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g02_buscar_produtos_chama_catalog(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G02: buscar_produtos delega ao CatalogService."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_catalog = AsyncMock()
+    mock_catalog.buscar_produtos = AsyncMock(return_value=[])
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "buscar_produtos"
+    tool_block.id = "tool-002"
+    tool_block.input = {"query": "shampoo", "limit": 5}
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Nenhum produto encontrado."
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic, catalog_service=mock_catalog,
+    )
+
+    with patch("src.agents.service.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_catalog.buscar_produtos.assert_called_once_with(
+        tenant_id="jmb", query="shampoo", limit=5
+    )
+
+
+# ─────────────────────────────────────────────
+# G03 — confirmar_pedido sem validação de carteira
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g03_pedido_sem_validacao_carteira(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+    cliente_com_rep: ClienteB2B,
+    pedido_criado: Pedido,
+) -> None:
+    """G03: confirmar_pedido_em_nome_de cria pedido sem validar carteira."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_cliente_repo = AsyncMock(spec=ClienteB2BRepo)
+    mock_cliente_repo.get_by_id = AsyncMock(return_value=cliente_com_rep)
+
+    mock_order_service = AsyncMock()
+    mock_order_service.criar_pedido_from_intent = AsyncMock(return_value=pedido_criado)
+
+    mock_pdf = MagicMock()
+    mock_pdf.gerar_pdf_pedido = MagicMock(return_value=b"pdf")
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "confirmar_pedido_em_nome_de"
+    tool_block.id = "tool-003"
+    tool_block.input = {
+        "cliente_b2b_id": "cli-001",
+        "itens": [{"produto_id": "p1", "codigo_externo": "SKU1", "nome_produto": "Prod", "quantidade": 2, "preco_unitario": "29.90"}],
+    }
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Pedido criado!"
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=mock_order_service, mock_pdf=mock_pdf,
+        mock_anthropic=mock_anthropic, mock_cliente_repo=mock_cliente_repo,
+    )
+
+    with (
+        patch("src.agents.service.send_whatsapp_message", new=AsyncMock()),
+        patch("src.agents.service.send_whatsapp_media", new=AsyncMock()),
+        patch("src.agents.runtime.agent_gestor.send_whatsapp_media", new=AsyncMock()),
+        patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()),
+    ):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_order_service.criar_pedido_from_intent.assert_called_once()
+
+
+# ─────────────────────────────────────────────
+# G04 — DP-03: representante_id herdado do cliente
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g04_dp03_herda_rep_do_cliente(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+    cliente_com_rep: ClienteB2B,
+    pedido_criado: Pedido,
+) -> None:
+    """G04: CriarPedidoInput.representante_id = cliente.representante_id quando não None."""
+    from src.orders.types import CriarPedidoInput
+
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_cliente_repo = AsyncMock(spec=ClienteB2BRepo)
+    mock_cliente_repo.get_by_id = AsyncMock(return_value=cliente_com_rep)
+
+    pedido_inputs_recebidos: list[CriarPedidoInput] = []
+
+    async def captura_pedido(pedido_input: CriarPedidoInput, session: Any) -> Pedido:
+        pedido_inputs_recebidos.append(pedido_input)
+        return pedido_criado
+
+    mock_order_service = AsyncMock()
+    mock_order_service.criar_pedido_from_intent = captura_pedido
+
+    mock_pdf = MagicMock()
+    mock_pdf.gerar_pdf_pedido = MagicMock(return_value=b"pdf")
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "confirmar_pedido_em_nome_de"
+    tool_block.id = "tool-004"
+    tool_block.input = {
+        "cliente_b2b_id": "cli-001",
+        "itens": [{"produto_id": "p1", "codigo_externo": "SKU1", "nome_produto": "P", "quantidade": 1, "preco_unitario": "10.00"}],
+    }
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Pedido criado!"
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=mock_order_service, mock_pdf=mock_pdf,
+        mock_anthropic=mock_anthropic, mock_cliente_repo=mock_cliente_repo,
+    )
+
+    with (
+        patch("src.agents.runtime.agent_gestor.send_whatsapp_media", new=AsyncMock()),
+        patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()),
+    ):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    assert len(pedido_inputs_recebidos) == 1
+    assert pedido_inputs_recebidos[0].representante_id == "rep-001"
+
+
+# ─────────────────────────────────────────────
+# G05 — DP-03: representante_id = None quando cliente sem rep
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g05_dp03_sem_rep_none(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+    cliente_sem_rep: ClienteB2B,
+    pedido_criado: Pedido,
+) -> None:
+    """G05: CriarPedidoInput.representante_id = None quando cliente não tem rep."""
+    from src.orders.types import CriarPedidoInput
+
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_cliente_repo = AsyncMock(spec=ClienteB2BRepo)
+    mock_cliente_repo.get_by_id = AsyncMock(return_value=cliente_sem_rep)
+
+    pedido_inputs_recebidos: list[CriarPedidoInput] = []
+
+    async def captura_pedido(pedido_input: CriarPedidoInput, session: Any) -> Pedido:
+        pedido_inputs_recebidos.append(pedido_input)
+        return pedido_criado
+
+    mock_order_service = AsyncMock()
+    mock_order_service.criar_pedido_from_intent = captura_pedido
+
+    mock_pdf = MagicMock()
+    mock_pdf.gerar_pdf_pedido = MagicMock(return_value=b"pdf")
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "confirmar_pedido_em_nome_de"
+    tool_block.id = "tool-005"
+    tool_block.input = {
+        "cliente_b2b_id": "cli-002",
+        "itens": [{"produto_id": "p1", "codigo_externo": "SKU1", "nome_produto": "P", "quantidade": 1, "preco_unitario": "10.00"}],
+    }
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Pedido criado!"
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=mock_order_service, mock_pdf=mock_pdf,
+        mock_anthropic=mock_anthropic, mock_cliente_repo=mock_cliente_repo,
+    )
+
+    with (
+        patch("src.agents.runtime.agent_gestor.send_whatsapp_media", new=AsyncMock()),
+        patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()),
+    ):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    assert len(pedido_inputs_recebidos) == 1
+    assert pedido_inputs_recebidos[0].representante_id is None
+
+
+# ─────────────────────────────────────────────
+# G06 — relatorio_vendas("semana") usa timedelta(7)
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g06_semana_usa_timedelta(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G06: relatorio_vendas(periodo=semana) usa timedelta(7), não DATE_TRUNC."""
+    from unittest.mock import patch as mpatch
+
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    data_inicio_capturada: list[datetime] = []
+    args_capturados: list[Any] = []
+
+    mock_relatorio_repo = AsyncMock(spec=RelatorioRepo)
+
+    async def captura_totais(tenant_id: str, data_inicio: Any, data_fim: Any, session: Any) -> dict:
+        data_inicio_capturada.append(data_inicio)
+        return {"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0}
+
+    mock_relatorio_repo.totais_periodo = captura_totais
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "relatorio_vendas"
+    tool_block.id = "tool-006"
+    tool_block.input = {"periodo": "semana", "tipo": "totais"}
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Vendas da semana: R$ 0"
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic,
+        mock_relatorio_repo=mock_relatorio_repo,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    assert len(data_inicio_capturada) == 1
+    data_inicio = data_inicio_capturada[0]
+    now = datetime.now(timezone.utc)
+
+    diff = abs((now - data_inicio).total_seconds())
+    esperado = (now - timedelta(days=7))
+    diff_esperado = abs((esperado - data_inicio).total_seconds())
+    assert diff_esperado < 5, f"data_inicio deve ser ~now-7d, got diff={diff_esperado:.1f}s"
+
+    # Garante que não passou string com DATE_TRUNC
+    assert not isinstance(data_inicio, str), "data_inicio não deve ser string (DATE_TRUNC)"
+
+
+# ─────────────────────────────────────────────
+# G07 — relatorio_vendas(tipo=por_rep)
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g07_relatorio_por_rep(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G07: relatorio_vendas(tipo=por_rep) chama RelatorioRepo.totais_por_rep."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_relatorio_repo = AsyncMock(spec=RelatorioRepo)
+    mock_relatorio_repo.totais_por_rep = AsyncMock(return_value=[])
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "relatorio_vendas"
+    tool_block.id = "tool-007"
+    tool_block.input = {"periodo": "mes", "tipo": "por_rep"}
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Ranking por rep."
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic, mock_relatorio_repo=mock_relatorio_repo,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_relatorio_repo.totais_por_rep.assert_called_once()
+
+
+# ─────────────────────────────────────────────
+# G08 — clientes_inativos(dias=30)
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g08_clientes_inativos(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G08: clientes_inativos chama RelatorioRepo.clientes_inativos com dias=30."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_relatorio_repo = AsyncMock(spec=RelatorioRepo)
+    mock_relatorio_repo.clientes_inativos = AsyncMock(return_value=[])
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "clientes_inativos"
+    tool_block.id = "tool-008"
+    tool_block.input = {"dias": 30}
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Clientes inativos listados."
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic, mock_relatorio_repo=mock_relatorio_repo,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_relatorio_repo.clientes_inativos.assert_called_once_with(
+        tenant_id="jmb", dias=30, session=mock_session
+    )
+
+
+# ─────────────────────────────────────────────
+# G09 — catalog_service=None não levanta exceção
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g09_catalog_none_sem_excecao(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G09: catalog_service=None não levanta exceção."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "buscar_produtos"
+    tool_block.id = "tool-009"
+    tool_block.input = {"query": "shampoo"}
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Catálogo indisponível."
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic,
+        catalog_service=None,  # explicitamente None
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        # Não deve levantar exceção
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+
+# ─────────────────────────────────────────────
+# G10 — Persona.GESTOR em ConversaRepo
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g10_persona_gestor_em_conversa(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G10: ConversaRepo.get_or_create_conversa chamado com persona=Persona.GESTOR."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_anthropic = _mock_anthropic_end_turn("Ok.")
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_conversa_repo.get_or_create_conversa.assert_called_once()
+    call_kwargs = mock_conversa_repo.get_or_create_conversa.call_args
+    persona_passada = call_kwargs.kwargs.get("persona") or call_kwargs.args[2]
+    assert persona_passada == Persona.GESTOR
+
+
+# ─────────────────────────────────────────────
+# G11 — session.commit() chamado após resposta
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g11_commit_chamado(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G11: session.commit() chamado ao menos 1x durante AgentGestor.responder."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_anthropic = _mock_anthropic_end_turn("Confirmado.")
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_session.commit.assert_called()
+
+
+# ─────────────────────────────────────────────
+# G12 — tenant_id passado ao RelatorioRepo
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g12_tenant_id_em_relatorio(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G12: tenant_id sempre passado ao RelatorioRepo (isolamento multi-tenant)."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    tenant_ids_recebidos: list[str] = []
+
+    mock_relatorio_repo = AsyncMock(spec=RelatorioRepo)
+
+    async def captura(tenant_id: str, data_inicio: Any, data_fim: Any, session: Any) -> dict:
+        tenant_ids_recebidos.append(tenant_id)
+        return {"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0}
+
+    mock_relatorio_repo.totais_periodo = captura
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "relatorio_vendas"
+    tool_block.id = "tool-012"
+    tool_block.input = {"periodo": "hoje", "tipo": "totais"}
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "GMV hoje: R$ 0"
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic, mock_relatorio_repo=mock_relatorio_repo,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    assert len(tenant_ids_recebidos) == 1
+    assert tenant_ids_recebidos[0] == "jmb"

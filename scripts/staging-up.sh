@@ -1,6 +1,6 @@
 #!/bin/bash
 # staging-up.sh — Garante que a stack de staging esteja ativa no host macOS
-# Executado pelo launchd no boot do mac-mini-lablz
+# Executado pelo launchd no boot do macmini-lablz
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

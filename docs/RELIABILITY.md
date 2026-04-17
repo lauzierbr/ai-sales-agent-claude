@@ -21,7 +21,7 @@ OTEL Collector
 - **Single binary** — sem Zookeeper, sem cluster, sem dor operacional
 - **Compatível com PromQL** — métricas consultáveis com PromQL standard
 - **VictoriaLogs compatível com LogQL** — logs com a mesma API do Loki/Grafana
-- **Extremamente leve** — roda confortavelmente no mac-mini-lablz
+- **Extremamente leve** — roda confortavelmente no macmini-lablz
 - **Migração para cloud transparente** — mesma API, apenas muda o endpoint
 
 ### Agentes consultam observabilidade diretamente

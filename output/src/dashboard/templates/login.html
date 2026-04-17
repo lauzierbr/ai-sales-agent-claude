@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — Dashboard</title>
+  <style>
+    :root { --bg: #1a1a2e; --surface: #16213e; --accent: #e94560; --text: #eee; --border: #2a2a4e; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; width: 100%; max-width: 360px; }
+    .login-title { font-size: 1.4rem; font-weight: 700; color: var(--accent); margin-bottom: 1.5rem; text-align: center; }
+    .form-group { margin-bottom: 1rem; }
+    label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; color: #aaa; }
+    input[type=password] { width: 100%; padding: 0.6rem 0.8rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.95rem; }
+    input[type=password]:focus { outline: none; border-color: var(--accent); }
+    .btn { width: 100%; padding: 0.65rem; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer; margin-top: 0.5rem; }
+    .btn:hover { opacity: 0.87; }
+    .error-msg { background: #4d1e1e; color: var(--accent); border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; margin-bottom: 1rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-title">AI Sales Agent</div>
+    {% if error %}
+    <div class="error-msg">Senha incorreta. Tente novamente.</div>
+    {% endif %}
+    <form method="post" action="/dashboard/login">
+      <div class="form-group">
+        <label for="senha">Senha do dashboard</label>
+        <input type="password" id="senha" name="senha" placeholder="••••••••" autofocus>
+      </div>
+      <button type="submit" class="btn">Entrar</button>
+    </form>
+  </div>
+</body>
+</html>

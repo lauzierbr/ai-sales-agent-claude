@@ -1,0 +1,594 @@
+"""Agente Gestor/Admin — Claude SDK com ferramentas e memória Redis.
+
+Camada Runtime: pode importar Types, Config, Repo e Service de qualquer domínio.
+Não importa UI.
+
+Ferramentas expostas ao modelo:
+  - buscar_clientes: busca qualquer cliente do tenant por nome (sem filtro de carteira)
+  - buscar_produtos: busca semântica no catálogo
+  - confirmar_pedido_em_nome_de: cria pedido em nome de qualquer cliente (DP-03)
+  - relatorio_vendas: relatório GMV por período (hoje/semana/mes/30d)
+  - clientes_inativos: lista clientes sem pedido nos últimos N dias
+
+Segurança:
+  - Acesso irrestrito — gestor vê todos os clientes do tenant
+  - representante_id do pedido herdado do cliente (DP-03)
+  - Sem validação de carteira em confirmar_pedido_em_nome_de
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import structlog
+from opentelemetry import trace
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.agents.config import AgentGestorConfig
+from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
+from src.agents.service import send_whatsapp_media, send_whatsapp_message
+from src.agents.types import Gestor, Mensagem, Persona
+from src.orders.service import OrderService
+from src.orders.types import CriarPedidoInput, ItemPedidoInput
+from src.orders.runtime.pdf_generator import PDFGenerator
+from src.tenants.types import Tenant
+
+log = structlog.get_logger(__name__)
+tracer = trace.get_tracer(__name__)
+
+_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "buscar_clientes",
+        "description": (
+            "Busca clientes do tenant por nome — acesso irrestrito, sem filtro de carteira. "
+            "Use para localizar o cliente antes de fechar um pedido."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Nome ou parte do nome do cliente para busca.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "buscar_produtos",
+        "description": (
+            "Busca produtos no catálogo do tenant por texto livre. "
+            "Use quando o gestor perguntar sobre produtos, preços ou disponibilidade."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Texto de busca — nome, categoria, código ou descrição.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de resultados. Padrão: 5.",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "confirmar_pedido_em_nome_de",
+        "description": (
+            "Confirma e registra um pedido em nome de qualquer cliente do tenant. "
+            "Não valida carteira. SEMPRE chame buscar_clientes antes para obter o cliente_b2b_id. "
+            "Use APENAS quando o gestor confirmar explicitamente o pedido."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_b2b_id": {
+                    "type": "string",
+                    "description": "ID UUID do cliente B2B obtido via buscar_clientes.",
+                },
+                "itens": {
+                    "type": "array",
+                    "description": "Lista de itens do pedido.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "produto_id": {"type": "string"},
+                            "codigo_externo": {"type": "string"},
+                            "nome_produto": {"type": "string"},
+                            "quantidade": {"type": "integer"},
+                            "preco_unitario": {"type": "string", "description": "Decimal como string."},
+                        },
+                        "required": ["produto_id", "codigo_externo", "nome_produto", "quantidade", "preco_unitario"],
+                    },
+                },
+                "observacao": {
+                    "type": "string",
+                    "description": "Observação opcional.",
+                },
+            },
+            "required": ["cliente_b2b_id", "itens"],
+        },
+    },
+    {
+        "name": "relatorio_vendas",
+        "description": (
+            "Gera relatório de vendas por período. "
+            "Períodos: hoje, semana (últimos 7 dias), mes (mês atual), 30d (últimos 30 dias). "
+            "Tipos: totais (GMV geral), por_rep (por representante), por_cliente (por cliente)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "periodo": {
+                    "type": "string",
+                    "enum": ["hoje", "semana", "mes", "30d"],
+                    "description": "Período do relatório.",
+                },
+                "tipo": {
+                    "type": "string",
+                    "enum": ["totais", "por_rep", "por_cliente"],
+                    "description": "Tipo de agregação. Padrão: totais.",
+                    "default": "totais",
+                },
+            },
+            "required": ["periodo"],
+        },
+    },
+    {
+        "name": "clientes_inativos",
+        "description": (
+            "Lista clientes sem pedido nos últimos N dias. "
+            "Use para identificar clientes que precisam de follow-up."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dias": {
+                    "type": "integer",
+                    "description": "Número de dias sem pedido para considerar inativo. Padrão: 30.",
+                    "default": 30,
+                },
+            },
+        },
+    },
+]
+
+
+class AgentGestor:
+    """Agente de atendimento ao gestor/dono via WhatsApp com Claude SDK.
+
+    Acesso irrestrito a todos os clientes e pedidos do tenant.
+    Dependências injetadas no construtor para facilitar testes unitários.
+    """
+
+    def __init__(
+        self,
+        order_service: OrderService,
+        conversa_repo: ConversaRepo,
+        pdf_generator: PDFGenerator,
+        config: AgentGestorConfig,
+        gestor: Gestor,
+        catalog_service: Any | None = None,
+        anthropic_client: Any | None = None,
+        redis_client: Any | None = None,
+        cliente_b2b_repo: ClienteB2BRepo | None = None,
+        relatorio_repo: RelatorioRepo | None = None,
+    ) -> None:
+        """Inicializa AgentGestor com dependências injetadas.
+
+        Args:
+            order_service: serviço de pedidos para criar_pedido_from_intent.
+            conversa_repo: repositório de conversas e mensagens.
+            pdf_generator: gerador de PDF de pedido.
+            config: configuração do agente.
+            gestor: objeto Gestor identificado pelo webhook.
+            catalog_service: serviço de catálogo para busca semântica (opcional).
+            anthropic_client: cliente Anthropic assíncrono (opcional).
+            redis_client: cliente Redis assíncrono (opcional).
+            cliente_b2b_repo: repositório de clientes B2B (opcional).
+            relatorio_repo: repositório de relatórios (opcional).
+        """
+        self._order_service = order_service
+        self._conversa_repo = conversa_repo
+        self._pdf_generator = pdf_generator
+        self._config = config
+        self._gestor = gestor
+        self._catalog_service = catalog_service
+        self._anthropic = anthropic_client
+        self._redis = redis_client
+        self._cliente_b2b_repo = cliente_b2b_repo or ClienteB2BRepo()
+        self._relatorio_repo = relatorio_repo or RelatorioRepo()
+
+    async def responder(
+        self,
+        mensagem: Mensagem,
+        tenant: Tenant,
+        session: AsyncSession,
+    ) -> None:
+        """Responde mensagem do gestor usando Claude SDK com tool use.
+
+        Args:
+            mensagem: mensagem recebida do gestor.
+            tenant: dados do tenant para personalização.
+            session: sessão SQLAlchemy assíncrona.
+        """
+        with tracer.start_as_current_span("agent_gestor_responder") as span:
+            span.set_attribute("tenant_id", tenant.id)
+            span.set_attribute("gestor_id", self._gestor.id)
+
+            numero = mensagem.de.split("@")[0]
+
+            conversa = await self._conversa_repo.get_or_create_conversa(
+                tenant_id=tenant.id,
+                telefone=mensagem.de,
+                persona=Persona.GESTOR,
+                session=session,
+            )
+
+            messages = await self._carregar_historico_redis(tenant.id, numero)
+            messages.append({"role": "user", "content": mensagem.texto})
+
+            await self._conversa_repo.add_mensagem(
+                conversa_id=conversa.id,
+                role="user",
+                conteudo=mensagem.texto,
+                session=session,
+            )
+
+            system_prompt = self._config.system_prompt_template.format(
+                tenant_nome=tenant.nome,
+                gestor_nome=self._gestor.nome,
+            )
+
+            resposta_final: str | None = None
+            client = self._get_anthropic_client()
+
+            for iteration in range(self._config.max_iterations):
+                response = await client.messages.create(
+                    model=self._config.model,
+                    max_tokens=self._config.max_tokens,
+                    system=system_prompt,
+                    tools=_TOOLS,
+                    messages=messages,
+                )
+
+                if response.stop_reason == "end_turn":
+                    for block in response.content:
+                        if block.type == "text":
+                            resposta_final = block.text
+                            break
+                    break
+
+                if response.stop_reason == "tool_use":
+                    messages.append({"role": "assistant", "content": response.content})
+
+                    tool_results = []
+                    for block in response.content:
+                        if block.type == "tool_use":
+                            resultado = await self._executar_ferramenta(
+                                tool_name=block.name,
+                                tool_input=block.input,
+                                tenant=tenant,
+                                session=session,
+                                instancia_id=mensagem.instancia_id,
+                                numero=numero,
+                            )
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": json.dumps(resultado, ensure_ascii=False, default=str),
+                            })
+
+                    messages.append({"role": "user", "content": tool_results})
+                    log.info(
+                        "agent_gestor_tool_executada",
+                        tenant_id=tenant.id,
+                        gestor_id=self._gestor.id,
+                        iteration=iteration + 1,
+                        n_tools=len(tool_results),
+                    )
+                else:
+                    break
+
+            if resposta_final is None:
+                resposta_final = (
+                    "Desculpe, não consegui processar sua solicitação. "
+                    "Por favor, tente novamente."
+                )
+                log.warning(
+                    "agent_gestor_max_iter_atingido",
+                    tenant_id=tenant.id,
+                    gestor_id=self._gestor.id,
+                    max_iterations=self._config.max_iterations,
+                )
+
+            await self._conversa_repo.add_mensagem(
+                conversa_id=conversa.id,
+                role="assistant",
+                conteudo=resposta_final,
+                session=session,
+            )
+
+            await session.commit()
+
+            messages.append({"role": "assistant", "content": resposta_final})
+            await self._salvar_historico_redis(tenant.id, numero, messages)
+
+            await send_whatsapp_message(mensagem.instancia_id, numero, resposta_final)
+
+    async def _executar_ferramenta(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tenant: Tenant,
+        session: AsyncSession,
+        instancia_id: str,
+        numero: str,
+    ) -> Any:
+        """Despacha execução da ferramenta solicitada pelo modelo.
+
+        Args:
+            tool_name: nome da ferramenta a executar.
+            tool_input: argumentos da ferramenta.
+            tenant: dados do tenant.
+            session: sessão SQLAlchemy assíncrona.
+            instancia_id: instância Evolution API para envio de mídia.
+            numero: número do gestor para envio de PDF.
+
+        Returns:
+            Resultado serializado da ferramenta.
+        """
+        if tool_name == "buscar_clientes":
+            return await self._buscar_clientes(
+                query=tool_input.get("query", ""),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "buscar_produtos":
+            return await self._buscar_produtos(
+                query=tool_input.get("query", ""),
+                limit=tool_input.get("limit", 5),
+                tenant_id=tenant.id,
+            )
+
+        if tool_name == "confirmar_pedido_em_nome_de":
+            return await self._confirmar_pedido(
+                cliente_b2b_id=tool_input["cliente_b2b_id"],
+                itens=tool_input["itens"],
+                observacao=tool_input.get("observacao"),
+                tenant=tenant,
+                session=session,
+                instancia_id=instancia_id,
+                numero=numero,
+            )
+
+        if tool_name == "relatorio_vendas":
+            return await self._relatorio_vendas(
+                periodo=tool_input.get("periodo", "hoje"),
+                tipo=tool_input.get("tipo", "totais"),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "clientes_inativos":
+            return await self._clientes_inativos(
+                dias=tool_input.get("dias", 30),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        log.warning("agent_gestor_ferramenta_desconhecida", tool_name=tool_name)
+        return {"erro": f"Ferramenta desconhecida: {tool_name}"}
+
+    async def _buscar_clientes(
+        self, query: str, tenant_id: str, session: AsyncSession
+    ) -> list[dict]:
+        clientes = await self._cliente_b2b_repo.buscar_todos_por_nome(
+            tenant_id=tenant_id,
+            query=query,
+            session=session,
+        )
+        return [
+            {
+                "id": c.id,
+                "nome": c.nome,
+                "cnpj": c.cnpj,
+                "telefone": c.telefone,
+                "representante_id": c.representante_id,
+            }
+            for c in clientes
+        ]
+
+    async def _buscar_produtos(
+        self, query: str, limit: int, tenant_id: str
+    ) -> list[dict]:
+        if self._catalog_service is None:
+            log.warning("agent_gestor_catalog_service_none", tenant_id=tenant_id)
+            return [{"aviso": "Catálogo indisponível no momento. Tente novamente."}]
+        try:
+            produtos = await self._catalog_service.buscar_produtos(
+                tenant_id=tenant_id,
+                query=query,
+                limit=limit,
+            )
+            return [
+                {
+                    "id": str(p.id),
+                    "nome": p.nome,
+                    "codigo_externo": p.codigo_externo,
+                    "preco": str(p.preco) if p.preco else None,
+                    "unidade": p.unidade,
+                    "descricao": p.descricao,
+                }
+                for p in produtos
+            ]
+        except Exception as exc:
+            log.error("agent_gestor_busca_produtos_erro", error=str(exc))
+            return [{"erro": "Falha ao buscar produtos. Tente novamente."}]
+
+    async def _confirmar_pedido(
+        self,
+        cliente_b2b_id: str,
+        itens: list[dict],
+        observacao: str | None,
+        tenant: Tenant,
+        session: AsyncSession,
+        instancia_id: str,
+        numero: str,
+    ) -> dict:
+        # DP-03: herda representante_id do cliente
+        cliente = await self._cliente_b2b_repo.get_by_id(
+            id=cliente_b2b_id,
+            tenant_id=tenant.id,
+            session=session,
+        )
+        if cliente is None:
+            return {"erro": f"Cliente {cliente_b2b_id} não encontrado."}
+
+        representante_id = cliente.representante_id
+
+        from decimal import Decimal
+        itens_input = [
+            ItemPedidoInput(
+                produto_id=item["produto_id"],
+                codigo_externo=item["codigo_externo"],
+                nome_produto=item["nome_produto"],
+                quantidade=int(item["quantidade"]),
+                preco_unitario=Decimal(str(item["preco_unitario"])),
+            )
+            for item in itens
+        ]
+
+        pedido_input = CriarPedidoInput(
+            tenant_id=tenant.id,
+            cliente_b2b_id=cliente_b2b_id,
+            representante_id=representante_id,
+            itens=itens_input,
+            observacao=observacao,
+        )
+
+        try:
+            pedido = await self._order_service.criar_pedido_from_intent(
+                pedido_input=pedido_input,
+                session=session,
+            )
+
+            # Envia PDF ao gestor
+            try:
+                pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido)
+                await send_whatsapp_media(
+                    instancia_id=instancia_id,
+                    numero=numero,
+                    pdf_bytes=pdf_bytes,
+                    caption=f"Pedido {pedido.numero_pedido} — {cliente.nome}",
+                    file_name=f"pedido-{pedido.numero_pedido}.pdf",
+                )
+            except Exception as exc:
+                log.warning("agent_gestor_pdf_erro", error=str(exc))
+
+            return {
+                "sucesso": True,
+                "pedido_id": str(pedido.id),
+                "numero_pedido": pedido.numero_pedido,
+                "total_estimado": str(pedido.total_estimado),
+                "cliente_nome": cliente.nome,
+                "representante_id": representante_id,
+            }
+        except Exception as exc:
+            log.error("agent_gestor_confirmar_pedido_erro", error=str(exc))
+            return {"erro": f"Falha ao criar pedido: {exc}"}
+
+    async def _relatorio_vendas(
+        self,
+        periodo: str,
+        tipo: str,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        now = datetime.now(timezone.utc)
+        data_fim = now
+
+        if periodo == "hoje":
+            data_inicio = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif periodo == "semana":
+            data_inicio = now - timedelta(days=7)
+        elif periodo == "mes":
+            data_inicio = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:  # 30d
+            data_inicio = now - timedelta(days=30)
+
+        if tipo == "por_rep":
+            dados = await self._relatorio_repo.totais_por_rep(
+                tenant_id=tenant_id,
+                data_inicio=data_inicio,
+                data_fim=data_fim,
+                session=session,
+            )
+        elif tipo == "por_cliente":
+            dados = await self._relatorio_repo.totais_por_cliente(
+                tenant_id=tenant_id,
+                data_inicio=data_inicio,
+                data_fim=data_fim,
+                session=session,
+            )
+        else:
+            dados = await self._relatorio_repo.totais_periodo(
+                tenant_id=tenant_id,
+                data_inicio=data_inicio,
+                data_fim=data_fim,
+                session=session,
+            )
+
+        return {"periodo": periodo, "tipo": tipo, "dados": dados}
+
+    async def _clientes_inativos(
+        self, dias: int, tenant_id: str, session: AsyncSession
+    ) -> list[dict]:
+        return await self._relatorio_repo.clientes_inativos(
+            tenant_id=tenant_id,
+            dias=dias,
+            session=session,
+        )
+
+    def _get_anthropic_client(self) -> Any:
+        if self._anthropic is not None:
+            return self._anthropic
+        import anthropic
+        return anthropic.AsyncAnthropic()
+
+    async def _carregar_historico_redis(
+        self, tenant_id: str, numero: str
+    ) -> list[dict[str, Any]]:
+        if self._redis is None:
+            return []
+        try:
+            key = f"hist:gestor:{tenant_id}:{numero}"
+            data = await self._redis.get(key)
+            if data:
+                return json.loads(data)
+        except Exception as exc:
+            log.warning("agent_gestor_redis_load_erro", error=str(exc))
+        return []
+
+    async def _salvar_historico_redis(
+        self,
+        tenant_id: str,
+        numero: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        if self._redis is None:
+            return
+        try:
+            key = f"hist:gestor:{tenant_id}:{numero}"
+            max_msgs = self._config.historico_max_msgs
+            trimmed = messages[-max_msgs:] if len(messages) > max_msgs else messages
+            await self._redis.set(key, json.dumps(trimmed, default=str), ex=self._config.redis_ttl)
+        except Exception as exc:
+            log.warning("agent_gestor_redis_save_erro", error=str(exc))

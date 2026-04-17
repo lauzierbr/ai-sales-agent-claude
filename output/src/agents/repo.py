@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.types import (
     ClienteB2B,
     Conversa,
+    Gestor,
     MensagemConversa,
     Persona,
     Representante,
@@ -218,6 +219,86 @@ class ClienteB2BRepo:
             )
             for r in rows
         ]
+
+    async def buscar_todos_por_nome(
+        self,
+        tenant_id: str,
+        query: str,
+        session: AsyncSession,
+    ) -> list[ClienteB2B]:
+        """Busca clientes B2B ativos pelo nome sem filtro de representante.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            query: texto livre para busca no nome do cliente.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de ClienteB2B correspondentes à busca (todos os reps).
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, nome, cnpj, telefone, ativo, criado_em, representante_id
+                FROM clientes_b2b
+                WHERE tenant_id = :tenant_id
+                  AND ativo = true
+                  AND unaccent(lower(nome)) ILIKE unaccent(lower('%' || :query || '%'))
+            """),
+            {"tenant_id": tenant_id, "query": query},
+        )
+        rows = result.mappings().all()
+        clientes = [
+            ClienteB2B(
+                id=r["id"],
+                tenant_id=r["tenant_id"],
+                nome=r["nome"],
+                cnpj=r["cnpj"],
+                telefone=r["telefone"],
+                ativo=r["ativo"],
+                criado_em=r["criado_em"],
+                representante_id=r["representante_id"],
+            )
+            for r in rows
+        ]
+        return sorted(clientes, key=lambda c: c.nome)
+
+    async def get_by_id(
+        self,
+        id: str,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> ClienteB2B | None:
+        """Busca cliente B2B pelo ID e tenant.
+
+        Args:
+            id: ID UUID do cliente.
+            tenant_id: ID do tenant — filtro obrigatório.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            ClienteB2B se encontrado, None caso contrário.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, nome, cnpj, telefone, ativo, criado_em, representante_id
+                FROM clientes_b2b
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": id, "tenant_id": tenant_id},
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return ClienteB2B(
+            id=row["id"],
+            tenant_id=row["tenant_id"],
+            nome=row["nome"],
+            cnpj=row["cnpj"],
+            telefone=row["telefone"],
+            ativo=row["ativo"],
+            criado_em=row["criado_em"],
+            representante_id=row["representante_id"],
+        )
 
     async def create(
         self, tenant_id: str, cliente: ClienteB2B, session: AsyncSession
@@ -462,3 +543,222 @@ class ConversaRepo:
             """),
             {"conversa_id": conversa_id},
         )
+
+
+class GestorRepo:
+    """Repositório de gestores — lookup por telefone."""
+
+    async def get_by_telefone(
+        self, tenant_id: str, telefone: str, session: AsyncSession
+    ) -> Gestor | None:
+        """Busca gestor ativo pelo número de telefone normalizado.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            telefone: número E.164 sem sufixo @s.whatsapp.net.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Gestor se encontrado e ativo, None caso contrário.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, telefone, nome, ativo, criado_em
+                FROM gestores
+                WHERE tenant_id = :tenant_id AND telefone = :telefone AND ativo = true
+            """),
+            {"tenant_id": tenant_id, "telefone": telefone},
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return Gestor(
+            id=row["id"],
+            tenant_id=row["tenant_id"],
+            telefone=row["telefone"],
+            nome=row["nome"],
+            ativo=row["ativo"],
+            criado_em=row["criado_em"],
+        )
+
+
+class RelatorioRepo:
+    """Repositório de relatórios — queries agregadas sobre pedidos."""
+
+    async def totais_periodo(
+        self,
+        tenant_id: str,
+        data_inicio: object,
+        data_fim: object,
+        session: AsyncSession,
+    ) -> dict:
+        """Retorna totais GMV, n_pedidos e ticket_médio no período.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            data_inicio: datetime de início do período.
+            data_fim: datetime de fim do período.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com {total_gmv, n_pedidos, ticket_medio} como Decimal/int.
+        """
+        result = await session.execute(
+            text("""
+                SELECT
+                    COUNT(*)              AS n_pedidos,
+                    COALESCE(SUM(total_estimado), 0) AS total_gmv
+                FROM pedidos
+                WHERE tenant_id = :tenant_id
+                  AND criado_em >= :data_inicio
+                  AND criado_em <= :data_fim
+            """),
+            {"tenant_id": tenant_id, "data_inicio": data_inicio, "data_fim": data_fim},
+        )
+        row = result.mappings().first()
+        n = int(row["n_pedidos"]) if row else 0
+        gmv = row["total_gmv"] if row else 0
+        ticket = (gmv / n) if n > 0 else 0
+        return {"total_gmv": gmv, "n_pedidos": n, "ticket_medio": ticket}
+
+    async def totais_por_rep(
+        self,
+        tenant_id: str,
+        data_inicio: object,
+        data_fim: object,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Retorna totais por representante no período, ordenado por GMV DESC.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            data_inicio: datetime de início do período.
+            data_fim: datetime de fim do período.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de {rep_id, rep_nome, n_pedidos, total_gmv} ordenada por total_gmv DESC.
+        """
+        result = await session.execute(
+            text("""
+                SELECT
+                    p.representante_id                   AS rep_id,
+                    r.nome                               AS rep_nome,
+                    COUNT(*)                             AS n_pedidos,
+                    COALESCE(SUM(p.total_estimado), 0)  AS total_gmv
+                FROM pedidos p
+                LEFT JOIN representantes r
+                    ON r.id = p.representante_id AND r.tenant_id = p.tenant_id
+                WHERE p.tenant_id = :tenant_id
+                  AND p.criado_em >= :data_inicio
+                  AND p.criado_em <= :data_fim
+                GROUP BY p.representante_id, r.nome
+            """),
+            {"tenant_id": tenant_id, "data_inicio": data_inicio, "data_fim": data_fim},
+        )
+        rows = result.mappings().all()
+        items = [
+            {
+                "rep_id": r["rep_id"],
+                "rep_nome": r["rep_nome"] or "Sem representante",
+                "n_pedidos": int(r["n_pedidos"]),
+                "total_gmv": r["total_gmv"],
+            }
+            for r in rows
+        ]
+        return sorted(items, key=lambda x: x["total_gmv"], reverse=True)
+
+    async def totais_por_cliente(
+        self,
+        tenant_id: str,
+        data_inicio: object,
+        data_fim: object,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Retorna totais por cliente no período, ordenado por GMV DESC.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            data_inicio: datetime de início do período.
+            data_fim: datetime de fim do período.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de {cliente_id, nome, cnpj, n_pedidos, total_gmv} ordenada por total_gmv DESC.
+        """
+        result = await session.execute(
+            text("""
+                SELECT
+                    p.cliente_b2b_id                    AS cliente_id,
+                    c.nome                              AS nome,
+                    c.cnpj                              AS cnpj,
+                    COUNT(*)                            AS n_pedidos,
+                    COALESCE(SUM(p.total_estimado), 0) AS total_gmv
+                FROM pedidos p
+                LEFT JOIN clientes_b2b c
+                    ON c.id = p.cliente_b2b_id AND c.tenant_id = p.tenant_id
+                WHERE p.tenant_id = :tenant_id
+                  AND p.criado_em >= :data_inicio
+                  AND p.criado_em <= :data_fim
+                GROUP BY p.cliente_b2b_id, c.nome, c.cnpj
+            """),
+            {"tenant_id": tenant_id, "data_inicio": data_inicio, "data_fim": data_fim},
+        )
+        rows = result.mappings().all()
+        items = [
+            {
+                "cliente_id": r["cliente_id"],
+                "nome": r["nome"] or "Desconhecido",
+                "cnpj": r["cnpj"] or "",
+                "n_pedidos": int(r["n_pedidos"]),
+                "total_gmv": r["total_gmv"],
+            }
+            for r in rows
+        ]
+        return sorted(items, key=lambda x: x["total_gmv"], reverse=True)
+
+    async def clientes_inativos(
+        self,
+        tenant_id: str,
+        dias: int,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Retorna clientes sem pedido nos últimos N dias, ordenados por último pedido ASC.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            dias: número de dias sem pedido para considerar inativo.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de {cliente_id, nome, cnpj, ultimo_pedido_em} ordenada por ultimo_pedido_em ASC.
+        """
+        result = await session.execute(
+            text("""
+                SELECT
+                    c.id                        AS cliente_id,
+                    c.nome                      AS nome,
+                    c.cnpj                      AS cnpj,
+                    MAX(p.criado_em)            AS ultimo_pedido_em
+                FROM clientes_b2b c
+                LEFT JOIN pedidos p
+                    ON p.cliente_b2b_id = c.id AND p.tenant_id = c.tenant_id
+                WHERE c.tenant_id = :tenant_id
+                  AND c.ativo = true
+                GROUP BY c.id, c.nome, c.cnpj
+                HAVING MAX(p.criado_em) IS NULL
+                    OR MAX(p.criado_em) < NOW() - (:dias * INTERVAL '1 day')
+            """),
+            {"tenant_id": tenant_id, "dias": dias},
+        )
+        rows = result.mappings().all()
+        items = [
+            {
+                "cliente_id": r["cliente_id"],
+                "nome": r["nome"],
+                "cnpj": r["cnpj"],
+                "ultimo_pedido_em": r["ultimo_pedido_em"],
+            }
+            for r in rows
+        ]
+        return sorted(items, key=lambda x: (x["ultimo_pedido_em"] is not None, x["ultimo_pedido_em"]))
