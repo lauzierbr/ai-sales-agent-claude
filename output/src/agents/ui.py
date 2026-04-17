@@ -14,7 +14,11 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from src.agents.service import validate_webhook_signature
+from src.agents.service import (
+    mark_message_as_read,
+    send_typing_indicator,
+    validate_webhook_signature,
+)
 from src.agents.types import WebhookPayload
 
 log = structlog.get_logger(__name__)
@@ -148,6 +152,13 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             log.debug("webhook_mensagem_ignorada", tenant_id=tenant_id, instance=payload.instance)
             return
 
+        # 3b. Feedback visual: marca como lido (✓✓ azul) imediatamente
+        await mark_message_as_read(
+            instancia_id=payload.instance,
+            remote_jid=mensagem.de,
+            message_id=mensagem.id,
+        )
+
         # 4. Resolve persona
         identity_router = IdentityRouter()
         persona = await identity_router.resolve(mensagem, tenant_id, session)
@@ -159,6 +170,13 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             tenant_id=tenant_id,
             persona=persona.value,
             from_number_hash=from_hash,
+        )
+
+        # 4b. Feedback visual: "digitando..." enquanto o agente processa
+        await send_typing_indicator(
+            instancia_id=payload.instance,
+            remote_jid=mensagem.de,
+            duration_ms=8000,
         )
 
         # 5. Chama agente correspondente
