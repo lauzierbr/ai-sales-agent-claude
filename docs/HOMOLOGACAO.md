@@ -35,13 +35,33 @@ Se a homologação revelar bugs:
 1. Evaluator emite APROVADO + artifacts/qa_sprint_N.md
 2. Generator executa:
    a. ./scripts/deploy.sh staging  (deploy do código novo)
-   b. python scripts/seed_homologacao_sprint-N.py  (dados reais de teste)
-   c. Gera docs/exec-plans/active/homologacao_sprint-N.md  (checklist)
+   b. pytest -m unit → deve passar 100% antes de qualquer deploy
+   c. python scripts/seed_homologacao_sprint-N.py  (dados reais de teste)
+   d. Gera docs/exec-plans/active/homologacao_sprint-N.md  (checklist)
 3. Lauzier executa o checklist manualmente no staging
 4. Lauzier registra resultado no arquivo homologacao_sprint-N.md:
    - APROVADO → move para completed/, inicia Sprint N+1
    - REPROVADO → lista os bugs, Generator corrige, nova homologação
 ```
+
+## Checklist obrigatório de migrations (lição Sprint 3)
+
+Toda migration que altere nullable, tipo ou renomeie coluna **deve** incluir
+as seguintes verificações antes do deploy — na mesma PR:
+
+```
+[ ] O modelo Pydantic correspondente foi atualizado?
+    Ex: NOT NULL → nullable exige `field: str | None = None` no modelo
+[ ] O modelo SQLAlchemy (ORM) foi atualizado se existir?
+[ ] Há testes unitários cobrindo o campo com valor None?
+[ ] O seed de homologação insere dados compatíveis com o novo schema?
+[ ] pytest -m unit passa com o novo schema (sem DB real)?
+```
+
+> **Origem:** Sprint 3 — `clientes_b2b.telefone` tornou-se nullable via
+> migration 0014, mas `ClienteB2B.telefone: str` no Pydantic não foi
+> atualizado. Resultado: `ValidationError` em produção descoberto só na
+> homologação.
 
 ---
 
