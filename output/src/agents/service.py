@@ -60,19 +60,21 @@ class IdentityRouter:
 
             telefone = mensagem.de.split("@")[0]
 
-            cliente = await self._cliente_repo.get_by_telefone(
-                tenant_id, telefone, session
-            )
-            if cliente is not None:
-                span.set_attribute("persona", "cliente_b2b")
-                return Persona.CLIENTE_B2B
-
+            # Representante tem prioridade sobre cliente — um rep pode ter
+            # o mesmo número cadastrado em clientes_b2b (ex: dono que também compra)
             rep = await self._rep_repo.get_by_telefone(
                 tenant_id, telefone, session
             )
             if rep is not None:
                 span.set_attribute("persona", "representante")
                 return Persona.REPRESENTANTE
+
+            cliente = await self._cliente_repo.get_by_telefone(
+                tenant_id, telefone, session
+            )
+            if cliente is not None:
+                span.set_attribute("persona", "cliente_b2b")
+                return Persona.CLIENTE_B2B
 
             span.set_attribute("persona", "desconhecido")
             return Persona.DESCONHECIDO
