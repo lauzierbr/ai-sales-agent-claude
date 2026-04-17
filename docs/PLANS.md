@@ -83,14 +83,16 @@ Escopo previsto:
 - Preço de custo e margem (visível apenas para rep)
 - Alertas proativos de clientes inativos
 
-### Sprint 4 — Gestor/Admin: persona WhatsApp + visão consolidada
-- **Nova persona `GESTOR`** no IdentityRouter (tabela `gestores`, similar a `representantes`)
-- **AgentGestor via WhatsApp**: acesso irrestrito a clientes e pedidos (sem filtro de carteira)
+### Sprint 4 — Gestor/Admin: persona WhatsApp + dashboard web
+- **Nova persona `GESTOR`** no IdentityRouter (tabela `gestores`; prioridade sobre rep)
+  - Gestor pode também ser rep no mesmo número (perfil cumulativo — DP-02)
+- **AgentGestor via WhatsApp**: acesso irrestrito a clientes e pedidos
   - Consulta catálogo e faz pedido para qualquer cliente do tenant
   - Busca clientes por nome/CNPJ (todos, não só carteira)
-  - Vê relatório de vendas: totais por rep, por cliente, por período
-  - Vê informações consolidadas da empresa (GMV, ticket médio, ranking reps)
-- **Dashboard web** (opcional se escopo ficar grande — pode mover para Sprint 5):
+  - Pedido para cliente com rep → herda `representante_id` do cliente (DP-03)
+  - Relatório de vendas: totais por rep, por cliente, por período
+  - Ranking de representantes, clientes inativos, GMV da empresa
+- **Dashboard web** (ambos no Sprint 4 — DP-01):
   - Dashboard de pedidos em tempo real
   - Monitor de conversas ativas
   - Gestão de clientes e representantes

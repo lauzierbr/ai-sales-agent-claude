@@ -117,6 +117,11 @@ CREATE TABLE gestores (
 gestores → representantes → clientes_b2b → DESCONHECIDO
 ```
 
+> **DP-02 (aprovado 2026-04-17):** Gestor pode ter o mesmo número cadastrado
+> também como representante (ex: dono que também cobre carteira). O lookup
+> em `gestores` tem prioridade — o número entra sempre como GESTOR.
+> Não é conflito de dados: é um perfil cumulativo válido.
+
 ### Queries de relatório (notas para o Planner)
 - Todas as queries precisam de `tenant_id` como filtro obrigatório (isolamento)
 - Agregações por período: usar `DATE_TRUNC` no PostgreSQL
@@ -137,9 +142,19 @@ gestores → representantes → clientes_b2b → DESCONHECIDO
 
 ---
 
+## Decisões de produto tomadas (não reabrir sem motivo)
+
+| ID | Decisão | Data |
+|----|---------|------|
+| DP-01 | Escopo Sprint 4 inclui **AgentGestor WhatsApp + dashboard web** — ambos no mesmo sprint | 2026-04-17 |
+| DP-02 | Gestor pode ter o mesmo número de um representante — perfis cumulativos; `gestores` tem prioridade no IdentityRouter | 2026-04-17 |
+| DP-03 | Pedido fechado pelo gestor para cliente com rep → `representante_id` do pedido assume o rep do cliente (não NULL); pode mudar no futuro quando houver regra de comissão | 2026-04-17 |
+
+---
+
 ## Fora do escopo deste spec (Sprint 4)
 
-- Interface web (dashboard) — pode ser Sprint 5 se escopo estourar
 - Autenticação por senha ou 2FA — WhatsApp já autentica pelo número
 - Criação/edição de clientes via WhatsApp — operação de cadastro fica para painel web
 - Configuração de tenants via WhatsApp
+- Regras de comissão por rep (depende de DP-03 evoluir)
