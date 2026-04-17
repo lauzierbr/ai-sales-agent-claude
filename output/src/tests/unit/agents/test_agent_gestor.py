@@ -125,6 +125,7 @@ def pedido_criado() -> Pedido:
         representante_id="rep-001",
         status=StatusPedido.PENDENTE,
         total_estimado=Decimal("299.80"),
+        pdf_path=None,
         itens=[],
         criado_em=datetime(2026, 4, 17, tzinfo=timezone.utc),
     )

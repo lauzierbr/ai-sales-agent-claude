@@ -14,6 +14,12 @@ PASSED=0
 FAILED=0
 FAILURES=()
 
+# Venv paths (ajuste se necessário)
+VENV_ROOT="${VENV_ROOT:-$HOME/ai-sales-agent-claude/.venv}"
+VENV_PYTHON="$VENV_ROOT/bin/python"
+VENV_LINT="$VENV_ROOT/bin/lint-imports"
+export PYTHONPATH="${PYTHONPATH:-output}"
+
 _pass() { echo "  [PASS] $1"; PASSED=$((PASSED + 1)); }
 _fail() { echo "  [FAIL] $1 — $2"; FAILED=$((FAILED + 1)); FAILURES+=("$1: $2"); }
 
@@ -42,7 +48,7 @@ fi
 # S2 — Unit tests IR-G1 (IdentityRouter GESTOR)
 # ─────────────────────────────────────────────
 echo "[S2] Unit tests IR-G1..."
-if python -m pytest -m unit -k "test_identity_router_gestor_retorna_gestor" \
+if "$VENV_PYTHON" -m pytest -m unit -k "test_identity_router_gestor_retorna_gestor" \
     output/src/tests/unit/agents/test_identity_router.py -q --tb=short 2>&1 | tail -3 | grep -q "passed"; then
   _pass "S2: IR-G1 test_identity_router_gestor_retorna_gestor PASSED"
 else
@@ -132,7 +138,7 @@ fi
 # S8 — pytest -m unit test_agent_gestor.py → 0 falhas
 # ─────────────────────────────────────────────
 echo "[S8] Unit tests AgentGestor..."
-if python -m pytest -m unit \
+if "$VENV_PYTHON" -m pytest -m unit \
     output/src/tests/unit/agents/test_agent_gestor.py \
     -q --tb=short 2>&1 | tail -5 | grep -qE "passed|0 failed"; then
   _pass "S8: pytest -m unit test_agent_gestor.py → 0 falhas"
@@ -144,19 +150,15 @@ fi
 # S9 — lint-imports → zero violações
 # ─────────────────────────────────────────────
 echo "[S9] Import linter..."
-if python -m lint_imports 2>&1 | grep -q "Kept"; then
-  if python -m lint_imports 2>&1 | grep -q "Broken"; then
+LINT_OUT=$("$VENV_LINT" 2>&1 || true)
+if echo "$LINT_OUT" | grep -q "Kept"; then
+  if echo "$LINT_OUT" | grep -q "Broken"; then
     _fail "S9" "lint-imports encontrou violações de camada"
   else
     _pass "S9: lint-imports → zero violações (Kept)"
   fi
 else
-  # Tenta com nome alternativo
-  if python -m importlinter 2>&1 | grep -q "All contracts kept"; then
-    _pass "S9: lint-imports → zero violações"
-  else
-    _fail "S9" "lint-imports falhou ou não encontrado"
-  fi
+  _fail "S9" "lint-imports falhou — $(echo "$LINT_OUT" | tail -3)"
 fi
 
 # ─────────────────────────────────────────────
