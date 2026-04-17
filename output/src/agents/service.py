@@ -60,18 +60,33 @@ class IdentityRouter:
 
             telefone = mensagem.de.split("@")[0]
 
-            # Representante tem prioridade sobre cliente — um rep pode ter
-            # o mesmo número cadastrado em clientes_b2b (ex: dono que também compra)
             rep = await self._rep_repo.get_by_telefone(
                 tenant_id, telefone, session
             )
+            cliente = await self._cliente_repo.get_by_telefone(
+                tenant_id, telefone, session
+            )
+
+            # Detecta conflito cross-table — mesmo telefone em representantes E clientes_b2b
+            # Indica erro de cadastro: o número deve existir em apenas uma tabela.
+            if rep is not None and cliente is not None:
+                log.warning(
+                    "identity_router_conflito_telefone",
+                    tenant_id=tenant_id,
+                    telefone_hash=hashlib.sha256(telefone.encode()).hexdigest()[:12],
+                    rep_id=str(rep.id),
+                    cliente_id=str(cliente.id),
+                    msg=(
+                        "Mesmo telefone cadastrado como representante E cliente_b2b. "
+                        "Prioridade: REPRESENTANTE. Corrija o cadastro do cliente."
+                    ),
+                )
+
+            # Representante tem prioridade sobre cliente
             if rep is not None:
                 span.set_attribute("persona", "representante")
                 return Persona.REPRESENTANTE
 
-            cliente = await self._cliente_repo.get_by_telefone(
-                tenant_id, telefone, session
-            )
             if cliente is not None:
                 span.set_attribute("persona", "cliente_b2b")
                 return Persona.CLIENTE_B2B
