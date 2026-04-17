@@ -67,8 +67,9 @@ def _require_session(request: Request) -> dict[str, Any] | None:
 async def get_login(request: Request) -> HTMLResponse:
     """Exibe página de login do dashboard."""
     return templates.TemplateResponse(
+        request,
         "login.html",
-        {"request": request, "error": False},
+        {"error": False},
     )
 
 
@@ -86,16 +87,18 @@ async def post_login(request: Request) -> Any:
     if not stored_secret:
         log.error("dashboard_secret_ausente")
         return templates.TemplateResponse(
+            request,
             "login.html",
-            {"request": request, "error": True},
+            {"error": True},
             status_code=401,
         )
 
     if not hmac.compare_digest(stored_secret.encode(), str(senha).encode()):
         log.warning("dashboard_login_senha_incorreta")
         return templates.TemplateResponse(
+            request,
             "login.html",
-            {"request": request, "error": True},
+            {"error": True},
             status_code=401,
         )
 
@@ -143,8 +146,9 @@ async def home(request: Request) -> Any:
     kpis = await _get_kpis(tenant_id)
 
     return templates.TemplateResponse(
+        request,
         "home.html",
-        {"request": request, "kpis": kpis, "tenant_id": tenant_id},
+        {"kpis": kpis, "tenant_id": tenant_id},
     )
 
 
@@ -159,8 +163,9 @@ async def partials_kpis(request: Request) -> Any:
     kpis = await _get_kpis(tenant_id)
 
     return templates.TemplateResponse(
+        request,
         "_partials/kpis.html",
-        {"request": request, "kpis": kpis},
+        {"kpis": kpis},
     )
 
 
@@ -180,8 +185,9 @@ async def pedidos(request: Request) -> Any:
     pedidos_list = await _get_pedidos_recentes(tenant_id, limit=50)
 
     return templates.TemplateResponse(
+        request,
         "pedidos.html",
-        {"request": request, "pedidos": pedidos_list, "tenant_id": tenant_id},
+        {"pedidos": pedidos_list, "tenant_id": tenant_id},
     )
 
 
@@ -196,8 +202,9 @@ async def partials_pedidos_recentes(request: Request) -> Any:
     pedidos_list = await _get_pedidos_recentes(tenant_id, limit=10)
 
     return templates.TemplateResponse(
+        request,
         "_partials/pedidos_recentes.html",
-        {"request": request, "pedidos": pedidos_list},
+        {"pedidos": pedidos_list},
     )
 
 
@@ -217,8 +224,9 @@ async def conversas(request: Request) -> Any:
     conversas_list = await _get_conversas_ativas(tenant_id)
 
     return templates.TemplateResponse(
+        request,
         "conversas.html",
-        {"request": request, "conversas": conversas_list, "tenant_id": tenant_id},
+        {"conversas": conversas_list, "tenant_id": tenant_id},
     )
 
 
@@ -233,8 +241,9 @@ async def partials_conversas_ativas(request: Request) -> Any:
     conversas_list = await _get_conversas_ativas(tenant_id)
 
     return templates.TemplateResponse(
+        request,
         "_partials/conversas_ativas.html",
-        {"request": request, "conversas": conversas_list},
+        {"conversas": conversas_list},
     )
 
 
@@ -255,8 +264,9 @@ async def clientes(request: Request) -> Any:
     clientes_list = await _get_clientes(tenant_id, q)
 
     return templates.TemplateResponse(
+        request,
         "clientes.html",
-        {"request": request, "clientes": clientes_list, "q": q, "tenant_id": tenant_id},
+        {"clientes": clientes_list, "q": q, "tenant_id": tenant_id},
     )
 
 
@@ -276,8 +286,9 @@ async def representantes(request: Request) -> Any:
     reps = await _get_representantes_com_gmv(tenant_id)
 
     return templates.TemplateResponse(
+        request,
         "representantes.html",
-        {"request": request, "representantes": reps, "tenant_id": tenant_id},
+        {"representantes": reps, "tenant_id": tenant_id},
     )
 
 
@@ -294,8 +305,9 @@ async def precos_get(request: Request) -> Any:
         return RedirectResponse(url="/dashboard/login", status_code=302)
 
     return templates.TemplateResponse(
+        request,
         "precos.html",
-        {"request": request, "mensagem": None, "sucesso": None},
+        {"mensagem": None, "sucesso": None},
     )
 
 
@@ -367,8 +379,9 @@ async def configuracoes(request: Request) -> Any:
     config = await _get_tenant_config(tenant_id)
 
     return templates.TemplateResponse(
+        request,
         "configuracoes.html",
-        {"request": request, "config": config, "tenant_id": tenant_id},
+        {"config": config, "tenant_id": tenant_id},
     )
 
 

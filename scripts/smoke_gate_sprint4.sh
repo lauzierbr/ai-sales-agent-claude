@@ -151,8 +151,8 @@ fi
 # ─────────────────────────────────────────────
 echo "[S9] Import linter..."
 LINT_OUT=$("$VENV_LINT" 2>&1 || true)
-if echo "$LINT_OUT" | grep -q "Kept"; then
-  if echo "$LINT_OUT" | grep -q "Broken"; then
+if echo "$LINT_OUT" | grep -qi "kept"; then
+  if echo "$LINT_OUT" | grep -qi "broken"; then
     _fail "S9" "lint-imports encontrou violações de camada"
   else
     _pass "S9: lint-imports → zero violações (Kept)"
