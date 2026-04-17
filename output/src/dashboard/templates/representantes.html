@@ -9,9 +9,9 @@
       <tr><th>#</th><th>Nome</th><th>Pedidos</th><th>GMV (R$)</th></tr>
     </thead>
     <tbody>
-    {% for i, r in representantes|enumerate %}
+    {% for r in representantes %}
     <tr>
-      <td class="text-muted">{{ i + 1 }}</td>
+      <td class="text-muted">{{ loop.index }}</td>
       <td>{{ r.rep_nome }}</td>
       <td>{{ r.n_pedidos }}</td>
       <td style="color: var(--accent); font-weight: 600;">R$ {{ "%.2f"|format(r.total_gmv|float) }}</td>

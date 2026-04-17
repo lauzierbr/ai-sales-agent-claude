@@ -144,11 +144,13 @@ async def home(request: Request) -> Any:
 
     tenant_id = session_data["tenant_id"]
     kpis = await _get_kpis(tenant_id)
+    pedidos = await _get_pedidos_recentes(tenant_id, limit=10)
+    conversas = await _get_conversas_ativas(tenant_id)
 
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"kpis": kpis, "tenant_id": tenant_id},
+        {"kpis": kpis, "pedidos": pedidos, "conversas": conversas, "tenant_id": tenant_id},
     )
 
 
@@ -430,7 +432,7 @@ async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict]:
         async with factory() as session:
             result = await session.execute(
                 text("""
-                    SELECT p.id, p.numero_pedido, p.status, p.total_estimado,
+                    SELECT p.id, p.status, p.total_estimado,
                            p.criado_em, c.nome AS cliente_nome
                     FROM pedidos p
                     LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
