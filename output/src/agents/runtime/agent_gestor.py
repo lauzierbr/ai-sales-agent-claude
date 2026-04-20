@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.config import AgentGestorConfig
 from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
+from src.agents.runtime._retry import call_with_overload_retry
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import Gestor, Mensagem, Persona
 from src.orders.repo import OrderRepo
@@ -305,7 +306,9 @@ class AgentGestor:
 
             for iteration in range(self._config.max_iterations):
                 try:
-                    response = await client.messages.create(
+                    response = await call_with_overload_retry(
+                        client.messages.create,
+                        agent_name="gestor",
                         model=self._config.model,
                         max_tokens=self._config.max_tokens,
                         system=system_prompt,
@@ -322,7 +325,9 @@ class AgentGestor:
                         )
                         await self._limpar_historico_redis(tenant.id, numero)
                         messages = [{"role": "user", "content": mensagem.texto}]
-                        response = await client.messages.create(
+                        response = await call_with_overload_retry(
+                            client.messages.create,
+                            agent_name="gestor",
                             model=self._config.model,
                             max_tokens=self._config.max_tokens,
                             system=system_prompt,

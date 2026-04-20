@@ -546,6 +546,22 @@ Smoke gate
 [ ] scripts/smoke_sprint_N.py existe e retorna exit code 0 no mac-lablz
 [ ] Smoke cria dados, verifica persistência em nova sessão, limpa dados de teste
 
+Harness v2 — pipeline mecânico obrigatório
+[ ] scripts/smoke_gate.sh N retorna exit 0 no staging
+    - G1 /health, G2 lint-imports, G3 check_tool_coverage.py, G4 smoke_ui.sh,
+      G5 pytest unit, G6 pytest regression, G7 smoke_sprint_N.sh (opcional)
+[ ] Para sprint com dashboard: logs/smoke_ui.log contém "ALL OK"
+[ ] Para sprint com agente conversacional:
+    - python scripts/check_tool_coverage.py → "capacidade_sem_tool=0 tool_sem_capacidade=0"
+    - pytest output/src/tests/unit/agents/test_channel_format.py passa
+[ ] pytest output/src/tests/regression/ → 0 falhas (nenhum bug histórico voltou)
+
+Homologação
+[ ] python scripts/verify_homolog_preconditions.py --sprint N passa antes
+    do handoff ao usuário (cada cenário H1..Hk tem dados seed válidos)
+[ ] Para cada bug descoberto em homologação: teste novo em
+    output/src/tests/regression/test_sprint_N_bugs.py (escreve antes do hotfix)
+
 Contrato
 [ ] Cada critério de Alta do contrato tem teste correspondente
 [ ] Critério A_SMOKE evidenciado com output do script
