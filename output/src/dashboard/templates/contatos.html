@@ -9,12 +9,13 @@
   {% if contatos %}
   <table>
     <thead>
-      <tr><th>Nome</th><th>Perfil</th><th>Celular</th><th>Ativo</th><th></th></tr>
+      <tr><th>Nome</th><th>Contato</th><th>Perfil</th><th>Celular</th><th>Ativo</th><th></th></tr>
     </thead>
     <tbody>
     {% for c in contatos %}
     <tr>
       <td>{{ c.nome }}</td>
+      <td class="text-muted">{{ c.nome_contato or "—" }}</td>
       <td><span class="badge {% if c.perfil == 'gestor' %}badge-ok{% elif c.perfil == 'rep' %}badge-pending{% endif %}">{{ c.perfil }}</span></td>
       <td class="text-muted">{{ c.telefone or "—" }}</td>
       <td>{% if c.ativo %}<span class="badge badge-ok">sim</span>{% else %}<span class="badge">não</span>{% endif %}</td>

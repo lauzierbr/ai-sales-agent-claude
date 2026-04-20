@@ -420,6 +420,7 @@ async def contatos_novo_post(request: Request) -> Any:
     nome = str(form.get("nome", "")).strip()
     telefone = str(form.get("telefone", "")).strip()
     cliente_b2b_id = str(form.get("cliente_b2b_id", "")).strip()
+    nome_contato = str(form.get("nome_contato", "")).strip() or None
     clientes_list = await _get_clientes(tenant_id, "")
     try:
         from sqlalchemy import text
@@ -437,8 +438,8 @@ async def contatos_novo_post(request: Request) -> Any:
                 )
             elif perfil == "cliente" and cliente_b2b_id:
                 await session.execute(
-                    text("UPDATE clientes_b2b SET telefone=:tel WHERE id=:id AND tenant_id=:tid"),
-                    {"tel": telefone, "id": cliente_b2b_id, "tid": tenant_id},
+                    text("UPDATE clientes_b2b SET telefone=:tel, nome_contato=:nc WHERE id=:id AND tenant_id=:tid"),
+                    {"tel": telefone, "nc": nome_contato, "id": cliente_b2b_id, "tid": tenant_id},
                 )
             else:
                 raise ValueError("Selecione um perfil válido e, para Cliente, selecione o cliente.")
@@ -478,15 +479,22 @@ async def contatos_editar_post(request: Request, perfil: str, contato_id: str) -
     form = await request.form()
     nome = str(form.get("nome", "")).strip()
     telefone = str(form.get("telefone", "")).strip()
+    nome_contato = str(form.get("nome_contato", "")).strip() or None
     try:
         from sqlalchemy import text
         from src.providers.db import get_session_factory
         table = {"gestor": "gestores", "rep": "representantes", "cliente": "clientes_b2b"}[perfil]
         async with get_session_factory()() as session:
-            await session.execute(
-                text(f"UPDATE {table} SET nome=:nome, telefone=:tel WHERE id=:id AND tenant_id=:tid"),
-                {"nome": nome, "tel": telefone, "id": contato_id, "tid": tenant_id},
-            )
+            if perfil == "cliente":
+                await session.execute(
+                    text(f"UPDATE {table} SET nome=:nome, telefone=:tel, nome_contato=:nc WHERE id=:id AND tenant_id=:tid"),
+                    {"nome": nome, "tel": telefone, "nc": nome_contato, "id": contato_id, "tid": tenant_id},
+                )
+            else:
+                await session.execute(
+                    text(f"UPDATE {table} SET nome=:nome, telefone=:tel WHERE id=:id AND tenant_id=:tid"),
+                    {"nome": nome, "tel": telefone, "id": contato_id, "tid": tenant_id},
+                )
             await session.commit()
         return RedirectResponse(url="/dashboard/contatos", status_code=302)
     except Exception as exc:
@@ -875,13 +883,13 @@ async def _get_todos_contatos(tenant_id: str) -> list[dict]:
         async with get_session_factory()() as session:
             result = await session.execute(
                 text("""
-                    SELECT id, nome, telefone, ativo, 'gestor' AS perfil FROM gestores
+                    SELECT id, nome, telefone, ativo, 'gestor' AS perfil, NULL AS nome_contato FROM gestores
                     WHERE tenant_id = :tid
                     UNION ALL
-                    SELECT id, nome, telefone, ativo, 'rep' AS perfil FROM representantes
+                    SELECT id, nome, telefone, ativo, 'rep' AS perfil, NULL AS nome_contato FROM representantes
                     WHERE tenant_id = :tid
                     UNION ALL
-                    SELECT id, nome, telefone, ativo, 'cliente' AS perfil FROM clientes_b2b
+                    SELECT id, nome, telefone, ativo, 'cliente' AS perfil, nome_contato FROM clientes_b2b
                     WHERE tenant_id = :tid
                     ORDER BY nome
                 """),
@@ -901,8 +909,9 @@ async def _get_contato_by_id(tenant_id: str, perfil: str, contato_id: str) -> di
         from sqlalchemy import text
         from src.providers.db import get_session_factory
         async with get_session_factory()() as session:
+            extra = ", nome_contato" if perfil == "cliente" else ", NULL AS nome_contato"
             result = await session.execute(
-                text(f"SELECT id, nome, telefone, ativo FROM {table} WHERE id=:id AND tenant_id=:tid"),
+                text(f"SELECT id, nome, telefone, ativo{extra} FROM {table} WHERE id=:id AND tenant_id=:tid"),
                 {"id": contato_id, "tid": tenant_id},
             )
             row = result.mappings().first()

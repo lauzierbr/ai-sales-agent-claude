@@ -15,6 +15,12 @@
       <label>Nome *</label>
       <input type="text" name="nome" value="{{ contato.nome }}" required>
     </div>
+    {% if contato.perfil == 'cliente' %}
+    <div class="form-group">
+      <label>Nome do contato</label>
+      <input type="text" name="nome_contato" value="{{ contato.nome_contato or '' }}" placeholder="Nome da pessoa que usa este celular">
+    </div>
+    {% endif %}
     <div class="form-group">
       <label>Celular (formato: 5511999990000)</label>
       <input type="text" name="telefone" value="{{ contato.telefone or '' }}" placeholder="5511999990000">
