@@ -756,30 +756,27 @@ async def _get_clientes(tenant_id: str, q: str) -> list[dict]:
 
         factory = get_session_factory()
         async with factory() as session:
+            base_sql = """
+                SELECT c.id, c.nome, c.cnpj, c.telefone, c.ativo, c.representante_id,
+                       r.nome AS representante_nome
+                FROM clientes_b2b c
+                LEFT JOIN representantes r ON r.id = c.representante_id AND r.tenant_id = c.tenant_id
+                WHERE c.tenant_id = :tenant_id
+            """
             if q:
                 result = await session.execute(
-                    text("""
-                        SELECT id, nome, cnpj, telefone, ativo, representante_id
-                        FROM clientes_b2b
-                        WHERE tenant_id = :tenant_id
+                    text(base_sql + """
                           AND (
-                              unaccent(lower(nome)) ILIKE unaccent(lower('%' || :q || '%'))
-                              OR cnpj ILIKE '%' || :q || '%'
+                              unaccent(lower(c.nome)) ILIKE unaccent(lower('%' || :q || '%'))
+                              OR c.cnpj ILIKE '%' || :q || '%'
                           )
-                        ORDER BY nome
-                        LIMIT 100
+                        ORDER BY c.nome LIMIT 100
                     """),
                     {"tenant_id": tenant_id, "q": q},
                 )
             else:
                 result = await session.execute(
-                    text("""
-                        SELECT id, nome, cnpj, telefone, ativo, representante_id
-                        FROM clientes_b2b
-                        WHERE tenant_id = :tenant_id
-                        ORDER BY nome
-                        LIMIT 100
-                    """),
+                    text(base_sql + "ORDER BY c.nome LIMIT 100"),
                     {"tenant_id": tenant_id},
                 )
             rows = result.mappings().all()
