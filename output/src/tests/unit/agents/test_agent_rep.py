@@ -669,3 +669,20 @@ async def test_webhook_agent_rep_deps_nao_none(
     assert agent._pdf_generator is not None
     assert agent._catalog_service is not None
     assert agent._representante is representante_jmb
+
+
+# ─────────────────────────────────────────────
+# A_TOOL_COVERAGE — AgentRep
+# ─────────────────────────────────────────────
+
+def test_a_tool_coverage_rep_capacidades_anunciadas_tem_ferramenta() -> None:
+    """A_TOOL_COVERAGE: cada capacidade que o AgentRep anuncia tem ferramenta em _TOOLS."""
+    from src.agents.runtime.agent_rep import _TOOLS
+
+    tool_names = {t["name"] for t in _TOOLS}
+    assert "buscar_produtos" in tool_names
+    assert "buscar_clientes_carteira" in tool_names
+    assert "confirmar_pedido_em_nome_de" in tool_names
+    assert "listar_pedidos_carteira" in tool_names, (
+        "Rep anuncia visibilidade de pedidos mas ferramenta estava ausente"
+    )

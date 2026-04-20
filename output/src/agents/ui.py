@@ -7,6 +7,7 @@ Decisão D022: validação HMAC-SHA256 + resposta 200 imediata + BackgroundTask.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any
 
@@ -17,6 +18,7 @@ from fastapi.responses import JSONResponse
 from src.agents.service import (
     mark_message_as_read,
     send_typing_indicator,
+    send_typing_stop,
     validate_webhook_signature,
 )
 from src.agents.types import WebhookPayload
@@ -196,11 +198,14 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             from_number_hash=from_hash,
         )
 
-        # 4b. Feedback visual: "digitando..." enquanto o agente processa
-        await send_typing_indicator(
-            instancia_id=payload.instance,
-            remote_jid=mensagem.de,
-            duration_ms=8000,
+        # 4b. Feedback visual: "digitando..." — fire-and-forget, não bloqueia o agente.
+        # WhatsApp apaga o indicador sozinho quando a mensagem chega.
+        asyncio.create_task(
+            send_typing_indicator(
+                instancia_id=payload.instance,
+                remote_jid=mensagem.de,
+                duration_ms=30000,
+            )
         )
 
         # 5. Chama agente correspondente
@@ -302,4 +307,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                 tenant_id=tenant_id,
                 persona=persona.value,
                 error=str(exc),
+            )
+            # Apaga o indicador só em falha — em sucesso o WhatsApp limpa sozinho.
+            asyncio.create_task(
+                send_typing_stop(
+                    instancia_id=payload.instance,
+                    remote_jid=mensagem.de,
+                )
             )

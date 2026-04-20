@@ -16,6 +16,10 @@ Casos cobertos:
   G10 — ConversaRepo chamado com Persona.GESTOR
   G11 — session.commit() chamado após resposta
   G12 — tenant_id passado ao RelatorioRepo (isolamento)
+  G13 — multi-turn: tool call seguida de follow-up não gera erro 400
+         (verifica que response.content é serializado como dicts, não objetos SDK)
+  G14 — listar_pedidos_por_status chama OrderRepo.listar_por_tenant_status
+  A_TOOL_COVERAGE — todas capacidades anunciadas têm ferramenta correspondente
 """
 
 from __future__ import annotations
@@ -29,8 +33,9 @@ import pytest
 
 from src.agents.config import AgentGestorConfig
 from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
-from src.agents.runtime.agent_gestor import AgentGestor
+from src.agents.runtime.agent_gestor import AgentGestor, _TOOLS
 from src.agents.types import ClienteB2B, Conversa, Gestor, Mensagem, Persona
+from src.orders.repo import OrderRepo
 from src.orders.types import ItemPedido, Pedido, StatusPedido
 from src.tenants.types import Tenant
 
@@ -141,6 +146,7 @@ def _make_agent(
     mock_anthropic: AsyncMock,
     mock_cliente_repo: AsyncMock | None = None,
     mock_relatorio_repo: AsyncMock | None = None,
+    mock_order_repo: AsyncMock | None = None,
     catalog_service: Any | None = None,
 ) -> AgentGestor:
     return AgentGestor(
@@ -154,6 +160,7 @@ def _make_agent(
         redis_client=None,
         cliente_b2b_repo=mock_cliente_repo,
         relatorio_repo=mock_relatorio_repo,
+        order_repo=mock_order_repo,
     )
 
 
@@ -897,3 +904,276 @@ async def test_agent_gestor_g12_tenant_id_em_relatorio(
 
     assert len(tenant_ids_recebidos) == 1
     assert tenant_ids_recebidos[0] == "jmb"
+
+
+# ─────────────────────────────────────────────
+# G13 — multi-turn: blocks do SDK serializado como dicts, não objetos
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g13_multiturn_blocks_sao_dicts(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G13/A_MULTITURN: após uma tool call, response.content é armazenado como
+    lista de dicts (model_dump), nunca como objetos SDK. Uma segunda chamada
+    à API com esse histórico não deve gerar erro 400."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_relatorio_repo = AsyncMock(spec=RelatorioRepo)
+    mock_relatorio_repo.totais_periodo = AsyncMock(
+        return_value={"total_gmv": 100, "n_pedidos": 2, "ticket_medio": 50}
+    )
+
+    # tool_block com model_dump() — simula objeto SDK real
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "relatorio_vendas"
+    tool_block.id = "tool-013"
+    tool_block.input = {"periodo": "hoje", "tipo": "totais"}
+    tool_block.model_dump = MagicMock(return_value={
+        "type": "tool_use",
+        "id": "tool-013",
+        "name": "relatorio_vendas",
+        "input": {"periodo": "hoje", "tipo": "totais"},
+    })
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "Vendas de hoje: R$ 100"
+    final_block.model_dump = MagicMock(return_value={"type": "text", "text": "Vendas de hoje: R$ 100"})
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    messages_enviadas: list[list[dict]] = []
+
+    async def capture_create(**kwargs: Any) -> Any:
+        messages_enviadas.append(kwargs.get("messages", []))
+        if len(messages_enviadas) == 1:
+            return resp_tool
+        return resp_final
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = capture_create
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic, mock_relatorio_repo=mock_relatorio_repo,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    # Verifica que a segunda chamada à API recebeu o histórico com dicts, não objetos SDK
+    assert len(messages_enviadas) == 2, "Deve ter feito 2 chamadas à API (tool_use + follow-up)"
+    segunda_chamada = messages_enviadas[1]
+    assistant_msgs = [m for m in segunda_chamada if m.get("role") == "assistant"]
+    assert len(assistant_msgs) >= 1, "Deve ter ao menos uma mensagem assistant no histórico"
+    for msg in assistant_msgs:
+        # Content pode ser string (end_turn) ou lista (tool_use).
+        # Só verificamos o caso lista — é onde o bug de serialização ocorria.
+        if not isinstance(msg["content"], list):
+            continue
+        for block in msg["content"]:
+            assert isinstance(block, dict), (
+                f"Bloco tool_use no histórico deve ser dict, não {type(block).__name__}. "
+                "Use [b.model_dump() for b in response.content] antes de appender ao histórico."
+            )
+
+
+# ─────────────────────────────────────────────
+# G14 — listar_pedidos_por_status chama OrderRepo
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_gestor_g14_listar_pedidos_por_status(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G14: listar_pedidos_por_status delega ao OrderRepo com tenant_id e status corretos."""
+    from datetime import datetime, timezone
+
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    pedidos_mock = [
+        {
+            "id": "ped-001",
+            "cliente_nome": "LZ Muzel",
+            "total_estimado": Decimal("299.80"),
+            "status": "pendente",
+            "criado_em": datetime(2026, 4, 20, tzinfo=timezone.utc),
+        }
+    ]
+    mock_order_repo = AsyncMock(spec=OrderRepo)
+    mock_order_repo.listar_por_tenant_status = AsyncMock(return_value=pedidos_mock)
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "listar_pedidos_por_status"
+    tool_block.id = "tool-014"
+    tool_block.input = {"status": "pendente"}
+    tool_block.model_dump = MagicMock(return_value={
+        "type": "tool_use", "id": "tool-014",
+        "name": "listar_pedidos_por_status", "input": {"status": "pendente"},
+    })
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "1 pedido pendente encontrado."
+    final_block.model_dump = MagicMock(return_value={"type": "text", "text": "1 pedido pendente encontrado."})
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = AgentGestor(
+        order_service=AsyncMock(),
+        conversa_repo=mock_conversa_repo,
+        pdf_generator=MagicMock(),
+        config=AgentGestorConfig(),
+        gestor=gestor_jmb,
+        anthropic_client=mock_anthropic,
+        redis_client=None,
+        order_repo=mock_order_repo,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    mock_order_repo.listar_por_tenant_status.assert_called_once_with(
+        tenant_id="jmb",
+        status="pendente",
+        dias=30,
+        limit=20,
+        session=mock_session,
+    )
+
+
+# ─────────────────────────────────────────────
+# A_TOOL_COVERAGE — todas capacidades anunciadas têm ferramenta correspondente
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_a_tool_coverage_capacidades_anunciadas_tem_ferramenta() -> None:
+    """A_TOOL_COVERAGE: cada capacidade que o AgentGestor anuncia ao usuário
+    tem uma ferramenta correspondente em _TOOLS. Previne divergência entre
+    o que o bot promete e o que consegue fazer."""
+    tool_names = {t["name"] for t in _TOOLS}
+
+    # Capacidades anunciadas na saudação e system prompt
+    assert "buscar_clientes" in tool_names, "Ferramenta de busca de clientes ausente"
+    assert "buscar_produtos" in tool_names, "Ferramenta de busca de produtos ausente"
+    assert "confirmar_pedido_em_nome_de" in tool_names, "Ferramenta de fechar pedidos ausente"
+    assert "relatorio_vendas" in tool_names, "Ferramenta de relatório de vendas ausente"
+    assert "clientes_inativos" in tool_names, "Ferramenta de clientes inativos ausente"
+    assert "listar_pedidos_por_status" in tool_names, (
+        "Ferramenta de listar pedidos ausente — bot anuncia visibilidade de pedidos "
+        "mas não conseguia responder 'quais os pedidos pendentes' sem esta ferramenta"
+    )
+
+
+# ─────────────────────────────────────────────
+# G15 — aprovar_pedidos aprova e faz commit
+# ─────────────────────────────────────────────
+
+@pytest.mark.unit
+async def test_agent_gestor_g15_aprovar_pedidos(
+    tenant_jmb: Tenant,
+    gestor_jmb: Gestor,
+    mensagem_gestor: Mensagem,
+    conversa_gestor: Conversa,
+) -> None:
+    """G15: aprovar_pedidos chama OrderRepo.aprovar_pedido para cada ID e faz commit."""
+    mock_session = AsyncMock()
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
+    mock_conversa_repo.add_mensagem = AsyncMock()
+
+    mock_order_repo = AsyncMock(spec=OrderRepo)
+    mock_order_repo.aprovar_pedido = AsyncMock(
+        side_effect=[
+            {"id": "ped-1", "status": "confirmado", "cliente_b2b_id": "cli-1", "total_estimado": "100.00"},
+            {"id": "ped-2", "status": "confirmado", "cliente_b2b_id": "cli-1", "total_estimado": "200.00"},
+        ]
+    )
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "aprovar_pedidos"
+    tool_block.id = "tool-015"
+    tool_block.input = {"pedido_ids": ["ped-1", "ped-2"]}
+    tool_block.model_dump = MagicMock(return_value={
+        "type": "tool_use", "id": "tool-015",
+        "name": "aprovar_pedidos", "input": {"pedido_ids": ["ped-1", "ped-2"]},
+    })
+
+    resp_tool = MagicMock()
+    resp_tool.stop_reason = "tool_use"
+    resp_tool.content = [tool_block]
+
+    final_block = MagicMock()
+    final_block.type = "text"
+    final_block.text = "2 pedidos aprovados."
+    final_block.model_dump = MagicMock(return_value={"type": "text", "text": "2 pedidos aprovados."})
+
+    resp_final = MagicMock()
+    resp_final.stop_reason = "end_turn"
+    resp_final.content = [final_block]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[resp_tool, resp_final])
+
+    agent = _make_agent(
+        tenant=tenant_jmb, gestor=gestor_jmb,
+        mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
+        mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
+        mock_anthropic=mock_anthropic,
+        mock_order_repo=mock_order_repo,
+    )
+
+    with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
+        await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
+
+    assert mock_order_repo.aprovar_pedido.call_count == 2
+    mock_session.commit.assert_called()
+
+
+# ─────────────────────────────────────────────
+# A_TOOL_COVERAGE — atualizado com aprovar_pedidos
+# ─────────────────────────────────────────────
+
+def test_a_tool_coverage_inclui_aprovar_pedidos() -> None:
+    """A_TOOL_COVERAGE: aprovar_pedidos deve estar em _TOOLS do AgentGestor."""
+    tool_names = {t["name"] for t in _TOOLS}
+    assert "aprovar_pedidos" in tool_names, (
+        "Gestor precisa poder aprovar pedidos — ausência causou incoerência de UX: "
+        "bot pedia confirmação e depois dizia não ter a ferramenta"
+    )

@@ -8,6 +8,27 @@ from __future__ import annotations
 
 import os
 
+# Bloco de formatação WhatsApp — injetado em todos os agentes.
+# WhatsApp renderiza: *negrito*, _itálico_, ~riscado~, `mono`.
+# Não renderiza tabelas markdown (pipes viram texto bruto e quebram em linhas).
+_WHATSAPP_FORMATTING = (
+    "## Formatação WhatsApp (obrigatório)\n"
+    "NUNCA use tabelas markdown (caractere |). WhatsApp não renderiza tabelas.\n"
+    "Use este padrão para listas de itens:\n\n"
+    "  *Nome do item*\n"
+    "  • Campo: valor\n"
+    "  • Campo: valor\n\n"
+    "Exemplo correto para pedidos:\n"
+    "  *Pedido #ABC123*\n"
+    "  • Cliente: LZ Muzel\n"
+    "  • Total: R$ 1.078,64\n"
+    "  • Status: pendente\n\n"
+    "Exemplo correto para relatório por cliente:\n"
+    "  *LZ Muzel*\n"
+    "  • Pedidos: 5  |  GMV: R$ 1.078,64\n\n"
+    "Use `---` para separar seções. Use *negrito* para títulos e totais.\n"
+)
+
 
 class EvolutionConfig:
     """Configuração da Evolution API para envio de mensagens WhatsApp."""
@@ -58,10 +79,11 @@ class AgentClienteConfig:
         self.historico_max_msgs: int = int(os.getenv("AGENT_CLIENTE_HIST_MAX", "20"))
         self.system_prompt_template: str = (
             "Você é um assistente de vendas B2B da {tenant_nome}. "
-            "Ajude o cliente a encontrar produtos e registrar pedidos. "
+            "Ajude o cliente a encontrar produtos, registrar pedidos e consultar o status dos seus pedidos. "
             "Seja objetivo, profissional e use linguagem formal mas acessível. "
             "Ao confirmar um pedido, use a ferramenta confirmar_pedido com os "
             "itens acordados. Ao buscar produtos, use buscar_produtos. "
+            "Para consultar pedidos do cliente, use listar_meus_pedidos. "
             "Nunca invente produtos — use apenas os retornados pela busca.\n\n"
 
             "## Linguagem coloquial brasileira\n\n"
@@ -104,8 +126,8 @@ class AgentClienteConfig:
             "### Saudações simples\n"
             "Se a mensagem for apenas uma saudação ('oi', 'bom dia', 'boa tarde', "
             "'e aí', 'olá'), responda com saudação e ofereça ajuda. "
-            "Não chame nenhuma ferramenta."
-        )
+            "Não chame nenhuma ferramenta.\n\n"
+        ) + _WHATSAPP_FORMATTING
 
     def __repr__(self) -> str:
         return (
@@ -131,7 +153,9 @@ class AgentRepConfig:
             "## Ferramentas disponíveis\n"
             "- buscar_produtos: busca no catálogo por texto livre.\n"
             "- buscar_clientes_carteira: busca clientes na carteira do representante por nome.\n"
-            "- confirmar_pedido_em_nome_de: registra pedido em nome de um cliente da carteira.\n\n"
+            "- confirmar_pedido_em_nome_de: registra pedido em nome de um cliente da carteira.\n"
+            "- listar_pedidos_carteira: lista pedidos dos clientes da sua carteira por status.\n"
+            "- aprovar_pedidos_carteira: aprova pedidos pendentes de clientes da sua carteira.\n\n"
 
             "## Regras obrigatórias\n"
             "1. Sempre confirme o nome e CNPJ do cliente antes de fechar um pedido. "
@@ -145,8 +169,8 @@ class AgentRepConfig:
             "confirmar_pedido_em_nome_de.\n\n"
 
             "## Abreviações aceitas\n"
-            "cx=caixa, und/un=unidade, pct=pacote, fdo/frd=fardo, dz=dúzia."
-        )
+            "cx=caixa, und/un=unidade, pct=pacote, fdo/frd=fardo, dz=dúzia.\n\n"
+        ) + _WHATSAPP_FORMATTING
 
     def __repr__(self) -> str:
         return (
@@ -173,7 +197,9 @@ class AgentGestorConfig:
             "- buscar_produtos: busca produtos no catálogo por texto livre.\n"
             "- confirmar_pedido_em_nome_de: registra pedido em nome de qualquer cliente.\n"
             "- relatorio_vendas: gera relatório de vendas por período.\n"
-            "- clientes_inativos: lista clientes sem pedido nos últimos N dias.\n\n"
+            "- clientes_inativos: lista clientes sem pedido nos últimos N dias.\n"
+            "- listar_pedidos_por_status: lista pedidos filtrando por status (pendente/confirmado/cancelado).\n"
+            "- aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes. Use IDs obtidos via listar_pedidos_por_status.\n\n"
 
             "## Regras obrigatórias\n"
             "1. Ao fechar pedido, sempre busque o cliente via buscar_clientes para obter o ID correto.\n"
@@ -188,8 +214,8 @@ class AgentGestorConfig:
             "Pode fechar pedido para qualquer cliente.\n\n"
 
             "## Abreviações aceitas\n"
-            "cx=caixa, und/un=unidade, pct=pacote, fdo/frd=fardo, dz=dúzia."
-        )
+            "cx=caixa, und/un=unidade, pct=pacote, fdo/frd=fardo, dz=dúzia.\n\n"
+        ) + _WHATSAPP_FORMATTING
 
     def __repr__(self) -> str:
         return (

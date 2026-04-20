@@ -211,6 +211,289 @@ class OrderRepo:
             )
         return pedidos
 
+    async def listar_por_tenant_status(
+        self,
+        tenant_id: str,
+        status: str | None,
+        limit: int,
+        session: AsyncSession,
+        dias: int = 30,
+    ) -> list[dict]:
+        """Lista pedidos do tenant com JOIN em clientes_b2b para nome do cliente.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            status: filtro por status (pendente/confirmado/cancelado). None = todos.
+            limit: máximo de registros retornados.
+            session: sessão SQLAlchemy assíncrona.
+            dias: janela de dias para busca sem filtro de status (padrão 30).
+
+        Returns:
+            Lista de dicts com id, cliente_nome, total_estimado, status, criado_em.
+            Ordenada por criado_em DESC em Python (padrão do projeto).
+        """
+        from datetime import datetime, timedelta, timezone
+        data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)
+
+        if status is not None:
+            result = await session.execute(
+                text("""
+                    SELECT p.id, p.total_estimado, p.status, p.criado_em,
+                           COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome
+                    FROM pedidos p
+                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+                    WHERE p.tenant_id = :tenant_id AND p.status = :status
+                      AND p.criado_em >= :data_inicio
+                    LIMIT :limit
+                """),
+                {"tenant_id": tenant_id, "status": status, "limit": limit, "data_inicio": data_inicio},
+            )
+        else:
+            result = await session.execute(
+                text("""
+                    SELECT p.id, p.total_estimado, p.status, p.criado_em,
+                           COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome
+                    FROM pedidos p
+                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+                    WHERE p.tenant_id = :tenant_id
+                      AND p.criado_em >= :data_inicio
+                    LIMIT :limit
+                """),
+                {"tenant_id": tenant_id, "limit": limit, "data_inicio": data_inicio},
+            )
+        rows = result.mappings().all()
+        pedidos = [
+            {
+                "id": row["id"],
+                "cliente_nome": row["cliente_nome"],
+                "total_estimado": Decimal(str(row["total_estimado"])),
+                "status": row["status"],
+                "criado_em": row["criado_em"],
+            }
+            for row in rows
+        ]
+        return sorted(pedidos, key=lambda p: p["criado_em"] or "", reverse=True)
+
+    async def listar_por_representante(
+        self,
+        tenant_id: str,
+        representante_id: str,
+        status: str | None,
+        limit: int,
+        session: AsyncSession,
+        dias: int = 30,
+    ) -> list[dict]:
+        """Lista pedidos da carteira do representante com JOIN em clientes_b2b.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            representante_id: ID do representante — restringe à carteira do rep.
+            status: filtro por status. None = últimos 30 dias.
+            limit: máximo de registros retornados.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de dicts com id, cliente_nome, total_estimado, status, criado_em.
+            Ordenada por criado_em DESC em Python.
+        """
+        from datetime import datetime, timedelta, timezone
+        data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)
+
+        if status is not None:
+            result = await session.execute(
+                text("""
+                    SELECT p.id, p.total_estimado, p.status, p.criado_em,
+                           COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome
+                    FROM pedidos p
+                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+                    WHERE p.tenant_id = :tenant_id
+                      AND p.representante_id = :representante_id
+                      AND p.status = :status
+                      AND p.criado_em >= :data_inicio
+                    LIMIT :limit
+                """),
+                {
+                    "tenant_id": tenant_id,
+                    "representante_id": representante_id,
+                    "status": status,
+                    "limit": limit,
+                    "data_inicio": data_inicio,
+                },
+            )
+        else:
+            result = await session.execute(
+                text("""
+                    SELECT p.id, p.total_estimado, p.status, p.criado_em,
+                           COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome
+                    FROM pedidos p
+                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+                    WHERE p.tenant_id = :tenant_id
+                      AND p.representante_id = :representante_id
+                      AND p.criado_em >= :data_inicio
+                    LIMIT :limit
+                """),
+                {
+                    "tenant_id": tenant_id,
+                    "representante_id": representante_id,
+                    "limit": limit,
+                    "data_inicio": data_inicio,
+                },
+            )
+        rows = result.mappings().all()
+        pedidos = [
+            {
+                "id": row["id"],
+                "cliente_nome": row["cliente_nome"],
+                "total_estimado": Decimal(str(row["total_estimado"])),
+                "status": row["status"],
+                "criado_em": row["criado_em"],
+            }
+            for row in rows
+        ]
+        return sorted(pedidos, key=lambda p: p["criado_em"] or "", reverse=True)
+
+    async def listar_por_cliente(
+        self,
+        tenant_id: str,
+        cliente_b2b_id: str,
+        status: str | None,
+        limit: int,
+        session: AsyncSession,
+        dias: int = 30,
+    ) -> list[dict]:
+        """Lista pedidos de um cliente B2B específico.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            cliente_b2b_id: ID do cliente — restringe aos pedidos desse cliente.
+            status: filtro por status. None = últimos 30 dias.
+            limit: máximo de registros retornados.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de dicts com id, total_estimado, status, criado_em.
+            Ordenada por criado_em DESC em Python.
+        """
+        from datetime import datetime, timedelta, timezone
+        data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)
+
+        if status is not None:
+            result = await session.execute(
+                text("""
+                    SELECT p.id, p.total_estimado, p.status, p.criado_em
+                    FROM pedidos p
+                    WHERE p.tenant_id = :tenant_id
+                      AND p.cliente_b2b_id = :cliente_b2b_id
+                      AND p.status = :status
+                      AND p.criado_em >= :data_inicio
+                    LIMIT :limit
+                """),
+                {
+                    "tenant_id": tenant_id,
+                    "cliente_b2b_id": cliente_b2b_id,
+                    "status": status,
+                    "limit": limit,
+                    "data_inicio": data_inicio,
+                },
+            )
+        else:
+            result = await session.execute(
+                text("""
+                    SELECT p.id, p.total_estimado, p.status, p.criado_em
+                    FROM pedidos p
+                    WHERE p.tenant_id = :tenant_id
+                      AND p.cliente_b2b_id = :cliente_b2b_id
+                      AND p.criado_em >= :data_inicio
+                    LIMIT :limit
+                """),
+                {
+                    "tenant_id": tenant_id,
+                    "cliente_b2b_id": cliente_b2b_id,
+                    "limit": limit,
+                    "data_inicio": data_inicio,
+                },
+            )
+        rows = result.mappings().all()
+        pedidos = [
+            {
+                "id": row["id"],
+                "total_estimado": Decimal(str(row["total_estimado"])),
+                "status": row["status"],
+                "criado_em": row["criado_em"],
+            }
+            for row in rows
+        ]
+        return sorted(pedidos, key=lambda p: p["criado_em"] or "", reverse=True)
+
+    async def aprovar_pedido(
+        self,
+        tenant_id: str,
+        pedido_id: str,
+        session: AsyncSession,
+    ) -> dict | None:
+        """Altera status do pedido de pendente para confirmado.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            pedido_id: ID do pedido a aprovar.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com id, status, cliente_b2b_id do pedido atualizado.
+            None se pedido não encontrado ou não estava pendente.
+        """
+        result = await session.execute(
+            text("""
+                UPDATE pedidos
+                SET status = 'confirmado'
+                WHERE tenant_id = :tenant_id
+                  AND id = :pedido_id
+                  AND status = 'pendente'
+                RETURNING id, status, cliente_b2b_id, total_estimado
+            """),
+            {"tenant_id": tenant_id, "pedido_id": pedido_id},
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        log.info(
+            "pedido_aprovado",
+            tenant_id=tenant_id,
+            pedido_id=pedido_id,
+        )
+        return {
+            "id": row["id"],
+            "status": row["status"],
+            "cliente_b2b_id": row["cliente_b2b_id"],
+            "total_estimado": str(row["total_estimado"]),
+        }
+
+    async def get_pedido_cliente_b2b_id(
+        self,
+        tenant_id: str,
+        pedido_id: str,
+        session: AsyncSession,
+    ) -> str | None:
+        """Retorna o cliente_b2b_id de um pedido (para validação de carteira).
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            pedido_id: ID do pedido.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            cliente_b2b_id do pedido, ou None se não encontrado.
+        """
+        result = await session.execute(
+            text("""
+                SELECT cliente_b2b_id FROM pedidos
+                WHERE tenant_id = :tenant_id AND id = :pedido_id
+            """),
+            {"tenant_id": tenant_id, "pedido_id": pedido_id},
+        )
+        row = result.mappings().first()
+        return row["cliente_b2b_id"] if row else None
+
     async def update_pdf_path(
         self,
         tenant_id: str,

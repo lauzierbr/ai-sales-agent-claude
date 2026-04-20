@@ -265,11 +265,27 @@ async def send_typing_indicator(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.post(url, json=payload, headers={"apikey": api_key})
             resp.raise_for_status()
     except Exception as exc:
-        log.debug("typing_indicator_erro", instancia_id=instancia_id, error=str(exc))
+        log.debug("typing_indicator_erro", instancia_id=instancia_id, error_type=type(exc).__name__)
+
+
+async def send_typing_stop(instancia_id: str, remote_jid: str) -> None:
+    """Para o indicador 'digitando...' imediatamente via Evolution API."""
+    api_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+    api_key = os.getenv("EVOLUTION_API_KEY", "")
+
+    url = f"{api_url}/chat/sendPresence/{instancia_id}"
+    payload = {"number": remote_jid, "delay": 0, "presence": "paused"}
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.post(url, json=payload, headers={"apikey": api_key})
+            resp.raise_for_status()
+    except Exception as exc:
+        log.debug("typing_stop_erro", instancia_id=instancia_id, error_type=type(exc).__name__)
 
 
 async def send_whatsapp_message(
