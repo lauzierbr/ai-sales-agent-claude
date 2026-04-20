@@ -9,6 +9,8 @@ Ferramentas expostas ao modelo:
   - confirmar_pedido_em_nome_de: cria pedido em nome de qualquer cliente (DP-03)
   - relatorio_vendas: relatório GMV por período (hoje/semana/mes/30d)
   - clientes_inativos: lista clientes sem pedido nos últimos N dias
+  - listar_pedidos_por_status: lista pedidos filtrando por status (pendente/confirmado/cancelado)
+  - aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes em lote
 
 Segurança:
   - Acesso irrestrito — gestor vê todos os clientes do tenant
@@ -30,6 +32,7 @@ from src.agents.config import AgentGestorConfig
 from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import Gestor, Mensagem, Persona
+from src.orders.repo import OrderRepo
 from src.orders.service import OrderService
 from src.orders.types import CriarPedidoInput, ItemPedidoInput
 from src.orders.runtime.pdf_generator import PDFGenerator
@@ -157,6 +160,55 @@ _TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "aprovar_pedidos",
+        "description": (
+            "Aprova (confirma) um ou mais pedidos pendentes. "
+            "Status muda de 'pendente' para 'confirmado'. "
+            "Use quando o gestor pedir para aprovar ou confirmar pedidos já existentes. "
+            "Retorna o resultado de cada pedido individualmente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pedido_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Lista de IDs dos pedidos a aprovar.",
+                },
+            },
+            "required": ["pedido_ids"],
+        },
+    },
+    {
+        "name": "listar_pedidos_por_status",
+        "description": (
+            "Lista pedidos do tenant filtrando por status e/ou período. "
+            "Status disponíveis: pendente, confirmado, cancelado. "
+            "Use dias para controlar o período (padrão 30, máximo 365). "
+            "Use quando o gestor perguntar sobre pedidos pendentes, confirmados ou histórico."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["pendente", "confirmado", "cancelado"],
+                    "description": "Filtro por status. Omita para listar todos.",
+                },
+                "dias": {
+                    "type": "integer",
+                    "description": "Janela de dias para busca. Padrão: 30. Ex: 60 para últimos 60 dias.",
+                    "default": 30,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de pedidos a retornar. Padrão: 20.",
+                    "default": 20,
+                },
+            },
+        },
+    },
 ]
 
 
@@ -179,6 +231,7 @@ class AgentGestor:
         redis_client: Any | None = None,
         cliente_b2b_repo: ClienteB2BRepo | None = None,
         relatorio_repo: RelatorioRepo | None = None,
+        order_repo: OrderRepo | None = None,
     ) -> None:
         """Inicializa AgentGestor com dependências injetadas.
 
@@ -204,6 +257,7 @@ class AgentGestor:
         self._redis = redis_client
         self._cliente_b2b_repo = cliente_b2b_repo or ClienteB2BRepo()
         self._relatorio_repo = relatorio_repo or RelatorioRepo()
+        self._order_repo = order_repo or OrderRepo()
 
     async def responder(
         self,
@@ -250,13 +304,33 @@ class AgentGestor:
             client = self._get_anthropic_client()
 
             for iteration in range(self._config.max_iterations):
-                response = await client.messages.create(
-                    model=self._config.model,
-                    max_tokens=self._config.max_tokens,
-                    system=system_prompt,
-                    tools=_TOOLS,
-                    messages=messages,
-                )
+                try:
+                    response = await client.messages.create(
+                        model=self._config.model,
+                        max_tokens=self._config.max_tokens,
+                        system=system_prompt,
+                        tools=_TOOLS,
+                        messages=messages,
+                    )
+                except Exception as api_exc:
+                    err_str = str(api_exc)
+                    if "400" in err_str and ("tool_use_id" in err_str or "tool_result" in err_str):
+                        log.warning(
+                            "agent_gestor_historico_corrompido_recovery",
+                            tenant_id=tenant.id,
+                            error=err_str[:120],
+                        )
+                        await self._limpar_historico_redis(tenant.id, numero)
+                        messages = [{"role": "user", "content": mensagem.texto}]
+                        response = await client.messages.create(
+                            model=self._config.model,
+                            max_tokens=self._config.max_tokens,
+                            system=system_prompt,
+                            tools=_TOOLS,
+                            messages=messages,
+                        )
+                    else:
+                        raise
 
                 if response.stop_reason == "end_turn":
                     for block in response.content:
@@ -266,7 +340,9 @@ class AgentGestor:
                     break
 
                 if response.stop_reason == "tool_use":
-                    messages.append({"role": "assistant", "content": response.content})
+                    # model_dump() converte SDK objects para dicts — necessário para
+                    # serialização correta no Redis e reenvio à API na próxima iteração
+                    messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
 
                     tool_results = []
                     for block in response.content:
@@ -380,6 +456,22 @@ class AgentGestor:
         if tool_name == "clientes_inativos":
             return await self._clientes_inativos(
                 dias=tool_input.get("dias", 30),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "listar_pedidos_por_status":
+            return await self._listar_pedidos_por_status(
+                status=tool_input.get("status"),
+                dias=tool_input.get("dias", 30),
+                limit=tool_input.get("limit", 20),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "aprovar_pedidos":
+            return await self._aprovar_pedidos(
+                pedido_ids=tool_input.get("pedido_ids", []),
                 tenant_id=tenant.id,
                 session=session,
             )
@@ -557,6 +649,58 @@ class AgentGestor:
             session=session,
         )
 
+    async def _listar_pedidos_por_status(
+        self,
+        status: str | None,
+        dias: int,
+        limit: int,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> list[dict]:
+        pedidos = await self._order_repo.listar_por_tenant_status(
+            tenant_id=tenant_id,
+            status=status,
+            limit=limit,
+            session=session,
+            dias=dias,
+        )
+        return [
+            {
+                "id": p["id"],
+                "cliente_nome": p["cliente_nome"],
+                "total_estimado": str(p["total_estimado"]),
+                "status": p["status"],
+                "criado_em": p["criado_em"].strftime("%d/%m/%Y %H:%M") if p["criado_em"] else None,
+            }
+            for p in pedidos
+        ]
+
+    async def _aprovar_pedidos(
+        self,
+        pedido_ids: list[str],
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        """Aprova em lote pedidos pendentes do tenant."""
+        aprovados = []
+        nao_encontrados = []
+        for pedido_id in pedido_ids:
+            resultado = await self._order_repo.aprovar_pedido(
+                tenant_id=tenant_id,
+                pedido_id=pedido_id,
+                session=session,
+            )
+            if resultado:
+                aprovados.append(pedido_id)
+            else:
+                nao_encontrados.append(pedido_id)
+        await session.commit()
+        return {
+            "aprovados": aprovados,
+            "nao_encontrados": nao_encontrados,
+            "total_aprovados": len(aprovados),
+        }
+
     def _get_anthropic_client(self) -> Any:
         if self._anthropic is not None:
             return self._anthropic
@@ -592,3 +736,12 @@ class AgentGestor:
             await self._redis.set(key, json.dumps(trimmed, default=str), ex=self._config.redis_ttl)
         except Exception as exc:
             log.warning("agent_gestor_redis_save_erro", error=str(exc))
+
+    async def _limpar_historico_redis(self, tenant_id: str, numero: str) -> None:
+        if self._redis is None:
+            return
+        try:
+            key = f"hist:gestor:{tenant_id}:{numero}"
+            await self._redis.delete(key)
+        except Exception as exc:
+            log.warning("agent_gestor_redis_clear_erro", error=str(exc))

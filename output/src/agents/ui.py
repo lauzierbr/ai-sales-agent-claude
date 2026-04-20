@@ -7,6 +7,7 @@ Decisão D022: validação HMAC-SHA256 + resposta 200 imediata + BackgroundTask.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any
 
@@ -17,6 +18,7 @@ from fastapi.responses import JSONResponse
 from src.agents.service import (
     mark_message_as_read,
     send_typing_indicator,
+    send_typing_stop,
     validate_webhook_signature,
 )
 from src.agents.types import WebhookPayload
@@ -57,6 +59,13 @@ async def webhook_whatsapp(
         payload = WebhookPayload.model_validate_json(body)
     except Exception as exc:
         log.warning("webhook_payload_invalido", error=str(exc))
+        return JSONResponse({"status": "received"})
+
+    # Só processa MESSAGES_UPSERT — outros eventos são descartados para evitar loops.
+    # Evolution API v1 usa "MESSAGES_UPSERT"; v2 usa "messages.upsert" (lowercase+dot).
+    _UPSERT_EVENTS = {"MESSAGES_UPSERT", "messages.upsert"}
+    if payload.event not in _UPSERT_EVENTS:
+        log.debug("webhook_evento_ignorado", tipo_evento=payload.event)
         return JSONResponse({"status": "received"})
 
     # Processamento em background — resposta não é bloqueada
@@ -128,6 +137,20 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
         log.error("process_message_parse_erro", error=str(exc))
         return
 
+    # Deduplicação antecipada por message_id via Redis (evita eco do Twilio sandbox
+    # e reentregas de webhook sob alta carga). TTL=300s é suficiente — mensagens
+    # legítimas nunca chegam duas vezes com o mesmo ID dentro de 5 minutos.
+    raw_message_id = payload.data.get("key", {}).get("id", "")
+    if raw_message_id and _redis is not None:
+        dedup_key = f"webhook:dedup:{payload.instance}:{raw_message_id}"
+        try:
+            already_seen = await _redis.set(dedup_key, "1", nx=True, ex=300)
+            if not already_seen:
+                log.debug("webhook_dedup_ignorado", message_id=raw_message_id, instance=payload.instance)
+                return
+        except Exception:
+            pass  # Redis indisponível → processa normalmente
+
     async with factory() as session:
         # 1. Resolve tenant via instancia
         instancia = await get_instancia(payload.instance, session)
@@ -175,11 +198,14 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             from_number_hash=from_hash,
         )
 
-        # 4b. Feedback visual: "digitando..." enquanto o agente processa
-        await send_typing_indicator(
-            instancia_id=payload.instance,
-            remote_jid=mensagem.de,
-            duration_ms=8000,
+        # 4b. Feedback visual: "digitando..." — fire-and-forget, não bloqueia o agente.
+        # WhatsApp apaga o indicador sozinho quando a mensagem chega.
+        asyncio.create_task(
+            send_typing_indicator(
+                instancia_id=payload.instance,
+                remote_jid=mensagem.de,
+                duration_ms=30000,
+            )
         )
 
         # 5. Chama agente correspondente
@@ -281,4 +307,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                 tenant_id=tenant_id,
                 persona=persona.value,
                 error=str(exc),
+            )
+            # Apaga o indicador só em falha — em sucesso o WhatsApp limpa sozinho.
+            asyncio.create_task(
+                send_typing_stop(
+                    instancia_id=payload.instance,
+                    remote_jid=mensagem.de,
+                )
             )

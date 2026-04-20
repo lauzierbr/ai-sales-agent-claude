@@ -7,6 +7,8 @@ Ferramentas expostas ao modelo:
   - buscar_produtos: busca semântica no catálogo
   - buscar_clientes_carteira: busca clientes da carteira do representante
   - confirmar_pedido_em_nome_de: cria pedido em nome de um cliente da carteira
+  - listar_pedidos_carteira: lista pedidos dos clientes da carteira do rep
+  - aprovar_pedidos_carteira: aprova pedidos pendentes de clientes da carteira
 
 Memória:
   - Redis: histórico de conversa (TTL 24h, máx 20 mensagens)
@@ -30,6 +32,7 @@ from src.agents.config import AgentRepConfig
 from src.agents.repo import ClienteB2BRepo, ConversaRepo
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import Mensagem, Persona, Representante
+from src.orders.repo import OrderRepo
 from src.orders.service import OrderService
 from src.orders.types import CriarPedidoInput, ItemPedidoInput
 from src.orders.runtime.pdf_generator import PDFGenerator
@@ -78,6 +81,53 @@ _TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "aprovar_pedidos_carteira",
+        "description": (
+            "Aprova (confirma) pedidos pendentes de clientes da carteira do representante. "
+            "Rejeita pedidos de clientes fora da carteira. "
+            "Use quando o representante pedir para aprovar ou confirmar pedidos existentes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pedido_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Lista de IDs dos pedidos a aprovar.",
+                },
+            },
+            "required": ["pedido_ids"],
+        },
+    },
+    {
+        "name": "listar_pedidos_carteira",
+        "description": (
+            "Lista pedidos dos clientes da carteira do representante. "
+            "Filtra por status e/ou período (dias). Padrão: últimos 30 dias. "
+            "Use quando o representante perguntar sobre pedidos pendentes, histórico ou status de pedidos."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["pendente", "confirmado", "cancelado"],
+                    "description": "Filtro por status. Omita para listar todos.",
+                },
+                "dias": {
+                    "type": "integer",
+                    "description": "Janela de dias para busca. Padrão: 30.",
+                    "default": 30,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de pedidos a retornar. Padrão: 20.",
+                    "default": 20,
+                },
+            },
         },
     },
     {
@@ -137,6 +187,7 @@ class AgentRep:
         anthropic_client: Any | None = None,  # anthropic.AsyncAnthropic
         redis_client: Any | None = None,  # redis.asyncio.Redis
         cliente_b2b_repo: ClienteB2BRepo | None = None,
+        order_repo: OrderRepo | None = None,
     ) -> None:
         """Inicializa AgentRep com dependências injetadas.
 
@@ -150,6 +201,7 @@ class AgentRep:
             anthropic_client: cliente Anthropic assíncrono (opcional — criado internamente se None).
             redis_client: cliente Redis assíncrono (opcional — sem memória Redis se None).
             cliente_b2b_repo: repositório de clientes B2B (opcional — instanciado internamente).
+            order_repo: repositório de pedidos (opcional — instanciado internamente).
         """
         self._order_service = order_service
         self._conversa_repo = conversa_repo
@@ -160,6 +212,7 @@ class AgentRep:
         self._anthropic = anthropic_client
         self._redis = redis_client
         self._cliente_b2b_repo = cliente_b2b_repo or ClienteB2BRepo()
+        self._order_repo = order_repo or OrderRepo()
 
         # System prompt resolvido na inicialização com nome do representante
         self._system_prompt_cache: str | None = None
@@ -221,13 +274,29 @@ class AgentRep:
             client = self._get_anthropic_client()
 
             for iteration in range(self._config.max_iterations):
-                response = await client.messages.create(
-                    model=self._config.model,
-                    max_tokens=self._config.max_tokens,
-                    system=system_prompt,
-                    tools=_TOOLS,
-                    messages=messages,
-                )
+                try:
+                    response = await client.messages.create(
+                        model=self._config.model,
+                        max_tokens=self._config.max_tokens,
+                        system=system_prompt,
+                        tools=_TOOLS,
+                        messages=messages,
+                    )
+                except Exception as api_exc:
+                    err_str = str(api_exc)
+                    if "400" in err_str and ("tool_use_id" in err_str or "tool_result" in err_str):
+                        log.warning("agent_rep_historico_corrompido_recovery", error=err_str[:120])
+                        await self._limpar_historico_redis(tenant.id, numero)
+                        messages = [{"role": "user", "content": mensagem.texto}]
+                        response = await client.messages.create(
+                            model=self._config.model,
+                            max_tokens=self._config.max_tokens,
+                            system=system_prompt,
+                            tools=_TOOLS,
+                            messages=messages,
+                        )
+                    else:
+                        raise
 
                 if response.stop_reason == "end_turn":
                     for block in response.content:
@@ -237,7 +306,7 @@ class AgentRep:
                     break
 
                 if response.stop_reason == "tool_use":
-                    messages.append({"role": "assistant", "content": response.content})
+                    messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
 
                     tool_results = []
                     for block in response.content:
@@ -393,6 +462,15 @@ class AgentRep:
         except Exception as exc:
             log.warning("redis_salvar_erro", tenant_id=tenant_id, error=str(exc))
 
+    async def _limpar_historico_redis(self, tenant_id: str, numero: str) -> None:
+        if self._redis is None:
+            return
+        try:
+            key = f"conv:{tenant_id}:{numero}"
+            await self._redis.delete(key)
+        except Exception as exc:
+            log.warning("agent_rep_redis_clear_erro", error=str(exc))
+
     async def _executar_ferramenta(
         self,
         tool_name: str,
@@ -426,6 +504,22 @@ class AgentRep:
         if tool_name == "buscar_clientes_carteira":
             return await self._buscar_clientes_carteira(
                 query=tool_input.get("query", ""),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "aprovar_pedidos_carteira":
+            return await self._aprovar_pedidos_carteira(
+                pedido_ids=tool_input.get("pedido_ids", []),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "listar_pedidos_carteira":
+            return await self._listar_pedidos_carteira(
+                status=tool_input.get("status"),
+                dias=tool_input.get("dias", 30),
+                limit=tool_input.get("limit", 20),
                 tenant_id=tenant.id,
                 session=session,
             )
@@ -545,6 +639,84 @@ class AgentRep:
                 error=str(exc),
             )
             return {"clientes": [], "erro": "Erro ao buscar clientes."}
+
+    async def _aprovar_pedidos_carteira(
+        self,
+        pedido_ids: list[str],
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        """Aprova pedidos validando que cada pedido pertence a cliente da carteira."""
+        clientes_carteira = await self._cliente_b2b_repo.listar_por_representante(
+            tenant_id=tenant_id,
+            representante_id=self._representante.id,
+            session=session,
+        )
+        ids_carteira = {c.id for c in clientes_carteira}
+
+        aprovados = []
+        recusados = []
+        nao_encontrados = []
+
+        for pedido_id in pedido_ids:
+            cliente_b2b_id = await self._order_repo.get_pedido_cliente_b2b_id(
+                tenant_id=tenant_id,
+                pedido_id=pedido_id,
+                session=session,
+            )
+            if cliente_b2b_id is None:
+                nao_encontrados.append(pedido_id)
+                continue
+            if cliente_b2b_id not in ids_carteira:
+                recusados.append(pedido_id)
+                continue
+            resultado = await self._order_repo.aprovar_pedido(
+                tenant_id=tenant_id,
+                pedido_id=pedido_id,
+                session=session,
+            )
+            if resultado:
+                aprovados.append(pedido_id)
+            else:
+                nao_encontrados.append(pedido_id)
+
+        if aprovados:
+            await session.commit()
+
+        return {
+            "aprovados": aprovados,
+            "recusados_fora_carteira": recusados,
+            "nao_encontrados": nao_encontrados,
+            "total_aprovados": len(aprovados),
+        }
+
+    async def _listar_pedidos_carteira(
+        self,
+        status: str | None,
+        dias: int,
+        limit: int,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Lista pedidos da carteira do representante filtrados por status."""
+        pedidos = await self._order_repo.listar_por_representante(
+            tenant_id=tenant_id,
+            representante_id=self._representante.id,
+            status=status,
+            limit=limit,
+            session=session,
+            dias=dias,
+        )
+        return [
+            {
+                "id": p["id"],
+                "cliente_nome": p["cliente_nome"],
+                "total_estimado": str(p["total_estimado"]),
+                "status": p["status"],
+                "criado_em": p["criado_em"].strftime("%d/%m/%Y %H:%M") if p["criado_em"] else None,
+            }
+            for p in pedidos
+        ]
 
     async def _confirmar_pedido_em_nome_de(
         self,

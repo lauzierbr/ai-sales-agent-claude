@@ -469,3 +469,19 @@ async def test_agent_cliente_buscar_produtos_sem_catalog_service(
 
     # Chamou anthropic 2x (1 tool_use + 1 end_turn)
     assert mock_anthropic.messages.create.call_count == 2
+
+
+# ─────────────────────────────────────────────
+# A_TOOL_COVERAGE — AgentCliente
+# ─────────────────────────────────────────────
+
+def test_a_tool_coverage_cliente_capacidades_anunciadas_tem_ferramenta() -> None:
+    """A_TOOL_COVERAGE: cada capacidade que o AgentCliente anuncia tem ferramenta em _TOOLS."""
+    from src.agents.runtime.agent_cliente import _TOOLS
+
+    tool_names = {t["name"] for t in _TOOLS}
+    assert "buscar_produtos" in tool_names
+    assert "confirmar_pedido" in tool_names
+    assert "listar_meus_pedidos" in tool_names, (
+        "Cliente deve poder consultar seus próprios pedidos"
+    )

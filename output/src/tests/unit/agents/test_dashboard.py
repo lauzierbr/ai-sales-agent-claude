@@ -161,7 +161,7 @@ async def test_webhook_agent_gestor_deps_nao_none() -> None:
     mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("src.agents.ui.get_instancia", new=AsyncMock(return_value=instancia)),
+        patch("src.agents.service.get_instancia", new=AsyncMock(return_value=instancia)),
         patch("src.tenants.repo.TenantRepo.get_by_id", new=AsyncMock(return_value=tenant)),
         patch("src.agents.service.IdentityRouter.resolve", new=AsyncMock(return_value=Persona.GESTOR)),
         patch("src.agents.repo.GestorRepo.get_by_telefone", new=AsyncMock(return_value=gestor)),

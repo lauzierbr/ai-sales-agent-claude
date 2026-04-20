@@ -12,7 +12,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 1 | ✅ | Produto | Infraestrutura da aplicação |
 | Sprint 2 | ✅ | Produto | Agente cliente completo |
 | Sprint 3 | ✅ | Produto | AgentRep + Hardening linguagem brasileira |
-| Sprint 4 | 🔄 | Produto | Painel do gestor |
+| Sprint 4 | ✅ | Produto | Painel do gestor |
 | Sprint 5 | 🔲 | Produto | Inteligência e escala |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
@@ -96,6 +96,28 @@ obrigatório, critérios A_SMOKE e M_INJECT no contrato.
 - Pedido em nome de cliente da carteira
 - Preço de custo e margem (visível apenas para rep)
 - Alertas proativos de clientes inativos
+
+### Sprint 4 — Gestor/Admin ✅ APROVADO — v0.5.0
+Homologado em 2026-04-20. Tag v0.5.0.
+
+Entregue:
+- AgentGestor WhatsApp: acesso irrestrito, relatórios, ranking reps, clientes inativos, pedidos por status
+- Aprovar pedidos: Gestor (todos), Rep (carteira com validação), Cliente (read-only)
+- Listar pedidos: `listar_pedidos_por_status` (Gestor), `listar_pedidos_carteira` (Rep), `listar_meus_pedidos` (Cliente)
+- Dashboard web: Jinja2 + htmx + CSS puro; 8 páginas; auth cookie JWT; KPIs tempo real (polling 30s)
+- Migration 0015: tabela `gestores` + índice `ix_pedidos_tenant_criado_em`
+- IdentityRouter: prioridade `gestores → representantes → clientes_b2b` (DP-02)
+- DP-03: `representante_id` herdado do cliente em pedidos do gestor
+- Auto-recovery Redis: detecta histórico corrompido (400 tool_use_id), limpa e retenta
+- WhatsApp formatting: blocos `*bold* + •`, sem tabelas markdown
+- Typing indicator UX: fire-and-forget start + stop explícito só em falha (sem bloquear agente)
+
+Bugs corrigidos na homologação (pós-QA):
+- Redis history corruption (orphaned tool_result) → auto-recovery
+- Capacidades anunciadas sem ferramenta → A_TOOL_COVERAGE implementado
+- Parâmetro `dias` hardcoded no SQL → Python timedelta
+- Typing indicator loop → race condition → iteração até solução correta
+- rsync --relative → scp com destino explícito
 
 ### Sprint 4 — Gestor/Admin: persona WhatsApp + dashboard web
 - **Nova persona `GESTOR`** no IdentityRouter (tabela `gestores`; prioridade sobre rep)

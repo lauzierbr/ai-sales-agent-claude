@@ -6,6 +6,7 @@ Não importa UI.
 Ferramentas expostas ao modelo:
   - buscar_produtos: busca semântica no catálogo
   - confirmar_pedido: cria pedido + gera PDF + notifica gestor/rep
+  - listar_meus_pedidos: lista pedidos do próprio cliente por status
 
 Memória:
   - Redis: histórico de conversa (TTL 24h, máx 20 mensagens)
@@ -25,6 +26,7 @@ from src.agents.config import AgentClienteConfig
 from src.agents.repo import ConversaRepo
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import IntentoPedido, ItemIntento, Mensagem, Persona
+from src.orders.repo import OrderRepo
 from src.orders.service import OrderService
 from src.orders.types import CriarPedidoInput, ItemPedidoInput
 from src.orders.runtime.pdf_generator import PDFGenerator
@@ -55,6 +57,34 @@ _TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "listar_meus_pedidos",
+        "description": (
+            "Lista os pedidos do próprio cliente filtrando por status. "
+            "Retorna apenas os pedidos deste cliente, não de outros. "
+            "Use quando o cliente perguntar sobre seus pedidos pendentes, histórico ou status de um pedido."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["pendente", "confirmado", "cancelado"],
+                    "description": "Filtro por status. Omita para listar todos.",
+                },
+                "dias": {
+                    "type": "integer",
+                    "description": "Janela de dias para busca. Padrão: 30.",
+                    "default": 30,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de pedidos a retornar. Padrão: 10.",
+                    "default": 10,
+                },
+            },
         },
     },
     {
@@ -108,6 +138,7 @@ class AgentCliente:
         catalog_service: Any | None = None,  # CatalogService — Any para evitar import circular
         anthropic_client: Any | None = None,  # anthropic.AsyncAnthropic
         redis_client: Any | None = None,  # redis.asyncio.Redis
+        order_repo: OrderRepo | None = None,
     ) -> None:
         """Inicializa AgentCliente com dependências injetadas.
 
@@ -119,6 +150,7 @@ class AgentCliente:
             catalog_service: serviço de catálogo para busca semântica (opcional).
             anthropic_client: cliente Anthropic assíncrono (opcional — criado internamente se None).
             redis_client: cliente Redis assíncrono (opcional — sem memória Redis se None).
+            order_repo: repositório de pedidos (opcional — instanciado internamente).
         """
         self._order_service = order_service
         self._conversa_repo = conversa_repo
@@ -127,6 +159,7 @@ class AgentCliente:
         self._catalog_service = catalog_service
         self._anthropic = anthropic_client
         self._redis = redis_client
+        self._order_repo = order_repo or OrderRepo()
 
     async def responder(
         self,
@@ -190,13 +223,29 @@ class AgentCliente:
             client = self._get_anthropic_client()
 
             for iteration in range(self._config.max_iterations):
-                response = await client.messages.create(
-                    model=self._config.model,
-                    max_tokens=self._config.max_tokens,
-                    system=system_prompt,
-                    tools=_TOOLS,
-                    messages=messages,
-                )
+                try:
+                    response = await client.messages.create(
+                        model=self._config.model,
+                        max_tokens=self._config.max_tokens,
+                        system=system_prompt,
+                        tools=_TOOLS,
+                        messages=messages,
+                    )
+                except Exception as api_exc:
+                    err_str = str(api_exc)
+                    if "400" in err_str and ("tool_use_id" in err_str or "tool_result" in err_str):
+                        log.warning("agent_cliente_historico_corrompido_recovery", error=err_str[:120])
+                        await self._limpar_historico_redis(tenant.id, numero)
+                        messages = [{"role": "user", "content": mensagem.texto}]
+                        response = await client.messages.create(
+                            model=self._config.model,
+                            max_tokens=self._config.max_tokens,
+                            system=system_prompt,
+                            tools=_TOOLS,
+                            messages=messages,
+                        )
+                    else:
+                        raise
 
                 if response.stop_reason == "end_turn":
                     # Extrai texto da resposta final
@@ -207,8 +256,7 @@ class AgentCliente:
                     break
 
                 if response.stop_reason == "tool_use":
-                    # Appenda bloco tool_use ao histórico
-                    messages.append({"role": "assistant", "content": response.content})
+                    messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
 
                     # Executa cada ferramenta solicitada
                     tool_results = []
@@ -352,6 +400,15 @@ class AgentCliente:
         except Exception as exc:
             log.warning("redis_salvar_erro", tenant_id=tenant_id, error=str(exc))
 
+    async def _limpar_historico_redis(self, tenant_id: str, numero: str) -> None:
+        if self._redis is None:
+            return
+        try:
+            key = f"conv:{tenant_id}:{numero}"
+            await self._redis.delete(key)
+        except Exception as exc:
+            log.warning("agent_cliente_redis_clear_erro", error=str(exc))
+
     async def _executar_ferramenta(
         self,
         tool_name: str,
@@ -386,6 +443,18 @@ class AgentCliente:
                 session=session,
             )
 
+        if tool_name == "listar_meus_pedidos":
+            if not cliente_b2b_id:
+                return {"erro": "Cliente não identificado — não é possível listar pedidos."}
+            return await self._listar_meus_pedidos(
+                status=tool_input.get("status"),
+                dias=tool_input.get("dias", 30),
+                limit=tool_input.get("limit", 10),
+                tenant_id=tenant.id,
+                cliente_b2b_id=cliente_b2b_id,
+                session=session,
+            )
+
         if tool_name == "confirmar_pedido":
             return await self._confirmar_pedido(
                 tool_input=tool_input,
@@ -399,6 +468,34 @@ class AgentCliente:
 
         log.warning("ferramenta_desconhecida", tool_name=tool_name)
         return {"erro": f"Ferramenta desconhecida: {tool_name}"}
+
+    async def _listar_meus_pedidos(
+        self,
+        status: str | None,
+        dias: int,
+        limit: int,
+        tenant_id: str,
+        cliente_b2b_id: str,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Lista pedidos do próprio cliente filtrados por status."""
+        pedidos = await self._order_repo.listar_por_cliente(
+            tenant_id=tenant_id,
+            cliente_b2b_id=cliente_b2b_id,
+            status=status,
+            limit=limit,
+            session=session,
+            dias=dias,
+        )
+        return [
+            {
+                "id": p["id"],
+                "total_estimado": str(p["total_estimado"]),
+                "status": p["status"],
+                "criado_em": p["criado_em"].strftime("%d/%m/%Y %H:%M") if p["criado_em"] else None,
+            }
+            for p in pedidos
+        ]
 
     async def _buscar_produtos(
         self,

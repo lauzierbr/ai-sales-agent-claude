@@ -408,6 +408,58 @@ Falhas novas introduzidas na correção: [lista, se houver]
 - Dar uma "terceira chance" informal ao Generator sem aprovação do usuário
 - Considerar "fora do escopo" a verificação de smoke gate ou testes staging
   quando o sprint toca Runtime ou UI — esses checks são Alta, não opcionais
+- **Aprovar um agente conversacional sem ter testado pelo menos uma conversa
+  multi-turn onde uma tool call ocorre e o usuário faz uma pergunta de
+  follow-up na mesma sessão — esse padrão é o uso real e expõe bugs de
+  serialização de histórico invisíveis em testes isolados**
+- **Aprovar um agente sem verificar que cada capacidade anunciada no
+  system prompt/saudação tem uma ferramenta correspondente e um teste
+  que a exercita end-to-end**
+
+---
+
+## Lição aprendida — Sprint 4
+
+A homologação do Sprint 4 encontrou bugs críticos que passaram pelo Evaluator:
+
+1. **Serialização de tool_use blocks.** `response.content` do SDK Anthropic
+   são objetos Python (`TextBlock`, `ToolUseBlock`). Salvar com
+   `json.dumps(..., default=str)` os converte para strings. Na próxima
+   mensagem, a API recebe strings onde espera dicts e retorna erro 400.
+   **Correção:** sempre usar `[b.model_dump() for b in response.content]`
+   antes de appender ao histórico.
+   **Por que o Evaluator não pegou:** os testes unitários e staging testaram
+   cada tool call isolada. Nenhum teste simulou uma conversa onde o usuário
+   faz uma tool call e depois faz uma segunda pergunta na mesma sessão.
+
+2. **Capacidades anunciadas sem ferramenta correspondente.** O AgentGestor
+   anuncia "fechar pedidos, buscar produtos, relatórios, clientes inativos"
+   mas não tem ferramenta para listar pedidos pendentes. O usuário real
+   pediu isso e o bot falhou silenciosamente.
+   **Por que o Evaluator não pegou:** o checklist de homologação testou cada
+   capacidade isolada, nunca verificou se o system prompt prometia algo que
+   as ferramentas não entregavam.
+
+**Obrigações adicionais a partir do Sprint 4:**
+
+Para todo sprint com agente conversacional, o contrato DEVE incluir:
+
+```
+A_MULTITURN. Conversa multi-turn com tool call seguida de follow-up
+  Teste: staging — enviar mensagem 1 que aciona tool, enviar mensagem 2
+         de follow-up na mesma sessão, verificar que a segunda resposta
+         é coerente (não erro 400 da API)
+  Evidência esperada: ambas as mensagens recebem resposta; sem erro 400
+
+A_TOOL_COVERAGE. Cobertura de ferramentas vs. system prompt
+  Teste: ler system prompt/saudação do agente, listar capacidades
+         anunciadas, verificar que cada uma tem tool definida E teste
+         que a exercita end-to-end
+  Evidência esperada: zero capacidades anunciadas sem ferramenta e sem teste
+```
+
+O Evaluator deve rejeitar qualquer contrato de agente conversacional que
+omita A_MULTITURN e A_TOOL_COVERAGE.
 
 ---
 
