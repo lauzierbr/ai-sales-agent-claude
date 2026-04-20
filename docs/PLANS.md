@@ -136,9 +136,15 @@ Bugs corrigidos na homologação (pós-QA):
   - Upload de planilha de preços
   - Configuração do agente por tenant
 
-### Sprint 5 — Inteligência e escala
+### Sprint 5 — Operações, cadastro e observabilidade LLM
+- Configuração de números de celular para os perfis (cliente, representante, gestor) via dashboard
+- Cadastro de clientes fictícios via dashboard (temporário até integração ERP)
+- Relatórios de performance por representante
+- Langfuse (auto-hospedado via Docker): instrumentação dos 3 agentes com traces por tool call, custo por conversa e avaliação de qualidade
+- Doc-gardening agent (verifica documentação vs código)
+
+### Sprints futuros (backlog)
 - Sugestão proativa por ciclo de compra
 - Push ativo WhatsApp (promoções, alertas)
-- Relatórios de performance por representante
 - Onboarding de segundo tenant
-- Doc-gardening agent (verifica documentação vs código)
+- Enriquecimento OTEL: spans filhos por tool call nos 3 agentes + dashboards Grafana de latência e taxa de erro
