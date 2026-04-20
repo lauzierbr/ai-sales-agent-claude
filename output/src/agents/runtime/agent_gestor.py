@@ -182,6 +182,29 @@ _TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "consultar_top_produtos",
+        "description": (
+            "Consulta os produtos mais vendidos no tenant por quantidade no período. "
+            "Use quando o gestor perguntar sobre ranking de produtos, mais vendidos, "
+            "top produtos ou volume de vendas por item."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dias": {
+                    "type": "integer",
+                    "description": "Período em dias para análise. Padrão: 30.",
+                    "default": 30,
+                },
+                "limite": {
+                    "type": "integer",
+                    "description": "Número máximo de produtos a retornar. Padrão: 5.",
+                    "default": 5,
+                },
+            },
+        },
+    },
+    {
         "name": "listar_pedidos_por_status",
         "description": (
             "Lista pedidos do tenant filtrando por status e/ou período. "
@@ -481,6 +504,14 @@ class AgentGestor:
                 session=session,
             )
 
+        if tool_name == "consultar_top_produtos":
+            return await self._consultar_top_produtos(
+                dias=int(tool_input.get("dias", 30)),
+                limite=int(tool_input.get("limite", 5)),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
         log.warning("agent_gestor_ferramenta_desconhecida", tool_name=tool_name)
         return {"erro": f"Ferramenta desconhecida: {tool_name}"}
 
@@ -601,6 +632,25 @@ class AgentGestor:
         except Exception as exc:
             log.error("agent_gestor_confirmar_pedido_erro", error=str(exc))
             return {"erro": f"Falha ao criar pedido: {exc}"}
+
+    async def _consultar_top_produtos(
+        self,
+        dias: int,
+        limite: int,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        try:
+            produtos = await self._relatorio_repo.top_produtos_por_periodo(
+                tenant_id=tenant_id,
+                dias=dias,
+                limite=limite,
+                session=session,
+            )
+            return {"produtos": produtos, "dias": dias, "total": len(produtos)}
+        except Exception as exc:
+            log.error("agent_gestor_top_produtos_erro", error=str(exc))
+            return {"erro": f"Falha ao consultar top produtos: {exc}"}
 
     async def _relatorio_vendas(
         self,

@@ -140,6 +140,7 @@
     Ex: `{% for item in items %}{{ loop.index }}{% endfor %}`
   category: template
   sprint: 4
+  skip_files: "output/src/tests/**/*.py"
 
 # ─────────────────────────────────────────────
 # Anthropic SDK

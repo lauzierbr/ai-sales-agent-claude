@@ -591,29 +591,33 @@ Contrato
 
 5. **Invocar o Evaluator isolado (harness v2):**
 
-   O Evaluator agora roda em contexto separado via subagent Claude Code.
-   Isso garante perspectiva adversarial sem viés do Generator. Para solicitar
-   avaliação, use o subagent diretamente ao invés de pedir ao usuário que
-   acione o Evaluator:
+   O Evaluator roda em contexto separado via subagent Claude Code, sem acesso
+   à conversa do Generator. Para garantir que o subagent avalie o código certo,
+   o handoff DEVE incluir o branch e o path do worktree.
+
+   **Mensagem exata para passar ao Evaluator:**
 
    ```
-   # No Claude Code, o Generator invoca o subagent assim:
-   # (o usuário pode fazer isso pelo menu de agents ou pelo CLI)
-   #
-   # O subagent .claude/agents/evaluator.md recebe:
-   #   - artifacts/sprint_contract.md (já gravado)
-   #   - artifacts/handoff_sprint_N.md (já gravado)
-   #   - git diff main...HEAD (contexto do código)
-   #   - Logs em /tmp/*.log (gerados pelo smoke_gate.sh N)
-   #
-   # Ao invocar, o Generator passa apenas:
-   "Avalie o Sprint N. sprint_contract.md e handoff_sprint_N.md estão
-    em artifacts/. Smoke gate passou: artifacts/smoke_gate_sprint_N.log.
-    Aguardo veredicto em artifacts/qa_sprint_N.md."
+   Você é o Evaluator isolado. Leia .claude/agents/evaluator.md.
+
+   Branch do sprint: <branch-name>           ← ex: claude/gallant-aryabhata-1aec12
+   Worktree path:    <path-absoluto>          ← ex: /repo/.claude/worktrees/gallant-...
+   Sprint:           Sprint N — <Nome>
+
+   Passo 0: confirme que está no branch <branch-name> antes de ler qualquer
+   artefato. Se não estiver, execute `git checkout <branch-name>` ou cd para
+   o worktree path acima.
+
+   sprint_contract.md e handoff_sprint_N.md estão em artifacts/.
+   Execute avaliação completa. Veredicto em artifacts/qa_sprint_N.md.
    ```
 
-   Se o usuário preferir invocar o Evaluator manualmente (modo fallback),
-   use o comando `Leia CLAUDE.md e prompts/evaluator.md. Você é o Evaluator.`
+   **Por que isso importa:** o subagent pode abrir no repo principal (branch `main`)
+   sem saber que os artefatos estão num worktree separado. Sem o branch/path,
+   ele lê o sprint_contract.md do sprint anterior e reprovará pelo motivo errado.
+
+   Se o usuário preferir invocar o Evaluator manualmente (modo fallback):
+   `Leia CLAUDE.md e prompts/evaluator.md. Você é o Evaluator.`
 
 ---
 

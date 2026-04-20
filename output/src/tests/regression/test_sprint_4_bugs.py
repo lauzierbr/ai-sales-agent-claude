@@ -109,10 +109,14 @@ def test_b6_deploy_nao_usa_rsync_relative() -> None:
     destino. O fix foi remover o flag. Reintroduzir reabre o bug.
     """
     deploy = (REPO_ROOT / "scripts" / "deploy.sh").read_text()
-    assert "rsync --relative" not in deploy, (
+    # Filtra linhas de comentário — o fix pode mencionar o bug no comentário
+    # explicativo sem que isso constitua regressão.
+    code_lines = [l for l in deploy.splitlines() if not l.strip().startswith("#")]
+    deploy_code = "\n".join(code_lines)
+    assert "rsync --relative" not in deploy_code, (
         "deploy.sh voltou a usar `rsync --relative` (B6)"
     )
-    assert "rsync -R" not in deploy, (
+    assert "rsync -R" not in deploy_code, (
         "deploy.sh usa alias `-R` de `--relative` (B6)"
     )
 
