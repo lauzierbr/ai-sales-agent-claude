@@ -589,8 +589,63 @@ Contrato
    - Preencher os detalhes técnicos das pré-condições
    - Confirmar que smoke gate está passando
 
-5. Comunicar ao Evaluator: *"Implementação concluída. Checklist de auto-avaliação
-   passou. Smoke gate passando. Artefatos em artifacts/. Aguardo avaliação."*
+5. **Invocar o Evaluator isolado (harness v2):**
+
+   O Evaluator agora roda em contexto separado via subagent Claude Code.
+   Isso garante perspectiva adversarial sem viés do Generator. Para solicitar
+   avaliação, use o subagent diretamente ao invés de pedir ao usuário que
+   acione o Evaluator:
+
+   ```
+   # No Claude Code, o Generator invoca o subagent assim:
+   # (o usuário pode fazer isso pelo menu de agents ou pelo CLI)
+   #
+   # O subagent .claude/agents/evaluator.md recebe:
+   #   - artifacts/sprint_contract.md (já gravado)
+   #   - artifacts/handoff_sprint_N.md (já gravado)
+   #   - git diff main...HEAD (contexto do código)
+   #   - Logs em /tmp/*.log (gerados pelo smoke_gate.sh N)
+   #
+   # Ao invocar, o Generator passa apenas:
+   "Avalie o Sprint N. sprint_contract.md e handoff_sprint_N.md estão
+    em artifacts/. Smoke gate passou: artifacts/smoke_gate_sprint_N.log.
+    Aguardo veredicto em artifacts/qa_sprint_N.md."
+   ```
+
+   Se o usuário preferir invocar o Evaluator manualmente (modo fallback),
+   use o comando `Leia CLAUDE.md e prompts/evaluator.md. Você é o Evaluator.`
+
+---
+
+## Deploy para staging
+
+**Nunca copie arquivos individuais** (sem `scp`, sem `rsync`). O único mecanismo
+de deploy é `git push` + `scripts/deploy.sh`.
+
+### Fluxo obrigatório (P9)
+
+```bash
+# 1. Comite tudo no branch atual
+git add -A && git commit -m "feat: Sprint N — ..."
+
+# 2. Push para o remoto
+git push origin <branch>
+
+# 3. Deploy via git checkout no destino
+./scripts/deploy.sh staging <branch>
+# ou para SHA específico:
+./scripts/deploy.sh staging abc1234
+```
+
+O `deploy.sh` faz no macmini:
+1. `git fetch --all --prune` + `git checkout -f <ref>` — garante que o destino
+   está exatamente no commit que você fez push. Sem ambiguidade de path.
+2. `docker compose up -d` + aguarda Postgres
+3. `alembic upgrade head` (com confirmação interativa do SQL preview)
+4. Reinicia uvicorn + health check
+
+**Nunca use `scp` ou `rsync` para enviar código.** Se precisar checar um
+hotfix rápido, ainda assim faça push da branch e use `deploy.sh staging <branch>`.
 
 ---
 
