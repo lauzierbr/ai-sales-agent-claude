@@ -13,6 +13,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 2 | ✅ | Produto | Agente cliente completo |
 | Sprint 3 | ✅ | Produto | AgentRep + Hardening linguagem brasileira |
 | Sprint 4 | ✅ | Produto | Painel do gestor |
+| Sprint 5-teste | ✅ | Harness | Validação harness v2 — top produtos (gates mecânicos) |
 | Sprint 5 | 🔲 | Produto | Inteligência e escala |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)

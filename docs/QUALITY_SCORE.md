@@ -31,10 +31,12 @@ Escala: ✅ Completo | 🟡 Parcial | 🔲 Não iniciado | ❌ Com débito
 | Secrets via Infisical (0 hardcode) | ✅ | Verificado Sprint 1 |
 | mypy --strict | ✅ | 0 erros — resolvido na homologação Sprint 1 |
 | Docs sincronizadas com código | 🟡 | ADRs D019-D022 atualizados (Sprint 5 doc-gardening) |
+| Harness v2 gates mecânicos | ✅ | G2/G3/G5/G7 validados — detectam 4/4 bugs sem inspeção visual (Sprint 5-teste) |
+| Smoke exit-code confiável | ✅ | `smoke_sprint_5_teste.sh` exit 1 em falha (débito R2 corrigido) |
 
 ## Tech debt tracker
 
 Ver docs/exec-plans/tech-debt-tracker.md
 
 ---
-Atualizado por: Evaluator | Sprint: 2 | Data: 2026-04-15
+Atualizado por: Evaluator | Sprint: 5-teste | Data: 2026-04-20
