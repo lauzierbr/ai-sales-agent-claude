@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.config import AgentClienteConfig
 from src.agents.repo import ConversaRepo
+from src.agents.runtime._retry import call_with_overload_retry
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import IntentoPedido, ItemIntento, Mensagem, Persona
 from src.orders.repo import OrderRepo
@@ -224,7 +225,9 @@ class AgentCliente:
 
             for iteration in range(self._config.max_iterations):
                 try:
-                    response = await client.messages.create(
+                    response = await call_with_overload_retry(
+                        client.messages.create,
+                        agent_name="cliente",
                         model=self._config.model,
                         max_tokens=self._config.max_tokens,
                         system=system_prompt,
@@ -237,7 +240,9 @@ class AgentCliente:
                         log.warning("agent_cliente_historico_corrompido_recovery", error=err_str[:120])
                         await self._limpar_historico_redis(tenant.id, numero)
                         messages = [{"role": "user", "content": mensagem.texto}]
-                        response = await client.messages.create(
+                        response = await call_with_overload_retry(
+                            client.messages.create,
+                            agent_name="cliente",
                             model=self._config.model,
                             max_tokens=self._config.max_tokens,
                             system=system_prompt,

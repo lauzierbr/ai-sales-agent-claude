@@ -463,6 +463,70 @@ omita A_MULTITURN e A_TOOL_COVERAGE.
 
 ---
 
+## Harness v2 — gates mecânicos obrigatórios (a partir do Sprint 5)
+
+A retrospectiva do Sprint 4 mostrou que o Evaluator aprovou código com 8
+bugs críticos que a homologação humana pegou em minutos. A raiz: nossos
+checks eram **procedurais** ("você deve rodar X"), não **mecânicos** (o
+pipeline executa X e grava o log como evidência).
+
+A partir do Sprint 5, **todo APROVADO exige artefatos de execução**.
+O Evaluator não pode marcar um critério como PASS sem o log correspondente
+em `artifacts/`. Se o log não existe, o critério é WARN ou FAIL — nunca PASS.
+
+### Pipeline mínimo
+
+```
+bash scripts/smoke_gate.sh <N>
+```
+
+Esse script orquestra G1..G7 e grava os logs em `/tmp/*.log`. O Evaluator
+DEVE copiar os logs relevantes para `artifacts/` do sprint antes de emitir
+o veredicto. Pipeline:
+
+| Gate | Script | O que verifica | Log |
+|------|--------|----------------|-----|
+| G1 | curl /health | App subiu e responde | stdout do smoke_gate |
+| G2 | `lint-imports` | Camadas Types→Config→Repo→Service→Runtime→UI | stdout |
+| G3 | `scripts/check_tool_coverage.py` | Toda tool em `_TOOLS` é anunciada no system prompt; toda capacidade anunciada tem tool | `/tmp/tool_cov.log` |
+| G4 | `scripts/smoke_ui.sh` | Cada rota do dashboard retorna 200 + conteúdo esperado | `/tmp/smoke_ui.log` |
+| G5 | `pytest -m unit output/src/tests/unit/` | Unit tests | `/tmp/pytest_unit.log` |
+| G6 | `pytest -m unit output/src/tests/regression/` | Bugs históricos não voltaram | `/tmp/pytest_regression.log` |
+| G7 | `scripts/smoke_sprint_<N>.sh` (opcional) | Gates específicos do sprint | `/tmp/smoke_sprint.log` |
+
+### Gates adicionais para sprints específicos
+
+- **Sprint que toca dashboard/UI** → G4 (smoke_ui.sh) é bloqueante. APROVADO sem `smoke_ui.log: ALL OK` está proibido.
+- **Sprint que toca agentes conversacionais** → além de G3, o Evaluator DEVE verificar:
+  - A_MULTITURN executado (script pytest em `tests/staging/agents/test_multiturn_conversations.py`) — log obrigatório.
+  - Channel format lint (`pytest tests/unit/agents/test_channel_format.py`) — log obrigatório.
+- **Sprint com homologação humana** → antes do handoff, rodar:
+  - `scripts/verify_homolog_preconditions.py --sprint <N>` para garantir que os cenários H1..Hk têm precondições corretas no banco. Se FAIL, o Generator NÃO pode entregar para homologação.
+
+### Bugs históricos viram regressão
+
+`output/src/tests/regression/` contém um teste por bug de homologação
+passado (B1..B8 do Sprint 4 estão lá). Novos bugs de homologação devem
+virar tests neste diretório **antes** do hotfix mergear.
+
+O Generator faz isso no workflow:
+1. Usuário reporta bug → Generator escreve `tests/regression/test_sprint_<N>_bugs.py::test_bX_...`
+2. Teste falha com a regressão.
+3. Generator aplica o fix → teste verde.
+4. Commit do hotfix obrigatoriamente inclui o teste.
+
+Ao avaliar um sprint com bugs de homologação, o Evaluator verifica
+que cada bug tem um teste novo em `tests/regression/`. Ausência = REPROVADO.
+
+### Artefato estruturado
+
+Além do `qa_sprint_N.md` (humano), o Evaluator grava `qa_sprint_N.json`
+com a lista de checks executados e logs anexados. Isso sobrevive a
+compactação de contexto — pós-compactação, outra instância do Evaluator
+lê o JSON e sabe exatamente o que já foi verificado.
+
+---
+
 ## Lição aprendida — Sprint 2
 
 A homologação do Sprint 2 encontrou 8 bugs que passaram pelo Evaluator porque:
