@@ -272,6 +272,269 @@ async def clientes(request: Request) -> Any:
     )
 
 
+@router.get("/clientes/novo", response_class=HTMLResponse)
+async def clientes_novo_get(request: Request) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    reps = await _get_representantes_simples(tenant_id)
+    return templates.TemplateResponse(
+        request, "clientes_novo.html",
+        {"reps": reps, "mensagem": None, "sucesso": None, "form": {}},
+    )
+
+
+@router.post("/clientes/novo")
+async def clientes_novo_post(request: Request) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    form = await request.form()
+    nome = str(form.get("nome", "")).strip()
+    cnpj = str(form.get("cnpj", "")).strip()
+    representante_id = str(form.get("representante_id", "")).strip() or None
+    reps = await _get_representantes_simples(tenant_id)
+    try:
+        from src.tenants.service import TenantService
+        from src.providers.db import get_session_factory
+        service = TenantService(session_factory=get_session_factory())
+        await service.criar_cliente_ficticio(
+            tenant_id=tenant_id, nome=nome, cnpj=cnpj, telefone="",
+            representante_id=representante_id,
+        )
+        return RedirectResponse(url="/dashboard/clientes", status_code=302)
+    except Exception as exc:
+        log.error("dashboard_cliente_novo_erro", error=str(exc))
+        return templates.TemplateResponse(
+            request, "clientes_novo.html",
+            {"reps": reps, "mensagem": str(exc), "sucesso": False,
+             "form": {"nome": nome, "cnpj": cnpj, "representante_id": representante_id}},
+            status_code=400,
+        )
+
+
+@router.get("/clientes/{cliente_id}/editar", response_class=HTMLResponse)
+async def clientes_editar_get(request: Request, cliente_id: str) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    cliente = await _get_cliente_by_id(tenant_id, cliente_id)
+    if cliente is None:
+        return RedirectResponse(url="/dashboard/clientes", status_code=302)
+    reps = await _get_representantes_simples(tenant_id)
+    return templates.TemplateResponse(
+        request, "clientes_editar.html",
+        {"cliente": cliente, "reps": reps, "mensagem": None, "sucesso": None},
+    )
+
+
+@router.post("/clientes/{cliente_id}/editar")
+async def clientes_editar_post(request: Request, cliente_id: str) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    form = await request.form()
+    cnpj = str(form.get("cnpj", "")).strip()
+    representante_id = str(form.get("representante_id", "")).strip() or None
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            await session.execute(
+                text("UPDATE clientes_b2b SET cnpj=:cnpj, representante_id=:rep_id WHERE id=:id AND tenant_id=:tid"),
+                {"cnpj": cnpj, "rep_id": representante_id, "id": cliente_id, "tid": tenant_id},
+            )
+            await session.commit()
+        return RedirectResponse(url="/dashboard/clientes", status_code=302)
+    except Exception as exc:
+        log.error("dashboard_cliente_editar_erro", error=str(exc))
+        cliente = await _get_cliente_by_id(tenant_id, cliente_id) or {}
+        reps = await _get_representantes_simples(tenant_id)
+        return templates.TemplateResponse(
+            request, "clientes_editar.html",
+            {"cliente": cliente, "reps": reps, "mensagem": str(exc), "sucesso": False},
+            status_code=500,
+        )
+
+
+@router.post("/clientes/{cliente_id}/remover")
+async def clientes_remover(request: Request, cliente_id: str) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            await session.execute(
+                text("UPDATE clientes_b2b SET ativo=false WHERE id=:id AND tenant_id=:tid"),
+                {"id": cliente_id, "tid": tenant_id},
+            )
+            await session.commit()
+    except Exception as exc:
+        log.error("dashboard_cliente_remover_erro", error=str(exc))
+    return RedirectResponse(url="/dashboard/clientes", status_code=302)
+
+
+# ─────────────────────────────────────────────
+# Contatos — gestores, reps e clientes unificados
+# ─────────────────────────────────────────────
+
+
+@router.get("/contatos", response_class=HTMLResponse)
+async def contatos(request: Request) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    lista = await _get_todos_contatos(tenant_id)
+    return templates.TemplateResponse(request, "contatos.html", {"contatos": lista})
+
+
+@router.get("/contatos/novo", response_class=HTMLResponse)
+async def contatos_novo_get(request: Request) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    clientes_list = await _get_clientes(tenant_id, "")
+    return templates.TemplateResponse(
+        request, "contatos_novo.html",
+        {"clientes": clientes_list, "mensagem": None, "sucesso": None, "form": {}},
+    )
+
+
+@router.post("/contatos/novo")
+async def contatos_novo_post(request: Request) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    form = await request.form()
+    perfil = str(form.get("perfil", "")).strip()
+    nome = str(form.get("nome", "")).strip()
+    telefone = str(form.get("telefone", "")).strip()
+    cliente_b2b_id = str(form.get("cliente_b2b_id", "")).strip()
+    clientes_list = await _get_clientes(tenant_id, "")
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            if perfil == "gestor":
+                await session.execute(
+                    text("INSERT INTO gestores (tenant_id, nome, telefone) VALUES (:tid, :nome, :tel)"),
+                    {"tid": tenant_id, "nome": nome, "tel": telefone},
+                )
+            elif perfil == "rep":
+                await session.execute(
+                    text("INSERT INTO representantes (tenant_id, nome, telefone) VALUES (:tid, :nome, :tel)"),
+                    {"tid": tenant_id, "nome": nome, "tel": telefone},
+                )
+            elif perfil == "cliente" and cliente_b2b_id:
+                await session.execute(
+                    text("UPDATE clientes_b2b SET telefone=:tel WHERE id=:id AND tenant_id=:tid"),
+                    {"tel": telefone, "id": cliente_b2b_id, "tid": tenant_id},
+                )
+            else:
+                raise ValueError("Selecione um perfil válido e, para Cliente, selecione o cliente.")
+            await session.commit()
+        return RedirectResponse(url="/dashboard/contatos", status_code=302)
+    except Exception as exc:
+        log.error("dashboard_contatos_novo_erro", error=str(exc))
+        return templates.TemplateResponse(
+            request, "contatos_novo.html",
+            {"clientes": clientes_list, "mensagem": str(exc), "sucesso": False,
+             "form": {"perfil": perfil, "nome": nome, "telefone": telefone}},
+            status_code=400,
+        )
+
+
+@router.get("/contatos/{perfil}/{contato_id}/editar", response_class=HTMLResponse)
+async def contatos_editar_get(request: Request, perfil: str, contato_id: str) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    contato = await _get_contato_by_id(tenant_id, perfil, contato_id)
+    if contato is None:
+        return RedirectResponse(url="/dashboard/contatos", status_code=302)
+    return templates.TemplateResponse(
+        request, "contatos_editar.html",
+        {"contato": contato, "mensagem": None, "sucesso": None},
+    )
+
+
+@router.post("/contatos/{perfil}/{contato_id}/editar")
+async def contatos_editar_post(request: Request, perfil: str, contato_id: str) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    form = await request.form()
+    nome = str(form.get("nome", "")).strip()
+    telefone = str(form.get("telefone", "")).strip()
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        table = {"gestor": "gestores", "rep": "representantes", "cliente": "clientes_b2b"}[perfil]
+        async with get_session_factory()() as session:
+            await session.execute(
+                text(f"UPDATE {table} SET nome=:nome, telefone=:tel WHERE id=:id AND tenant_id=:tid"),
+                {"nome": nome, "tel": telefone, "id": contato_id, "tid": tenant_id},
+            )
+            await session.commit()
+        return RedirectResponse(url="/dashboard/contatos", status_code=302)
+    except Exception as exc:
+        log.error("dashboard_contatos_editar_erro", error=str(exc))
+        contato = await _get_contato_by_id(tenant_id, perfil, contato_id) or {}
+        return templates.TemplateResponse(
+            request, "contatos_editar.html",
+            {"contato": contato, "mensagem": str(exc), "sucesso": False},
+            status_code=500,
+        )
+
+
+@router.post("/contatos/{perfil}/{contato_id}/remover")
+async def contatos_remover(request: Request, perfil: str, contato_id: str) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        table = {"gestor": "gestores", "rep": "representantes", "cliente": "clientes_b2b"}[perfil]
+        async with get_session_factory()() as session:
+            await session.execute(
+                text(f"UPDATE {table} SET ativo=false WHERE id=:id AND tenant_id=:tid"),
+                {"id": contato_id, "tid": tenant_id},
+            )
+            await session.commit()
+    except Exception as exc:
+        log.error("dashboard_contatos_remover_erro", error=str(exc))
+    return RedirectResponse(url="/dashboard/contatos", status_code=302)
+
+
+# ─────────────────────────────────────────────
+# Gestores
+# ─────────────────────────────────────────────
+
+
+@router.get("/gestores", response_class=HTMLResponse)
+async def gestores(request: Request) -> Any:
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+    tenant_id = session_data["tenant_id"]
+    lista = await _get_gestores(tenant_id)
+    return templates.TemplateResponse(request, "gestores.html", {"gestores": lista})
+
+
 # ─────────────────────────────────────────────
 # Representantes
 # ─────────────────────────────────────────────
@@ -603,6 +866,100 @@ async def feedbacks(request: Request) -> Any:
         "feedbacks.html",
         {"feedbacks": feedbacks_list, "perfil_filtro": perfil_filtro, "tenant_id": tenant_id},
     )
+
+
+async def _get_todos_contatos(tenant_id: str) -> list[dict]:
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("""
+                    SELECT id, nome, telefone, ativo, 'gestor' AS perfil FROM gestores
+                    WHERE tenant_id = :tid
+                    UNION ALL
+                    SELECT id, nome, telefone, ativo, 'rep' AS perfil FROM representantes
+                    WHERE tenant_id = :tid
+                    UNION ALL
+                    SELECT id, nome, telefone, ativo, 'cliente' AS perfil FROM clientes_b2b
+                    WHERE tenant_id = :tid
+                    ORDER BY nome
+                """),
+                {"tid": tenant_id},
+            )
+            return [dict(r) for r in result.mappings().all()]
+    except Exception as exc:
+        log.error("dashboard_contatos_erro", error=str(exc))
+        return []
+
+
+async def _get_contato_by_id(tenant_id: str, perfil: str, contato_id: str) -> dict | None:
+    table = {"gestor": "gestores", "rep": "representantes", "cliente": "clientes_b2b"}.get(perfil)
+    if not table:
+        return None
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text(f"SELECT id, nome, telefone, ativo FROM {table} WHERE id=:id AND tenant_id=:tid"),
+                {"id": contato_id, "tid": tenant_id},
+            )
+            row = result.mappings().first()
+            if row is None:
+                return None
+            d = dict(row)
+            d["perfil"] = perfil
+            return d
+    except Exception as exc:
+        log.error("dashboard_contato_by_id_erro", error=str(exc))
+        return None
+
+
+async def _get_gestores(tenant_id: str) -> list[dict]:
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("SELECT id, nome, telefone, ativo FROM gestores WHERE tenant_id=:tid ORDER BY nome"),
+                {"tid": tenant_id},
+            )
+            return [dict(r) for r in result.mappings().all()]
+    except Exception as exc:
+        log.error("dashboard_gestores_erro", error=str(exc))
+        return []
+
+
+async def _get_cliente_by_id(tenant_id: str, cliente_id: str) -> dict | None:
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("SELECT id, nome, cnpj, telefone, representante_id, ativo FROM clientes_b2b WHERE id=:id AND tenant_id=:tid"),
+                {"id": cliente_id, "tid": tenant_id},
+            )
+            row = result.mappings().first()
+            return dict(row) if row else None
+    except Exception as exc:
+        log.error("dashboard_cliente_by_id_erro", error=str(exc))
+        return None
+
+
+async def _get_representantes_simples(tenant_id: str) -> list[dict]:
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("SELECT id, nome FROM representantes WHERE tenant_id=:tid AND ativo=true ORDER BY nome"),
+                {"tid": tenant_id},
+            )
+            return [dict(r) for r in result.mappings().all()]
+    except Exception as exc:
+        log.error("dashboard_reps_simples_erro", error=str(exc))
+        return []
 
 
 async def _get_tenant_config(tenant_id: str) -> dict[str, Any]:

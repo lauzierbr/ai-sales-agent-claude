@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Contatos{% endblock %}
+{% block content %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+  <h1 style="margin-bottom:0">Contatos</h1>
+  <a href="/dashboard/contatos/novo" class="btn btn-primary">+ Novo Contato</a>
+</div>
+<div class="card">
+  {% if contatos %}
+  <table>
+    <thead>
+      <tr><th>Nome</th><th>Perfil</th><th>Celular</th><th>Ativo</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for c in contatos %}
+    <tr>
+      <td>{{ c.nome }}</td>
+      <td><span class="badge {% if c.perfil == 'gestor' %}badge-ok{% elif c.perfil == 'rep' %}badge-pending{% endif %}">{{ c.perfil }}</span></td>
+      <td class="text-muted">{{ c.telefone or "—" }}</td>
+      <td>{% if c.ativo %}<span class="badge badge-ok">sim</span>{% else %}<span class="badge">não</span>{% endif %}</td>
+      <td style="display:flex;gap:0.5rem">
+        <a href="/dashboard/contatos/{{ c.perfil }}/{{ c.id }}/editar" class="btn" style="padding:0.25rem 0.75rem;font-size:0.85rem">Editar</a>
+        <form method="post" action="/dashboard/contatos/{{ c.perfil }}/{{ c.id }}/remover" onsubmit="return confirm('Desativar {{ c.nome }}?')">
+          <button type="submit" class="btn" style="padding:0.25rem 0.75rem;font-size:0.85rem;background:#4d1e1e;color:var(--accent)">Remover</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Nenhum contato cadastrado.</p>
+  {% endif %}
+</div>
+{% endblock %}
