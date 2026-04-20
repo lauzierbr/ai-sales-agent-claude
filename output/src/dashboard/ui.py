@@ -543,6 +543,37 @@ async def _get_representantes_com_gmv(tenant_id: str) -> list[dict]:
         return []
 
 
+@router.get("/top-produtos", response_class=HTMLResponse)
+async def top_produtos(
+    request: Request,
+    dias: int = 30,
+    limite: int = 10,
+) -> HTMLResponse:
+    """Top produtos mais vendidos no período."""
+    session_payload = _verify_session(request)
+    if session_payload is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)  # type: ignore[return-value]
+
+    tenant_id = session_payload.get("tenant_id", _get_dashboard_tenant_id())
+
+    try:
+        from src.agents.repo import RelatorioRepo
+        from src.providers.db import get_session_factory
+
+        factory = get_session_factory()
+        async with factory() as session:
+            repo = RelatorioRepo()
+            produtos = await repo.top_produtos_por_periodo(tenant_id, dias, limite, session)
+    except Exception as exc:
+        log.error("dashboard_top_produtos_erro", error=str(exc))
+        produtos = []
+
+    ctx = {"produtos": produtos, "dias": dias, "limite": limite}
+
+    # BUG PLANTADO: TemplateResponse com API antiga (sem request como 1º arg)
+    return templates.TemplateResponse("top_produtos.html", {"request": request, **ctx})
+
+
 async def _get_tenant_config(tenant_id: str) -> dict[str, Any]:
     """Retorna configurações do tenant."""
     try:

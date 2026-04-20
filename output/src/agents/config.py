@@ -199,7 +199,8 @@ class AgentGestorConfig:
             "- relatorio_vendas: gera relatório de vendas por período.\n"
             "- clientes_inativos: lista clientes sem pedido nos últimos N dias.\n"
             "- listar_pedidos_por_status: lista pedidos filtrando por status (pendente/confirmado/cancelado).\n"
-            "- aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes. Use IDs obtidos via listar_pedidos_por_status.\n\n"
+            "- aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes. Use IDs obtidos via listar_pedidos_por_status.\n"
+            "- consultar_top_produtos: consulta top produtos mais vendidos por período.\n\n"
 
             "## Regras obrigatórias\n"
             "1. Ao fechar pedido, sempre busque o cliente via buscar_clientes para obter o ID correto.\n"

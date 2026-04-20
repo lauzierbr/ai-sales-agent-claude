@@ -762,3 +762,49 @@ class RelatorioRepo:
             for r in rows
         ]
         return sorted(items, key=lambda x: (x["ultimo_pedido_em"] is not None, x["ultimo_pedido_em"]))
+
+    async def top_produtos_por_periodo(
+        self,
+        tenant_id: str,
+        dias: int,
+        limite: int,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Retorna top produtos por quantidade vendida no período.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            dias: número de dias para o período (ex: 30 = últimos 30 dias).
+            limite: máximo de produtos a retornar.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de {produto_nome, quantidade_total, valor_total} ordenada DESC.
+        """
+        # BUG PLANTADO: INTERVAL hardcoded ignora o parâmetro `dias`
+        result = await session.execute(
+            text("""
+                SELECT
+                    ip.produto_nome                       AS produto_nome,
+                    SUM(ip.quantidade)                    AS quantidade_total,
+                    COALESCE(SUM(ip.preco_unitario * ip.quantidade), 0) AS valor_total
+                FROM itens_pedido ip
+                JOIN pedidos p ON p.id = ip.pedido_id
+                WHERE p.tenant_id = :tenant_id
+                  AND p.status = 'confirmado'
+                  AND p.criado_em >= NOW() - INTERVAL '30 days'
+                GROUP BY ip.produto_nome
+                ORDER BY quantidade_total DESC
+                LIMIT :limite
+            """),
+            {"tenant_id": tenant_id, "limite": limite},
+        )
+        rows = result.mappings().all()
+        return [
+            {
+                "produto_nome": r["produto_nome"],
+                "quantidade_total": int(r["quantidade_total"]),
+                "valor_total": r["valor_total"],
+            }
+            for r in rows
+        ]

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Top Produtos{% endblock %}
+{% block content %}
+<h1>Top Produtos</h1>
+<form method="get" action="/dashboard/top-produtos" class="search-bar">
+  <label>Período (dias):
+    <input type="number" name="dias" value="{{ dias }}" min="1" max="365" style="width:80px">
+  </label>
+  <label>Limite:
+    <input type="number" name="limite" value="{{ limite }}" min="1" max="50" style="width:60px">
+  </label>
+  <button type="submit" class="btn btn-primary">Atualizar</button>
+</form>
+<div class="card">
+  {% if produtos %}
+  <table>
+    <thead>
+      <tr>
+        <th>Posição</th>
+        <th>Produto</th>
+        <th>Qtd Total</th>
+        <th>Valor Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {# BUG PLANTADO: |enumerate não existe em Jinja2 — causa UndefinedError #}
+      {% for idx, produto in produtos|enumerate %}
+      <tr>
+        <td>{{ idx + 1 }}</td>
+        <td>{{ produto.produto_nome }}</td>
+        <td>{{ produto.quantidade_total }}</td>
+        <td>R$ {{ "%.2f"|format(produto.valor_total|float) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>Nenhum produto no período.</p>
+  {% endif %}
+</div>
+<p><a href="/dashboard">← Voltar ao início</a></p>
+{% endblock %}
