@@ -14,7 +14,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 3 | ✅ | Produto | AgentRep + Hardening linguagem brasileira |
 | Sprint 4 | ✅ | Produto | Painel do gestor |
 | Sprint 5-teste | ✅ | Harness | Validação harness v2 — top produtos (gates mecânicos) |
-| Sprint 5 | 🔲 | Produto | Inteligência e escala |
+| Sprint 5 | 🔄 | Produto | Observabilidade LLM, configurações e relatórios |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 
