@@ -76,20 +76,32 @@ Se encontrar um ADR ausente:
 Quando o sprint introduzir uma integração nova com biblioteca externa, driver
 de banco ou API de terceiro, inclua uma seção `## Gotchas conhecidos` no spec.
 
-Exemplos do histórico do projeto que **devem ser referenciados se o sprint
-tocar as mesmas áreas:**
+**Fonte primária:** `docs/GOTCHAS.yaml` — registro machine-readable, atualizado a
+cada sprint. Para gerar a tabela atualizada para o spec:
+
+```bash
+python scripts/check_gotchas.py --markdown
+```
+
+Também rode `check_gotchas.py --sprint N` para ver gotchas descobertos em cada
+sprint. Novos gotchas encontrados em homologação devem ser adicionados ao
+`docs/GOTCHAS.yaml` **antes** de mergear o hotfix.
+
+**Tabela resumida (últimas 4 categorias):** ver `docs/GOTCHAS.yaml` para lista
+completa com padrões de lint automático.
 
 | Área | Gotcha | Workaround |
 |------|--------|------------|
-| asyncpg + pgvector | `ORDER BY` com expressão vetorial em prepared statements retorna 0 rows silenciosamente | Fetch all sem `ORDER BY`/`LIMIT`, sort em Python |
-| asyncpg + pgvector | `CAST(:param AS vector)` falha na inferência de tipo | Interpolar a string do vetor diretamente no SQL (f-string) |
-| SQLAlchemy AsyncSession | `async with factory() as session` não faz auto-commit | Chamar `await session.commit()` explicitamente após qualquer escrita |
-| fpdf2 2.x | `pdf.output()` retorna `bytearray`, não `bytes` | Encapsular em `bytes(pdf.output())` |
-| Evolution API webhook | Não assina com HMAC — envia token simples no header | Comparação de token com `hmac.compare_digest`, não verificação de assinatura |
-| Evolution API webhook | Envia webhook para mensagens de saída (`fromMe=True`) | Ignorar mensagens `fromMe=True` em `parse_mensagem` |
+| asyncpg + pgvector | `ORDER BY` com expressão vetorial retorna 0 rows silenciosamente | Fetch all sem `ORDER BY`, sort em Python |
+| asyncpg + pgvector | `CAST(:param AS vector)` falha em queries de busca | Interpolar f-string `'{vec}'::vector` |
+| fpdf2 2.x | `pdf.output()` retorna `bytearray` | `bytes(pdf.output())` |
+| Starlette 1.0 | `TemplateResponse("name", {ctx})` — API mudou | `TemplateResponse(request, "name", ctx)` |
+| Jinja2 | Filter `\|enumerate` não existe | `loop.index` ou `loop.index0` |
+| Anthropic SDK | `response.content` são objetos, não dicts | `[b.model_dump() for b in response.content]` |
+| SQL período | `INTERVAL '30 days'` hardcoded | `timedelta(days=dias)` em Python |
 
 Se o sprint introduzir nova integração, o Planner deve pesquisar gotchas
-conhecidos da biblioteca/API e documentá-los no spec antes de passar ao Generator.
+conhecidos da biblioteca/API e documentá-los no spec E em `docs/GOTCHAS.yaml`.
 
 ---
 

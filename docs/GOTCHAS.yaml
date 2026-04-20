@@ -1,0 +1,192 @@
+# GOTCHAS.yaml — Registro machine-readable de gotchas do projeto
+#
+# P10 do harness v2: substitui a tabela manual em prompts/planner.md.
+# scripts/check_gotchas.py percorre o código-fonte e falha em exit 1
+# se qualquer `pattern` for encontrado.
+#
+# Fluxo:
+#   - Quando um novo gotcha é descoberto em produção/homologação, adicione
+#     uma entrada aqui ANTES de mergear o hotfix.
+#   - O Planner referencia este arquivo ao gerar o spec; a tabela em
+#     prompts/planner.md é gerada a partir daqui (ver check_gotchas.py --list).
+#   - check_gotchas.py pode ser adicionado ao pre-commit hook.
+#
+# Campos obrigatórios:
+#   id:          identificador único snake_case
+#   pattern:     regex Python (busca em src/**/*.py e src/**/*.html)
+#   description: o que dá errado se o padrão estiver presente
+#   fix:         como corrigir
+#   category:    runtime | serialization | sql | api | template | deploy
+#
+# Campos opcionais:
+#   sprint:      sprint onde foi descoberto
+#   files:       glob de arquivos onde aplicar (omitir = todos)
+#   skip_files:  glob de arquivos a ignorar (ex: testes que testam o gotcha)
+
+# ─────────────────────────────────────────────
+# asyncpg + pgvector
+# ─────────────────────────────────────────────
+
+- id: asyncpg_pgvector_order_by_vector
+  pattern: 'ORDER BY.*<->|<->.*ORDER BY'
+  description: >
+    asyncpg + pgvector: ORDER BY com expressão vetorial em prepared statements
+    retorna 0 rows silenciosamente (bug de inferência de tipo).
+  fix: >
+    Fetch all sem ORDER BY/LIMIT, sort em Python:
+    `sorted(rows, key=lambda r: r["dist"])[:limit]`
+  category: sql
+  sprint: 1
+
+- id: asyncpg_pgvector_cast_param
+  pattern: "CAST\\(:[a-z_]+ AS vector\\)"
+  description: >
+    asyncpg + pgvector: CAST(:param AS vector) em SELECT/WHERE falha na
+    inferência de tipo — retorna erro ou 0 rows.
+    Nota: em UPDATE SET (salvar embedding) funciona normalmente.
+  fix: >
+    Em queries de busca, interpolar a string do vetor diretamente:
+    `f"... <-> '[{','.join(map(str, vec))}]'::vector"`
+  category: sql
+  sprint: 1
+  skip_files: "output/src/catalog/repo.py"
+
+# ─────────────────────────────────────────────
+# SQLAlchemy AsyncSession
+# ─────────────────────────────────────────────
+
+- id: sqlalchemy_async_no_autocommit
+  pattern: 'ESTE_GOTCHA_NAO_TEM_LINT_AUTOMATICO_VER_DESCRICAO'
+  description: >
+    SQLAlchemy AsyncSession: `async with factory() as session` NÃO faz
+    auto-commit. Writes silenciosamente descartados se commit ausente.
+    Verificação manual: toda função de repo que escreve deve ter
+    `await session.commit()` explícito.
+  fix: >
+    Sempre chamar `await session.commit()` explicitamente após qualquer escrita.
+    O Evaluator verifica isso inspecionando o código, não por lint automático.
+  category: sql
+  sprint: 1
+
+# ─────────────────────────────────────────────
+# fpdf2
+# ─────────────────────────────────────────────
+
+- id: fpdf2_output_bytearray
+  pattern: '(?<!bytes\()pdf\.output\(\)(?!\s*\))'
+  description: >
+    fpdf2 2.x: `pdf.output()` retorna `bytearray`, não `bytes`.
+    Passar para API que espera `bytes` causa TypeError silencioso.
+    (O pattern detecta chamadas sem o wrapper `bytes(...)`)
+  fix: >
+    Encapsular: `bytes(pdf.output())`
+  category: runtime
+  sprint: 2
+
+# ─────────────────────────────────────────────
+# Evolution API webhook
+# ─────────────────────────────────────────────
+
+- id: evolution_webhook_no_hmac
+  pattern: 'ESTE_GOTCHA_NAO_TEM_LINT_AUTOMATICO_VER_DESCRICAO'
+  description: >
+    Evolution API webhook não assina com HMAC — envia token simples no header.
+    Verificação manual: função de verificação deve usar `hmac.compare_digest`
+    diretamente (sem computar HMAC-SHA256), ou suportar ambos os modos.
+  fix: >
+    Modo primário: `hmac.compare_digest(stored_token, received_token)`.
+    Fallback HMAC-SHA256 é defensivo (para versões futuras da Evolution API).
+  category: api
+  sprint: 2
+
+- id: evolution_webhook_from_me
+  pattern: 'ESTE_GOTCHA_NAO_TEM_LINT_AUTOMATICO_VER_DESCRICAO'
+  description: >
+    Evolution API webhook envia eventos para mensagens de saída (fromMe=True).
+    Processar esses eventos sem guard causa loop infinito.
+    Verificação manual: `parse_mensagem` deve ter `if key.get("fromMe", False): return None`.
+  fix: >
+    Em `parse_mensagem`, guard obrigatório:
+    `if key.get("fromMe", False): return None`
+  category: api
+  sprint: 2
+
+# ─────────────────────────────────────────────
+# Starlette / FastAPI templates
+# ─────────────────────────────────────────────
+
+- id: starlette_template_response_old_api
+  pattern: 'TemplateResponse\(\s*"[^"]+"\s*,\s*\{'
+  description: >
+    Starlette 1.0 mudou a API de TemplateResponse: `request` deve ser o
+    1º argumento posicional. A API antiga `TemplateResponse("name.html", {context})`
+    levanta TypeError silencioso ou passa request errado.
+  fix: >
+    `templates.TemplateResponse(request, "name.html", {"key": val})`
+  category: runtime
+  sprint: 4
+
+# ─────────────────────────────────────────────
+# Jinja2
+# ─────────────────────────────────────────────
+
+- id: jinja2_enumerate_filter
+  pattern: '\|\s*enumerate'
+  description: >
+    Jinja2 não tem filter `|enumerate`. Usar em template levanta UndefinedError
+    em runtime — o servidor retorna 500.
+  fix: >
+    Usar `loop.index0` (0-based) ou `loop.index` (1-based) dentro do for.
+    Ex: `{% for item in items %}{{ loop.index }}{% endfor %}`
+  category: template
+  sprint: 4
+
+# ─────────────────────────────────────────────
+# Anthropic SDK
+# ─────────────────────────────────────────────
+
+- id: anthropic_content_json_serialize
+  pattern: 'json\.dumps.*response\.content|json\.dumps.*default=str.*content'
+  description: >
+    `response.content` do SDK Anthropic são objetos Python (TextBlock,
+    ToolUseBlock). Serializar com `json.dumps(..., default=str)` os converte
+    para strings. Na próxima mensagem da conversa, a API recebe strings
+    onde espera dicts → erro 400 silencioso.
+  fix: >
+    Sempre usar `[b.model_dump() for b in response.content]` antes de
+    appender ao histórico.
+  category: serialization
+  sprint: 4
+  skip_files: "output/src/tests/**/*.py"
+
+# ─────────────────────────────────────────────
+# structlog
+# ─────────────────────────────────────────────
+
+- id: structlog_event_reserved
+  pattern: 'log\.(info|warning|error|debug)\([^)]*event\s*='
+  description: >
+    structlog reserva o kwarg `event=` — passá-lo como keyword arg causa
+    TypeError: "event is a reserved keyword argument".
+  fix: >
+    Passar o evento como 1º argumento posicional:
+    `log.info("meu_evento", chave=valor)` — NÃO `log.info(event="meu_evento")`
+  category: runtime
+  sprint: 4
+  skip_files: "output/src/tests/**/*.py"
+
+# ─────────────────────────────────────────────
+# SQL — parâmetros de período
+# ─────────────────────────────────────────────
+
+- id: sql_hardcoded_interval
+  pattern: "INTERVAL '\\d+ days'"
+  description: >
+    Parâmetro de período hardcoded em SQL INTERVAL ignora silenciosamente
+    filtros de período passados pelo usuário.
+  fix: >
+    Receber `dias: int`, computar em Python:
+    `data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)`
+    e passar como parâmetro para o SQL.
+  category: sql
+  sprint: 4
