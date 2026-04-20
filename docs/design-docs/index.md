@@ -29,6 +29,7 @@ Log de decisões técnicas. Atualizar sempre que uma nova decisão for tomada.
 | D021 | Auth JWT: PyJWT + HS256, access token 8h, sem refresh em Sprint 1 | Sprint 1 | ok |
 | D022 | Auth scope: TenantProvider via X-Tenant-ID; JWT apenas para ações privilegiadas; webhook via HMAC-SHA256 | Sprint 1 | ok |
 | D023 | Dashboard web: Jinja2+htmx+CSS puro, auth via DASHBOARD_SECRET + cookie HttpOnly JWT | Sprint 4 | ok |
+| D024 | Langfuse v2 self-hosted Docker para observabilidade LLM | Sprint 5 | ok |
 
 ---
 
@@ -147,6 +148,26 @@ trocar. Mitigado em Sprint 5 com auth por usuário. Para piloto JMB (1 gestor = 
 Lauzier), é aceitável.
 
 **Variáveis Infisical:** `DASHBOARD_SECRET` e `DASHBOARD_TENANT_ID` (development + staging).
+
+---
+
+## D024 — Langfuse v2 self-hosted Docker para observabilidade LLM
+
+**Contexto:** Sprint 5 requer traces por conversa, custo por token e avaliação de qualidade dos 3 agentes (AgentCliente, AgentRep, AgentGestor). Sem observabilidade LLM, não é possível auditar custos nem detectar respostas ruins em produção.
+
+**Alternativas avaliadas:**
+- **Langfuse Cloud (free tier):** mais rápido de configurar; sem infra extra; mas dados saem da máquina local e free tier tem limites de volume.
+- **OTEL customizado:** já temos OTEL (VictoriaMetrics), mas sem UI de traces LLM e custo de token.
+- **Phoenix (Arize):** alternativa open-source; menos madura que Langfuse para integração com Anthropic SDK.
+- **Langfuse v2 self-hosted Docker:** zero custo, dados locais, SDK Python maduro com `@observe()` decorator nativo para async.
+
+**Decisão:** Langfuse v2 self-hosted Docker — dois serviços novos no docker-compose: `langfuse` (imagem `langfuse/langfuse:2`) e `langfuse-db` (Postgres 16 dedicado).
+
+**Instrumentação:** `langfuse.decorators.observe` em `processar_mensagem` dos 3 agentes. `LANGFUSE_ENABLED=false` desabilita em unit tests. `langfuse.flush()` no lifespan FastAPI.
+
+**Impacto:** ~1GB RAM extra no dev/staging; 6 novos secrets no Infisical (`LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_SALT` — por ambiente). Langfuse importado apenas em Runtime (camada permitida por import-linter).
+
+**Trade-off:** Requer setup manual de projeto/chaves no UI Langfuse após primeiro boot. Mitigado documentando o passo no handoff do Generator.
 
 ---
 
