@@ -31,8 +31,11 @@ echo ""
 # ─────────────────────────────────────────────
 echo "[L0] Login dashboard..."
 if [ -z "${DASHBOARD_SECRET:-}" ]; then
-  echo "  [ABORT] DASHBOARD_SECRET não configurado."
-  exit 1
+  echo "  [SKIP] DASHBOARD_SECRET não configurado — smoke_ui ignorado."
+  echo "  Para executar: infisical run --env=staging -- bash scripts/smoke_ui.sh"
+  echo ""
+  echo "=== UI SMOKE GATE: SKIP (sem DASHBOARD_SECRET) ==="
+  exit 0
 fi
 
 LOGIN_RESP=$(curl -s -D - -o /dev/null \
