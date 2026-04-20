@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Clientes{% endblock %}
 {% block content %}
-<h1>Clientes</h1>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+  <h1 style="margin-bottom:0">Clientes</h1>
+  <a href="/dashboard/clientes/novo" class="btn btn-primary">+ Novo Cliente</a>
+</div>
 <form method="get" action="/dashboard/clientes" class="search-bar">
   <input type="text" name="q" value="{{ q }}" placeholder="Buscar por nome ou CNPJ...">
   <button type="submit" class="btn btn-primary">Buscar</button>
@@ -10,16 +13,21 @@
   {% if clientes %}
   <table>
     <thead>
-      <tr><th>Nome</th><th>CNPJ</th><th>Telefone</th><th>Representante</th><th>Ativo</th></tr>
+      <tr><th>Nome</th><th>CNPJ</th><th>Representante</th><th>Ativo</th><th></th></tr>
     </thead>
     <tbody>
     {% for c in clientes %}
     <tr>
       <td>{{ c.nome }}</td>
-      <td class="text-muted">{{ c.cnpj }}</td>
-      <td class="text-muted">{{ c.telefone or "—" }}</td>
-      <td class="text-muted">{{ c.representante_id[:8] if c.representante_id else "—" }}</td>
+      <td class="text-muted">{{ c.cnpj or "—" }}</td>
+      <td class="text-muted">{{ c.representante_nome or "—" }}</td>
       <td>{% if c.ativo %}<span class="badge badge-ok">sim</span>{% else %}<span class="badge">não</span>{% endif %}</td>
+      <td style="display:flex;gap:0.5rem">
+        <a href="/dashboard/clientes/{{ c.id }}/editar" class="btn" style="padding:0.25rem 0.75rem;font-size:0.85rem">Editar</a>
+        <form method="post" action="/dashboard/clientes/{{ c.id }}/remover" onsubmit="return confirm('Desativar {{ c.nome }}?')">
+          <button type="submit" class="btn" style="padding:0.25rem 0.75rem;font-size:0.85rem;background:#4d1e1e;color:var(--accent)">Remover</button>
+        </form>
+      </td>
     </tr>
     {% endfor %}
     </tbody>

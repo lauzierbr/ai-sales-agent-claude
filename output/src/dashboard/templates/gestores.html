@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Gestores{% endblock %}
+{% block content %}
+<h1>Gestores</h1>
+<div class="card">
+  {% if gestores %}
+  <table>
+    <thead>
+      <tr><th>Nome</th><th>Celular</th><th>Ativo</th></tr>
+    </thead>
+    <tbody>
+    {% for g in gestores %}
+    <tr>
+      <td>{{ g.nome }}</td>
+      <td class="text-muted">{{ g.telefone or "—" }}</td>
+      <td>{% if g.ativo %}<span class="badge badge-ok">sim</span>{% else %}<span class="badge">não</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Nenhum gestor cadastrado.</p>
+  {% endif %}
+</div>
+{% endblock %}

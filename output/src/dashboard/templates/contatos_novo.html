@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Novo Contato{% endblock %}
+{% block content %}
+<h1>Novo Contato</h1>
+{% if mensagem %}
+<div class="msg {% if sucesso %}success{% else %}error{% endif %}">{{ mensagem }}</div>
+{% endif %}
+<div class="card">
+  <form method="post" action="/dashboard/contatos/novo">
+    <div class="form-group">
+      <label>Perfil *</label>
+      <select name="perfil" id="perfil-sel" required>
+        <option value="">— selecione —</option>
+        <option value="gestor" {% if form.get('perfil') == 'gestor' %}selected{% endif %}>Gestor</option>
+        <option value="rep" {% if form.get('perfil') == 'rep' %}selected{% endif %}>Representante</option>
+        <option value="cliente" {% if form.get('perfil') == 'cliente' %}selected{% endif %}>Cliente</option>
+      </select>
+    </div>
+
+    <div id="nome-group" class="form-group">
+      <label>Nome *</label>
+      <input type="text" name="nome" value="{{ form.get('nome', '') }}" placeholder="Nome completo ou razão social">
+    </div>
+
+    <div id="cliente-group" class="form-group" style="display:none">
+      <label>Cliente *</label>
+      <select name="cliente_b2b_id">
+        <option value="">— selecione o cliente —</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}">{{ c.nome }}{% if c.cnpj %} — {{ c.cnpj }}{% endif %}</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">Selecione a empresa para associar o número de celular.</small>
+    </div>
+
+    <div id="nome-contato-group" class="form-group" style="display:none">
+      <label>Nome do contato</label>
+      <input type="text" name="nome_contato" value="{{ form.get('nome_contato', '') }}" placeholder="Nome da pessoa que usa este celular">
+    </div>
+
+    <div class="form-group">
+      <label>Celular * (formato: 5511999990000)</label>
+      <input type="text" name="telefone" value="{{ form.get('telefone', '') }}" required placeholder="5511999990000">
+    </div>
+
+    <div style="display:flex;gap:1rem;margin-top:1.5rem">
+      <button type="submit" class="btn btn-primary">Criar</button>
+      <a href="/dashboard/contatos" class="btn">Cancelar</a>
+    </div>
+  </form>
+</div>
+<script>
+  const sel = document.getElementById('perfil-sel');
+  const nomeGroup = document.getElementById('nome-group');
+  const clienteGroup = document.getElementById('cliente-group');
+  const nomeContatoGroup = document.getElementById('nome-contato-group');
+  function toggle() {
+    const isCliente = sel.value === 'cliente';
+    nomeGroup.style.display = isCliente ? 'none' : '';
+    clienteGroup.style.display = isCliente ? '' : 'none';
+    nomeContatoGroup.style.display = isCliente ? '' : 'none';
+    nomeGroup.querySelector('input').required = !isCliente;
+    clienteGroup.querySelector('select').required = isCliente;
+  }
+  sel.addEventListener('change', toggle);
+  toggle();
+</script>
+{% endblock %}

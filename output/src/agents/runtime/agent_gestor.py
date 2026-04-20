@@ -205,6 +205,24 @@ _TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "relatorio_representantes",
+        "description": (
+            "Ranking de representantes com GMV, número de pedidos e cliente topo no período. "
+            "Use quando o gestor perguntar sobre performance de reps, quem vendeu mais, "
+            "ranking de representantes ou resultados por rep em qualquer janela de dias."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dias": {
+                    "type": "integer",
+                    "description": "Período em dias para análise. Ex: 7, 30, 60, 90. Padrão: 30.",
+                    "default": 30,
+                },
+            },
+        },
+    },
+    {
         "name": "listar_pedidos_por_status",
         "description": (
             "Lista pedidos do tenant filtrando por status e/ou período. "
@@ -231,6 +249,28 @@ _TOOLS: list[dict[str, Any]] = [
                     "default": 20,
                 },
             },
+        },
+    },
+    {
+        "name": "registrar_feedback",
+        "description": (
+            "Registra feedback do gestor sobre uma resposta do assistente. "
+            "Use quando o gestor indicar que uma resposta estava errada, incompleta "
+            "ou sugerir como deveria ser."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mensagem": {
+                    "type": "string",
+                    "description": "Texto do feedback do gestor.",
+                },
+                "contexto": {
+                    "type": "string",
+                    "description": "Resposta anterior do assistente que motivou o feedback.",
+                },
+            },
+            "required": ["mensagem"],
         },
     },
 ]
@@ -512,6 +552,22 @@ class AgentGestor:
                 session=session,
             )
 
+        if tool_name == "relatorio_representantes":
+            return await self._relatorio_representantes(
+                dias=int(tool_input.get("dias", 30)),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "registrar_feedback":
+            return await self._registrar_feedback(
+                mensagem=tool_input.get("mensagem", ""),
+                contexto=tool_input.get("contexto", ""),
+                de=numero,
+                tenant_id=tenant.id,
+                session=session,
+            )
+
         log.warning("agent_gestor_ferramenta_desconhecida", tool_name=tool_name)
         return {"erro": f"Ferramenta desconhecida: {tool_name}"}
 
@@ -755,6 +811,52 @@ class AgentGestor:
             "nao_encontrados": nao_encontrados,
             "total_aprovados": len(aprovados),
         }
+
+    async def _relatorio_representantes(
+        self,
+        dias: int,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> list[dict]:
+        from datetime import datetime, timedelta, timezone
+        from src.agents.repo import RelatorioRepo
+        now = datetime.now(timezone.utc)
+        data_inicio = now - timedelta(days=dias)
+        repo = RelatorioRepo()
+        rows = await repo.totais_por_rep(
+            tenant_id=tenant_id,
+            data_inicio=data_inicio,
+            data_fim=now,
+            session=session,
+        )
+        return [
+            {
+                "rep_nome": r.get("rep_nome") or "Sem representante",
+                "n_pedidos": r.get("n_pedidos", 0),
+                "gmv": float(r.get("total_gmv", 0)),
+            }
+            for r in rows
+        ]
+
+    async def _registrar_feedback(
+        self,
+        mensagem: str,
+        contexto: str,
+        de: str,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        from src.agents.repo_feedback import FeedbackRepo
+        feedback_id = await FeedbackRepo().criar(
+            tenant_id=tenant_id,
+            perfil="gestor",
+            de=de,
+            nome=self._gestor.nome,
+            mensagem=mensagem,
+            contexto=contexto,
+            session=session,
+        )
+        return {"feedback_id": feedback_id, "status": "registrado"}
 
     def _get_anthropic_client(self) -> Any:
         if self._anthropic is not None:

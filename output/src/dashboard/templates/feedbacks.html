@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Feedbacks{% endblock %}
+{% block content %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+  <h1 style="margin-bottom:0">Feedbacks</h1>
+  <form method="get" action="/dashboard/feedbacks" style="display:flex;gap:0.5rem">
+    <select name="perfil" onchange="this.form.submit()" style="padding:0.4rem 0.75rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.9rem">
+      <option value="" {% if not perfil_filtro %}selected{% endif %}>Todos os perfis</option>
+      <option value="gestor" {% if perfil_filtro == 'gestor' %}selected{% endif %}>Gestor</option>
+      <option value="rep" {% if perfil_filtro == 'rep' %}selected{% endif %}>Representante</option>
+      <option value="cliente" {% if perfil_filtro == 'cliente' %}selected{% endif %}>Cliente</option>
+    </select>
+  </form>
+</div>
+<div class="card">
+  {% if feedbacks %}
+  <table>
+    <thead>
+      <tr><th>Data</th><th>Perfil</th><th>Nome</th><th>Feedback</th><th>Contexto (resposta anterior)</th></tr>
+    </thead>
+    <tbody>
+    {% for f in feedbacks %}
+    <tr>
+      <td class="text-muted" style="white-space:nowrap">{{ f.criado_em.strftime('%d/%m %H:%M') if f.criado_em else '—' }}</td>
+      <td><span class="badge {% if f.perfil == 'gestor' %}badge-ok{% elif f.perfil == 'rep' %}badge-pending{% endif %}">{{ f.perfil }}</span></td>
+      <td>{{ f.nome or '—' }}</td>
+      <td style="max-width:300px;word-break:break-word">{{ f.mensagem }}</td>
+      <td class="text-muted" style="max-width:300px;word-break:break-word;font-size:0.8rem">{{ f.contexto or '—' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Nenhum feedback recebido ainda.</p>
+  {% endif %}
+</div>
+{% endblock %}
