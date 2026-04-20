@@ -233,6 +233,28 @@ _TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "registrar_feedback",
+        "description": (
+            "Registra feedback do gestor sobre uma resposta do assistente. "
+            "Use quando o gestor indicar que uma resposta estava errada, incompleta "
+            "ou sugerir como deveria ser."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mensagem": {
+                    "type": "string",
+                    "description": "Texto do feedback do gestor.",
+                },
+                "contexto": {
+                    "type": "string",
+                    "description": "Resposta anterior do assistente que motivou o feedback.",
+                },
+            },
+            "required": ["mensagem"],
+        },
+    },
 ]
 
 
@@ -512,6 +534,15 @@ class AgentGestor:
                 session=session,
             )
 
+        if tool_name == "registrar_feedback":
+            return await self._registrar_feedback(
+                mensagem=tool_input.get("mensagem", ""),
+                contexto=tool_input.get("contexto", ""),
+                de=numero,
+                tenant_id=tenant.id,
+                session=session,
+            )
+
         log.warning("agent_gestor_ferramenta_desconhecida", tool_name=tool_name)
         return {"erro": f"Ferramenta desconhecida: {tool_name}"}
 
@@ -755,6 +786,26 @@ class AgentGestor:
             "nao_encontrados": nao_encontrados,
             "total_aprovados": len(aprovados),
         }
+
+    async def _registrar_feedback(
+        self,
+        mensagem: str,
+        contexto: str,
+        de: str,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        from src.agents.repo_feedback import FeedbackRepo
+        feedback_id = await FeedbackRepo().criar(
+            tenant_id=tenant_id,
+            perfil="gestor",
+            de=de,
+            nome=self._gestor.nome,
+            mensagem=mensagem,
+            contexto=contexto,
+            session=session,
+        )
+        return {"feedback_id": feedback_id, "status": "registrado"}
 
     def _get_anthropic_client(self) -> Any:
         if self._anthropic is not None:

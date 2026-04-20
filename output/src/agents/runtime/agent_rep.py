@@ -168,6 +168,28 @@ _TOOLS: list[dict[str, Any]] = [
             "required": ["cliente_b2b_id", "itens"],
         },
     },
+    {
+        "name": "registrar_feedback",
+        "description": (
+            "Registra feedback do representante sobre uma resposta do assistente. "
+            "Use quando o representante indicar que uma resposta estava errada, incompleta "
+            "ou sugerir como deveria ser."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mensagem": {
+                    "type": "string",
+                    "description": "Texto do feedback do representante.",
+                },
+                "contexto": {
+                    "type": "string",
+                    "description": "Resposta anterior do assistente que motivou o feedback.",
+                },
+            },
+            "required": ["mensagem"],
+        },
+    },
 ]
 
 
@@ -538,8 +560,37 @@ class AgentRep:
                 numero=numero,
             )
 
+        if tool_name == "registrar_feedback":
+            return await self._registrar_feedback(
+                mensagem=tool_input.get("mensagem", ""),
+                contexto=tool_input.get("contexto", ""),
+                de=numero,
+                tenant_id=tenant.id,
+                session=session,
+            )
+
         log.warning("ferramenta_desconhecida", tool_name=tool_name)
         return {"erro": f"Ferramenta desconhecida: {tool_name}"}
+
+    async def _registrar_feedback(
+        self,
+        mensagem: str,
+        contexto: str,
+        de: str,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        from src.agents.repo_feedback import FeedbackRepo
+        feedback_id = await FeedbackRepo().criar(
+            tenant_id=tenant_id,
+            perfil="rep",
+            de=de,
+            nome=self._representante.nome,
+            mensagem=mensagem,
+            contexto=contexto,
+            session=session,
+        )
+        return {"feedback_id": feedback_id, "status": "registrado"}
 
     async def _buscar_produtos(
         self,

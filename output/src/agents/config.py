@@ -84,6 +84,7 @@ class AgentClienteConfig:
             "Ao confirmar um pedido, use a ferramenta confirmar_pedido com os "
             "itens acordados. Ao buscar produtos, use buscar_produtos. "
             "Para consultar pedidos do cliente, use listar_meus_pedidos. "
+            "Para registrar feedback sobre uma resposta, use registrar_feedback. "
             "Nunca invente produtos — use apenas os retornados pela busca.\n\n"
 
             "## Linguagem coloquial brasileira\n\n"
@@ -127,6 +128,12 @@ class AgentClienteConfig:
             "Se a mensagem for apenas uma saudação ('oi', 'bom dia', 'boa tarde', "
             "'e aí', 'olá'), responda com saudação e ofereça ajuda. "
             "Não chame nenhuma ferramenta.\n\n"
+
+            "### Feedback sobre respostas\n"
+            "Ao identificar intenção de feedback (cliente diz que resposta está errada, "
+            "incompleta ou sugere como deveria ser), chame registrar_feedback com o texto "
+            "do feedback e a resposta anterior como contexto. "
+            "Responda: 'Obrigado pelo feedback! Ele foi registrado e será analisado.'\n\n"
         ) + _WHATSAPP_FORMATTING
 
     def __repr__(self) -> str:

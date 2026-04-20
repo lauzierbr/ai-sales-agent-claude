@@ -573,6 +573,38 @@ async def top_produtos(
     return templates.TemplateResponse(request, "top_produtos.html", ctx)
 
 
+@router.get("/feedbacks", response_class=HTMLResponse)
+async def feedbacks(request: Request) -> Any:
+    """Lista de feedbacks recebidos pelos agentes."""
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+
+    tenant_id: str = session_data["tenant_id"]
+    perfil_filtro: str = request.query_params.get("perfil", "")
+
+    try:
+        from src.agents.repo_feedback import FeedbackRepo
+        from src.providers.db import get_session_factory
+
+        factory = get_session_factory()
+        async with factory() as session:
+            feedbacks_list = await FeedbackRepo().listar(
+                tenant_id=tenant_id,
+                session=session,
+                perfil=perfil_filtro or None,
+            )
+    except Exception as exc:
+        log.error("dashboard_feedbacks_erro", error=str(exc))
+        feedbacks_list = []
+
+    return templates.TemplateResponse(
+        request,
+        "feedbacks.html",
+        {"feedbacks": feedbacks_list, "perfil_filtro": perfil_filtro, "tenant_id": tenant_id},
+    )
+
+
 async def _get_tenant_config(tenant_id: str) -> dict[str, Any]:
     """Retorna configurações do tenant."""
     try:
