@@ -149,6 +149,7 @@ async def test_identity_router_strip_whatsapp_suffix(
 
     with (
         patch.object(router._gestor_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
+        patch.object(router._rep_repo, "get_by_telefone", new=AsyncMock(return_value=None)),
         patch.object(router._cliente_repo, "get_by_telefone", new=mock_get_by_telefone),
     ):
         await router.resolve(mensagem_fixture, "jmb", session)
@@ -209,12 +210,12 @@ async def test_identity_router_retorna_representante(
 
 
 @pytest.mark.unit
-async def test_identity_router_cliente_tem_prioridade(
+async def test_identity_router_representante_tem_prioridade_sobre_cliente(
     mensagem_fixture: Mensagem,
     cliente_b2b_fixture: ClienteB2B,
     representante_fixture: Representante,
 ) -> None:
-    """IdentityRouter retorna CLIENTE_B2B mesmo que número esteja em representantes."""
+    """IdentityRouter retorna REPRESENTANTE quando número está em ambas as tabelas (rep tem prioridade sobre cliente)."""
     from unittest.mock import patch
 
     from src.agents.service import IdentityRouter
@@ -237,7 +238,7 @@ async def test_identity_router_cliente_tem_prioridade(
     ):
         persona = await router.resolve(mensagem_fixture, "jmb", session)
 
-    assert persona == Persona.CLIENTE_B2B
+    assert persona == Persona.REPRESENTANTE
 
 
 # ─────────────────────────────────────────────

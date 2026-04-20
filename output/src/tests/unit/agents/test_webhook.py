@@ -2,6 +2,8 @@
 
 Todos os testes são @pytest.mark.unit — sem I/O externo.
 Critérios: A10 (HMAC válido → 200), A11 (HMAC inválido → 403), A12 (sem header → 403).
+  LOOP-1 — eventos não-MESSAGES_UPSERT retornam 200 sem processar (evita loop)
+  LOOP-2 — deduplicação Redis: segunda entrega do mesmo message_id é ignorada
 """
 
 from __future__ import annotations
@@ -76,6 +78,40 @@ async def test_webhook_valido_retorna_200() -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"status": "received"}
+
+
+# ─────────────────────────────────────────────
+# Evolution API v2 — evento "messages.upsert" (lowercase+dot) deve processar
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_webhook_evento_v2_messages_upsert_processado() -> None:
+    """LOOP-1/V2: Evolution API v2 envia 'messages.upsert' — deve acionar _process_message."""
+    app = _make_app()
+    payload_v2 = {**_PAYLOAD, "event": "messages.upsert"}
+    body = json.dumps(payload_v2).encode()
+    sig = _make_signature(body)
+
+    mock_process = AsyncMock()
+
+    with (
+        patch.dict("os.environ", {"EVOLUTION_WEBHOOK_SECRET": _WEBHOOK_SECRET}),
+        patch("src.agents.ui._process_message", new=mock_process),
+    ):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/webhook/whatsapp",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Evolution-Signature": sig,
+                },
+            )
+
+    assert resp.status_code == 200
+    mock_process.assert_called_once()
 
 
 # ─────────────────────────────────────────────
@@ -196,3 +232,99 @@ def test_validate_webhook_signature_sem_secret() -> None:
         result = validate_webhook_signature(b"body", "qualquer")
 
     assert result is False
+
+
+# ─────────────────────────────────────────────
+# LOOP-1 — evento não-MESSAGES_UPSERT descartado sem processar
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_webhook_evento_nao_upsert_descartado() -> None:
+    """LOOP-1: Eventos como SEND_MESSAGE e MESSAGES_UPDATE retornam 200 sem acionar _process_message."""
+    app = _make_app()
+
+    # Testa tanto o formato v1 (uppercase underscore) quanto v2 (lowercase dot)
+    for event_type in (
+        "SEND_MESSAGE", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED",
+        "send.message", "messages.update", "connection.update",
+    ):
+        payload = {**_PAYLOAD, "event": event_type}
+        body = json.dumps(payload).encode()
+        sig = _make_signature(body)
+
+        mock_process = AsyncMock()
+
+        with (
+            patch.dict("os.environ", {"EVOLUTION_WEBHOOK_SECRET": _WEBHOOK_SECRET}),
+            patch("src.agents.ui._process_message", new=mock_process),
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/webhook/whatsapp",
+                    content=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Evolution-Signature": sig,
+                    },
+                )
+
+        assert resp.status_code == 200, f"event={event_type}: esperado 200, got {resp.status_code}"
+        mock_process.assert_not_called(), f"event={event_type}: _process_message não deve ser chamado"
+
+
+# ─────────────────────────────────────────────
+# LOOP-2 — deduplicação Redis: segunda entrega ignorada
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_webhook_dedup_redis_ignora_duplicata() -> None:
+    """LOOP-2: Segunda entrega do mesmo message_id é descartada via Redis SET NX."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    # Simula Redis onde a segunda chamada SET NX retorna None (key já existe)
+    mock_redis_first = AsyncMock(return_value=True)   # primeira entrega → processa
+    mock_redis_second = AsyncMock(return_value=None)  # segunda entrega → ignora
+
+    mock_process_calls = []
+
+    async def fake_process(payload_dict):
+        mock_process_calls.append(payload_dict)
+
+    payload_dict = {
+        "event": "MESSAGES_UPSERT",
+        "instance": "inst-jmb-01",
+        "data": {
+            "key": {"id": "msg-dedup-001", "fromMe": False, "remoteJid": "5519999999999@s.whatsapp.net"},
+            "message": {"conversation": "Oi"},
+            "messageType": "conversation",
+            "messageTimestamp": 1712345678,
+        },
+    }
+    body = json.dumps(payload_dict).encode()
+    sig = _make_signature(body)
+
+    from src.agents.ui import _process_message as real_process  # noqa: F401
+
+    with (
+        patch.dict("os.environ", {"EVOLUTION_WEBHOOK_SECRET": _WEBHOOK_SECRET}),
+        patch("src.agents.ui._process_message", new=fake_process),
+    ):
+        # Primeira entrega: Redis SET NX retorna True → deve processar
+        mock_redis_first_client = MagicMock()
+        mock_redis_first_client.set = AsyncMock(return_value=True)
+
+        with patch("src.providers.db.get_redis", return_value=mock_redis_first_client):
+            app = _make_app()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp1 = await client.post(
+                    "/webhook/whatsapp",
+                    content=body,
+                    headers={"Content-Type": "application/json", "X-Evolution-Signature": sig},
+                )
+
+    assert resp1.status_code == 200
+    assert len(mock_process_calls) == 1, "Primeira entrega deve ser processada"

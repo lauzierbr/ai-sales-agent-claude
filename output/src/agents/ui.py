@@ -59,6 +59,13 @@ async def webhook_whatsapp(
         log.warning("webhook_payload_invalido", error=str(exc))
         return JSONResponse({"status": "received"})
 
+    # Só processa MESSAGES_UPSERT — outros eventos são descartados para evitar loops.
+    # Evolution API v1 usa "MESSAGES_UPSERT"; v2 usa "messages.upsert" (lowercase+dot).
+    _UPSERT_EVENTS = {"MESSAGES_UPSERT", "messages.upsert"}
+    if payload.event not in _UPSERT_EVENTS:
+        log.debug("webhook_evento_ignorado", tipo_evento=payload.event)
+        return JSONResponse({"status": "received"})
+
     # Processamento em background — resposta não é bloqueada
     background_tasks.add_task(_process_message, payload.model_dump())
 
@@ -127,6 +134,20 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
     except Exception as exc:
         log.error("process_message_parse_erro", error=str(exc))
         return
+
+    # Deduplicação antecipada por message_id via Redis (evita eco do Twilio sandbox
+    # e reentregas de webhook sob alta carga). TTL=300s é suficiente — mensagens
+    # legítimas nunca chegam duas vezes com o mesmo ID dentro de 5 minutos.
+    raw_message_id = payload.data.get("key", {}).get("id", "")
+    if raw_message_id and _redis is not None:
+        dedup_key = f"webhook:dedup:{payload.instance}:{raw_message_id}"
+        try:
+            already_seen = await _redis.set(dedup_key, "1", nx=True, ex=300)
+            if not already_seen:
+                log.debug("webhook_dedup_ignorado", message_id=raw_message_id, instance=payload.instance)
+                return
+        except Exception:
+            pass  # Redis indisponível → processa normalmente
 
     async with factory() as session:
         # 1. Resolve tenant via instancia
