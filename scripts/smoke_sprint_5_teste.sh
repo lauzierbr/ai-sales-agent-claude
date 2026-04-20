@@ -16,7 +16,8 @@ echo ""
 echo "=== SMOKE Sprint 5-teste — Top Produtos ==="
 
 # S1: sem sessão → redirect para login
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/dashboard/top-produtos?dias=30")
+# || echo "000" impede set -e de abortar o script quando curl falha por conexão recusada
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/dashboard/top-produtos?dias=30" 2>/dev/null || echo "000")
 if [ "$CODE" = "302" ] || [ "$CODE" = "303" ]; then
   _pass "S1: sem sessão → redirect ($CODE)"
 else

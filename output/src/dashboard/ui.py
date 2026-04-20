@@ -570,8 +570,7 @@ async def top_produtos(
 
     ctx = {"produtos": produtos, "dias": dias, "limite": limite}
 
-    # BUG PLANTADO: TemplateResponse com API antiga (sem request como 1º arg)
-    return templates.TemplateResponse("top_produtos.html", {"request": request, **ctx})
+    return templates.TemplateResponse(request, "top_produtos.html", ctx)
 
 
 async def _get_tenant_config(tenant_id: str) -> dict[str, Any]:

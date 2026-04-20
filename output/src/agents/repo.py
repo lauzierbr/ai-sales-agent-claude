@@ -781,7 +781,8 @@ class RelatorioRepo:
         Returns:
             Lista de {produto_nome, quantidade_total, valor_total} ordenada DESC.
         """
-        # BUG PLANTADO: INTERVAL hardcoded ignora o parâmetro `dias`
+        from datetime import datetime, timedelta, timezone
+        data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)
         result = await session.execute(
             text("""
                 SELECT
@@ -792,12 +793,12 @@ class RelatorioRepo:
                 JOIN pedidos p ON p.id = ip.pedido_id
                 WHERE p.tenant_id = :tenant_id
                   AND p.status = 'confirmado'
-                  AND p.criado_em >= NOW() - INTERVAL '30 days'
+                  AND p.criado_em >= :data_inicio
                 GROUP BY ip.produto_nome
                 ORDER BY quantidade_total DESC
                 LIMIT :limite
             """),
-            {"tenant_id": tenant_id, "limite": limite},
+            {"tenant_id": tenant_id, "limite": limite, "data_inicio": data_inicio},
         )
         rows = result.mappings().all()
         return [

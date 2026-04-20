@@ -23,10 +23,9 @@
       </tr>
     </thead>
     <tbody>
-      {# BUG PLANTADO: |enumerate não existe em Jinja2 — causa UndefinedError #}
-      {% for idx, produto in produtos|enumerate %}
+      {% for produto in produtos %}
       <tr>
-        <td>{{ idx + 1 }}</td>
+        <td>{{ loop.index }}</td>
         <td>{{ produto.produto_nome }}</td>
         <td>{{ produto.quantidade_total }}</td>
         <td>R$ {{ "%.2f"|format(produto.valor_total|float) }}</td>

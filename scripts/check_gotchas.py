@@ -18,6 +18,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import re
 import sys
 from pathlib import Path
@@ -46,10 +47,14 @@ def _load_gotchas() -> list[dict[str, Any]]:
 
 
 def _matches_glob(path: Path, glob_pattern: str) -> bool:
-    """Verifica se um path faz match com um glob pattern relativo ao repo."""
+    """Verifica se um path faz match com um glob pattern relativo ao repo.
+
+    Usa fnmatch em vez de Path.match() pois Path.match() não suporta **
+    no meio de um padrão em Python < 3.13.
+    """
     try:
         rel = path.relative_to(REPO_ROOT)
-        return rel.match(glob_pattern)
+        return fnmatch.fnmatch(str(rel), glob_pattern)
     except ValueError:
         return False
 
