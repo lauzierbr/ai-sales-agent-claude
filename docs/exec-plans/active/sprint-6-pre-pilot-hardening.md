@@ -79,7 +79,7 @@ Os quatro itens abaixo são prioridade absoluta. Nenhum hardening mais amplo ent
 - [x] `pytest -m unit` verde — 281 passed ✅
 - [x] testes novos cobrem cadastro, upload, top produtos e casos negativos de tenant ✅
 - [x] `lint-imports` verde ✅
-- [ ] smoke de staging do sprint verde — **pendente deploy no mac-lablz**
+- [x] smoke de staging do sprint verde ✅ — `smoke_sprint_6.py` ALL OK (G1–G9 passaram em 2026-04-21)
 
 ### G3 — Go/no-go pré-piloto
 
@@ -176,12 +176,12 @@ para:
 
 ### Rodada 2 — 2026-04-21 — ESCALADO (código aprovado, staging não sincronizado)
 - Todos os checks locais PASS: 281 unit tests, mypy 0 erros, todos Média PASS
-- Bloqueio: mac-lablz estava no commit `5355ee8` (Sprint 5-hotfix); Sprint 6 nunca deployado
+- Bloqueio: macmini-lablz estava no commit `5355ee8` (Sprint 5-hotfix); Sprint 6 nunca deployado
 - 12 falhas staging são regressões de Sprint 3-5, não do Sprint 6
 - Usuário escolheu: prosseguir para homologação manual após deploy
 
 ### Próximos passos
-1. `./scripts/deploy.sh staging` no mac-lablz
+1. `./scripts/deploy.sh staging` no macmini-lablz
 2. `infisical run --env=staging -- python scripts/seed_homologacao_sprint-6.py`
 3. `infisical run --env=staging -- python scripts/smoke_sprint_6.py` → ALL OK
 4. Homologação manual H1–H7 no checklist

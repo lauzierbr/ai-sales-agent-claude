@@ -8,12 +8,12 @@
 
 ## Pré-condições (executadas pelo Generator antes de chamar homologação)
 
-- [ ] Deploy realizado: `./scripts/deploy.sh staging`
-- [ ] Migrations aplicadas: `alembic upgrade head`
-- [ ] Seed de dados: `python scripts/seed_homologacao_sprint-6.py`
-- [ ] Smoke gate passou: `python scripts/smoke_sprint_6.py` → ALL OK
+- [x] Deploy realizado: commit `43f7302` no macmini-lablz ✅
+- [x] Migrations aplicadas: `alembic upgrade head` ✅
+- [x] Seed de dados: `seed_homologacao_sprint-6.py` → 1 rep, 4 clientes, 14 pedidos ✅
+- [x] Smoke gate passou: `smoke_sprint_6.py` → **ALL OK** (G1–G9, 2026-04-21 18:56) ✅
+- [x] Health HTTP: `curl http://100.113.28.85:8000/health` → `anthropic=ok` ✅
 - [ ] Health check geral: `python scripts/health_check.py` → exit 0
-- [ ] Health HTTP: `curl http://100.113.28.85:8000/health` → componente Anthropic diferente de `fail`
 
 **Só iniciar homologação manual após todas as pré-condições ✅**
 
