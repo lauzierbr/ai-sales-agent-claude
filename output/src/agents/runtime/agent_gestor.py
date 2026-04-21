@@ -597,25 +597,43 @@ class AgentGestor:
             log.warning("agent_gestor_catalog_service_none", tenant_id=tenant_id)
             return [{"aviso": "Catálogo indisponível no momento. Tente novamente."}]
         try:
-            produtos = await self._catalog_service.buscar_produtos(
-                tenant_id=tenant_id,
-                query=query,
-                limit=limit,
-            )
-            return [
+            resultados = []
+
+            # Se a query parece um código (só dígitos), tenta lookup exato primeiro
+            query_stripped = query.strip()
+            if query_stripped.isdigit() and len(query_stripped) >= 4:
+                por_codigo = await self._catalog_service.get_por_codigo(
+                    tenant_id=tenant_id,
+                    codigo_externo=query_stripped,
+                )
+                if por_codigo is not None:
+                    resultados = [por_codigo]
+
+            # Fallback (ou pesquisa normal): busca semântica
+            if not resultados:
+                resultados = await self._catalog_service.buscar_semantico(
+                    tenant_id=tenant_id,
+                    query=query,
+                    limit=limit,
+                )
+
+            # resultados é list[ResultadoBusca]; cada item tem .produto e .score
+            produtos = [
                 {
-                    "id": str(p.id),
-                    "nome": p.nome,
-                    "codigo_externo": p.codigo_externo,
-                    "preco": str(p.preco) if p.preco else None,
-                    "unidade": p.unidade,
-                    "descricao": p.descricao,
+                    "produto_id": str(r.produto.id),
+                    "codigo_externo": r.produto.codigo_externo,
+                    "nome": r.produto.nome or r.produto.nome_bruto,
+                    "marca": r.produto.marca,
+                    "categoria": r.produto.categoria,
+                    "preco_padrao": str(r.produto.preco_padrao) if r.produto.preco_padrao else None,
+                    "score": r.score,
                 }
-                for p in produtos
+                for r in resultados
             ]
+            return {"produtos": produtos, "total": len(produtos)}
         except Exception as exc:
             log.error("agent_gestor_busca_produtos_erro", error=str(exc))
-            return [{"erro": "Falha ao buscar produtos. Tente novamente."}]
+            return [{"erro": "Erro ao buscar produtos."}]
 
     async def _confirmar_pedido(
         self,
