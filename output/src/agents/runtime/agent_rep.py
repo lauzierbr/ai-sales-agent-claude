@@ -843,25 +843,29 @@ class AgentRep:
             session=session,
         )
 
-        # Gera PDF
-        pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido, tenant)
+        # Gera PDF e notifica gestor — falha silenciosa: pedido já criado,
+        # não podemos perder a confirmação por falha no PDF.
+        try:
+            pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido, tenant)
 
-        # Notifica gestor via WhatsApp
-        if tenant.whatsapp_number:
-            total_br = f"{pedido.total_estimado:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            caption = (
-                f"Novo pedido PED-{pedido.id[:8].upper()} | "
-                f"Rep: {self._representante.nome} | "
-                f"{len(pedido.itens)} iten(s) | "
-                f"R$ {total_br}"
-            )
-            await send_whatsapp_media(
-                instancia_id=instancia_id,
-                numero=tenant.whatsapp_number,
-                pdf_bytes=pdf_bytes,
-                caption=caption,
-                file_name=f"pedido-{pedido.id[:8]}.pdf",
-            )
+            # Notifica gestor via WhatsApp
+            if tenant.whatsapp_number:
+                total_br = f"{pedido.total_estimado:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                caption = (
+                    f"Novo pedido PED-{pedido.id[:8].upper()} | "
+                    f"Rep: {self._representante.nome} | "
+                    f"{len(pedido.itens)} iten(s) | "
+                    f"R$ {total_br}"
+                )
+                await send_whatsapp_media(
+                    instancia_id=instancia_id,
+                    numero=tenant.whatsapp_number,
+                    pdf_bytes=pdf_bytes,
+                    caption=caption,
+                    file_name=f"pedido-{pedido.id[:8]}.pdf",
+                )
+        except Exception as exc:
+            log.warning("agent_rep_pdf_erro", error=str(exc))
 
         log.info(
             "pedido_rep_confirmado",

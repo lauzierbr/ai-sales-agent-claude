@@ -683,14 +683,15 @@ class AgentGestor:
             )
 
             # Envia PDF ao gestor
+            ped_num = f"PED-{pedido.id[:8].upper()}"
             try:
-                pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido)
+                pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido, tenant)
                 await send_whatsapp_media(
                     instancia_id=instancia_id,
                     numero=numero,
                     pdf_bytes=pdf_bytes,
-                    caption=f"Pedido {pedido.numero_pedido} — {cliente.nome}",
-                    file_name=f"pedido-{pedido.numero_pedido}.pdf",
+                    caption=f"{ped_num} — {cliente.nome}",
+                    file_name=f"pedido-{pedido.id[:8]}.pdf",
                 )
             except Exception as exc:
                 log.warning("agent_gestor_pdf_erro", error=str(exc))
@@ -698,7 +699,7 @@ class AgentGestor:
             return {
                 "sucesso": True,
                 "pedido_id": str(pedido.id),
-                "numero_pedido": pedido.numero_pedido,
+                "numero_pedido": ped_num,
                 "total_estimado": str(pedido.total_estimado),
                 "cliente_nome": cliente.nome,
                 "representante_id": representante_id,
