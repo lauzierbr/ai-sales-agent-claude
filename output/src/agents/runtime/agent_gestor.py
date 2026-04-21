@@ -685,7 +685,10 @@ class AgentGestor:
             # Envia PDF ao gestor
             ped_num = f"PED-{pedido.id[:8].upper()}"
             try:
-                pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido, tenant)
+                pdf_bytes = self._pdf_generator.gerar_pdf_pedido(
+                    pedido, tenant,
+                    cliente_nome=cliente.nome,
+                )
                 await send_whatsapp_media(
                     instancia_id=instancia_id,
                     numero=numero,

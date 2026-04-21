@@ -191,6 +191,7 @@ class AgentCliente:
         session: AsyncSession,
         cliente_b2b_id: str | None = None,
         representante_id: str | None = None,
+        cliente_nome: str | None = None,
     ) -> None:
         """Responde mensagem do cliente usando Claude SDK com tool use.
 
@@ -207,6 +208,7 @@ class AgentCliente:
             session: sessão SQLAlchemy assíncrona.
             cliente_b2b_id: ID do cliente B2B identificado (se houver).
             representante_id: ID do representante (se houver).
+            cliente_nome: nome da empresa cliente (para exibição no PDF).
         """
         with tracer.start_as_current_span("agent_cliente_responder") as span:
             span.set_attribute("tenant_id", tenant.id)
@@ -298,6 +300,7 @@ class AgentCliente:
                                 representante_id=representante_id,
                                 instancia_id=mensagem.instancia_id,
                                 numero=numero,
+                                cliente_nome=cliente_nome,
                             )
                             tool_results.append({
                                 "type": "tool_result",
@@ -446,6 +449,7 @@ class AgentCliente:
         representante_id: str | None,
         instancia_id: str,
         numero: str,
+        cliente_nome: str | None = None,
     ) -> dict[str, Any]:
         """Executa ferramenta solicitada pelo modelo.
 
@@ -458,6 +462,7 @@ class AgentCliente:
             representante_id: ID do representante (se identificado).
             instancia_id: ID da instância WhatsApp.
             numero: número do remetente.
+            cliente_nome: nome da empresa cliente (para PDF).
 
         Returns:
             Resultado da ferramenta como dict serializável.
@@ -491,6 +496,7 @@ class AgentCliente:
                 representante_id=representante_id,
                 instancia_id=instancia_id,
                 numero=numero,
+                cliente_nome=cliente_nome,
             )
 
         if tool_name == "registrar_feedback":
@@ -622,6 +628,7 @@ class AgentCliente:
         representante_id: str | None,
         instancia_id: str,
         numero: str,
+        cliente_nome: str | None = None,
     ) -> dict[str, Any]:
         """Cria pedido, gera PDF e notifica gestor/rep.
 
@@ -633,6 +640,7 @@ class AgentCliente:
             representante_id: ID do representante.
             instancia_id: ID da instância WhatsApp.
             numero: número do remetente.
+            cliente_nome: nome da empresa cliente (para PDF).
 
         Returns:
             Dict com pedido_id e status de confirmação.
@@ -667,7 +675,10 @@ class AgentCliente:
         # 2. Gera PDF e notifica gestor — falha silenciosa: pedido já criado,
         # não podemos perder a confirmação por falha no PDF.
         try:
-            pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido, tenant)
+            pdf_bytes = self._pdf_generator.gerar_pdf_pedido(
+                pedido, tenant,
+                cliente_nome=cliente_nome,
+            )
 
             # 3. Notifica gestor via WhatsApp
             if tenant.whatsapp_number:

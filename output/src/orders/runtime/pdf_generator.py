@@ -28,12 +28,19 @@ _COR_BRANCO = (255, 255, 255)
 class PDFGenerator:
     """Gera PDF de pedido B2B no formato A4."""
 
-    def gerar_pdf_pedido(self, pedido: Pedido, tenant: Tenant) -> bytes:
+    def gerar_pdf_pedido(
+        self,
+        pedido: Pedido,
+        tenant: Tenant,
+        *,
+        cliente_nome: str | None = None,
+        representante_nome: str | None = None,
+    ) -> bytes:
         """Gera PDF do pedido com layout A4.
 
         Layout:
         - Header: nome do tenant em azul escuro
-        - Bloco: data + ID curto do pedido
+        - Bloco: data + ID curto do pedido + nomes de cliente e rep
         - Tabela: Codigo | Produto | Qtd | Preco Unit. | Subtotal
         - Total alinhado a direita em formato brasileiro
         - Rodape: timestamp e instrucao ao gestor
@@ -41,6 +48,8 @@ class PDFGenerator:
         Args:
             pedido: pedido completo com itens.
             tenant: dados do tenant para personalizacao do header.
+            cliente_nome: nome da empresa cliente B2B (exibido no PDF).
+            representante_nome: nome do representante comercial (exibido no PDF).
 
         Returns:
             PDF como bytes (encapsulado de bytearray retornado pelo fpdf2).
@@ -50,7 +59,7 @@ class PDFGenerator:
         pdf.set_auto_page_break(auto=True, margin=15)
 
         self._header(pdf, tenant)
-        self._bloco_info(pdf, pedido)
+        self._bloco_info(pdf, pedido, cliente_nome=cliente_nome, representante_nome=representante_nome)
         self._tabela_itens(pdf, pedido)
         self._total(pdf, pedido)
         self._rodape(pdf)
@@ -87,12 +96,21 @@ class PDFGenerator:
         pdf.set_text_color(*_COR_PRETO)
         pdf.ln(8)
 
-    def _bloco_info(self, pdf: FPDF, pedido: Pedido) -> None:
-        """Renderiza bloco com ID do pedido e data.
+    def _bloco_info(
+        self,
+        pdf: FPDF,
+        pedido: Pedido,
+        *,
+        cliente_nome: str | None = None,
+        representante_nome: str | None = None,
+    ) -> None:
+        """Renderiza bloco com ID do pedido, data, cliente e representante.
 
         Args:
             pdf: instancia FPDF.
             pedido: pedido com id e criado_em.
+            cliente_nome: nome da empresa cliente (preferido ao ID).
+            representante_nome: nome do representante (preferido ao ID).
         """
         pdf.set_font("Helvetica", style="B", size=10)
         id_curto = pedido.id[:8].upper()
@@ -102,10 +120,17 @@ class PDFGenerator:
         data_br = pedido.criado_em.strftime("%d/%m/%Y %H:%M")
         pdf.cell(0, 7, f"Data: {data_br}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-        if pedido.cliente_b2b_id:
-            pdf.cell(0, 7, f"Cliente B2B ID: {pedido.cliente_b2b_id}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        if pedido.representante_id:
-            pdf.cell(0, 7, f"Representante ID: {pedido.representante_id}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        # Cliente: exibe nome quando disponível, senão ID curto
+        if cliente_nome:
+            pdf.cell(0, 7, f"Cliente: {cliente_nome}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        elif pedido.cliente_b2b_id:
+            pdf.cell(0, 7, f"Cliente: {pedido.cliente_b2b_id[:8].upper()}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        # Representante: exibe nome quando disponível, senão ID curto
+        if representante_nome:
+            pdf.cell(0, 7, f"Representante: {representante_nome}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        elif pedido.representante_id:
+            pdf.cell(0, 7, f"Representante: {pedido.representante_id[:8].upper()}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
         pdf.ln(4)
 

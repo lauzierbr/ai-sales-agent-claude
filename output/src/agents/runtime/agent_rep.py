@@ -843,10 +843,18 @@ class AgentRep:
             session=session,
         )
 
+        # Resolve nome do cliente para o PDF (já temos a lista da validação)
+        cliente_obj = next((c for c in clientes_carteira if c.id == cliente_b2b_id), None)
+        cliente_nome_pdf = cliente_obj.nome if cliente_obj else None
+
         # Gera PDF e notifica gestor — falha silenciosa: pedido já criado,
         # não podemos perder a confirmação por falha no PDF.
         try:
-            pdf_bytes = self._pdf_generator.gerar_pdf_pedido(pedido, tenant)
+            pdf_bytes = self._pdf_generator.gerar_pdf_pedido(
+                pedido, tenant,
+                cliente_nome=cliente_nome_pdf,
+                representante_nome=self._representante.nome,
+            )
 
             # Notifica gestor via WhatsApp
             if tenant.whatsapp_number:

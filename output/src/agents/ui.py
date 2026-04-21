@@ -241,14 +241,16 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     )
 
                 elif persona == Persona.CLIENTE_B2B:
-                    # Identifica cliente B2B para injetar ID no AgentCliente
+                    # Identifica cliente B2B para injetar ID e nome no AgentCliente
                     cliente_b2b_id: str | None = None
+                    cliente_nome: str | None = None
                     telefone_norm = mensagem.de.split("@")[0]
                     cliente = await ClienteB2BRepo().get_by_telefone(
                         tenant_id, telefone_norm, session
                     )
                     if cliente is not None:
                         cliente_b2b_id = cliente.id
+                        cliente_nome = cliente.nome
 
                     # Instancia AgentCliente com dependências injetadas
                     agent_cliente = AgentCliente(
@@ -265,6 +267,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         session=session,
                         cliente_b2b_id=cliente_b2b_id,
                         representante_id=None,
+                        cliente_nome=cliente_nome,
                     )
 
                 elif persona == Persona.REPRESENTANTE:
