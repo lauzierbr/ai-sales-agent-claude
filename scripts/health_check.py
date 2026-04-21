@@ -64,6 +64,26 @@ async def check_victoria_logs():
         return False, f"VictoriaLogs FALHOU: {e}"
 
 
+async def check_anthropic():
+    try:
+        import httpx
+        app_url = os.getenv("APP_HEALTH_URL", "http://localhost:8000")
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{app_url}/health", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            state = data.get("components", {}).get("anthropic", "unknown")
+            if state == "ok":
+                return True, "Anthropic ok"
+            if state == "degraded":
+                return True, f"Anthropic degraded (overload)"
+            # fail or unknown
+            return False, f"Anthropic FAIL: state={state}"
+        return False, f"Anthropic check FALHOU: HTTP {r.status_code}"
+    except Exception as e:
+        return False, f"Anthropic check FALHOU: {e}"
+
+
 async def main():
     checks = [
         check_postgres(),
@@ -71,18 +91,25 @@ async def main():
         check_evolution(),
         check_victoria_metrics(),
         check_victoria_logs(),
+        check_anthropic(),
     ]
     results = await asyncio.gather(*checks)
     all_ok = True
-    for ok, msg in results:
+    anthropic_fail = False
+    for i, (ok, msg) in enumerate(results):
         status = "OK" if ok else "FAIL"
         print(f"  [{status}] {msg}")
         if not ok:
             all_ok = False
+            if i == len(results) - 1:  # last check is anthropic
+                anthropic_fail = True
     print()
     if all_ok:
         print("Todos os servicos funcionando.")
         sys.exit(0)
+    elif anthropic_fail:
+        print("ATENCAO: Anthropic em estado FAIL — agente indisponível.")
+        sys.exit(2)
     else:
         print("ATENCAO: Um ou mais servicos com problema.")
         sys.exit(1)

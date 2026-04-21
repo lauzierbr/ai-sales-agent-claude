@@ -8,6 +8,7 @@ Decisão D022: validação HMAC-SHA256 + resposta 200 imediata + BackgroundTask.
 from __future__ import annotations
 
 import hashlib
+import os
 from typing import Any
 
 import structlog
@@ -24,6 +25,24 @@ from src.agents.types import WebhookPayload
 log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["agents"])
+
+_WEBHOOK_RATE_LIMIT_MAX = 30
+_WEBHOOK_RATE_LIMIT_WINDOW = 60  # segundos
+
+
+async def _check_webhook_rate_limit(instance_id: str, remote_jid: str) -> bool:
+    """Retorna True se o limite foi atingido (deve rejeitar com 429)."""
+    try:
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+        key = f"wh_rl:{instance_id}:{remote_jid}"
+        count = await r.incr(key)
+        if count == 1:
+            await r.expire(key, _WEBHOOK_RATE_LIMIT_WINDOW)
+        await r.aclose()
+        return bool(count > _WEBHOOK_RATE_LIMIT_MAX)
+    except Exception:
+        return False
 
 
 @router.post("/webhook/whatsapp")
@@ -65,6 +84,13 @@ async def webhook_whatsapp(
     if payload.event not in _UPSERT_EVENTS:
         log.debug("webhook_evento_ignorado", tipo_evento=payload.event)
         return JSONResponse({"status": "received"})
+
+    # Rate limiting por instance_id + remoteJid — 30 eventos/min por remetente
+    remote_jid = payload.data.get("key", {}).get("remoteJid", "") if isinstance(payload.data, dict) else ""
+    instance_id = payload.instance or ""
+    if await _check_webhook_rate_limit(instance_id, remote_jid):
+        log.warning("webhook_rate_limit", instance_id=instance_id, remote_jid=remote_jid)
+        return JSONResponse({"error": "rate_limit_exceeded"}, status_code=429)
 
     # Processamento em background — resposta não é bloqueada
     background_tasks.add_task(_process_message, payload.model_dump())

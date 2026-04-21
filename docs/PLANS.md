@@ -15,6 +15,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 4 | ✅ | Produto | Painel do gestor |
 | Sprint 5-teste | ✅ | Harness | Validação harness v2 — top produtos (gates mecânicos) |
 | Sprint 5 | ✅ | Produto | Observabilidade LLM, feedback, UX dashboard, contatos — v0.6.0 |
+| Sprint 6 | 🔄 | Hardening | Pre-pilot hardening do dashboard e baseline operacional mínimo |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 
@@ -142,6 +143,21 @@ Bugs corrigidos na homologação (pós-QA):
 - Relatórios de performance por representante
 - Langfuse (auto-hospedado via Docker): instrumentação dos 3 agentes com traces por tool call, custo por conversa e avaliação de qualidade
 - Doc-gardening agent (verifica documentação vs código)
+
+### Sprint 6 — Pre-Pilot Hardening 🔄 Em planejamento
+Plano detalhado: `docs/exec-plans/active/sprint-6-pre-pilot-hardening.md`
+
+Escopo previsto:
+- corrigir cadastro de cliente via dashboard
+- corrigir upload de preços via dashboard
+- revisar fluxo/navegação de top produtos
+- revisar queries do dashboard com foco em tenant isolation
+- validar secrets críticos no startup
+- aplicar rate limiting em login do dashboard e webhook WhatsApp
+- expor monitoramento/health check para falhas Anthropic
+- ajustar CORS/cookie por ambiente
+- expandir testes críticos do dashboard
+- fechar smoke e homologação pré-piloto
 
 ### Sprints futuros (backlog)
 - Sugestão proativa por ciclo de compra

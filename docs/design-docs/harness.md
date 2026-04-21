@@ -92,3 +92,8 @@ o harness pode ser executado de forma autônoma via API Python, sem
 interação manual entre os agentes.
 
 Ver `scripts/managed-agents/` e `docs/design-docs/memory-stores.md` (D015).
+
+## Operação no Codex
+
+Para rodar o mesmo fluxo manualmente no Codex Desktop com chats separados
+por papel, ver `docs/design-docs/harness-codex-playbook.md`.

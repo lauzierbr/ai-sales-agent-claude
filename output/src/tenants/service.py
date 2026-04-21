@@ -5,6 +5,7 @@ Camada Service: importa apenas Types, Config e Repo do domínio.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -13,7 +14,7 @@ from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.providers.auth import hash_password
-from src.tenants.repo import TenantRepo, UsuarioRepo
+from src.tenants.repo import ClienteB2BCreateRepo, TenantRepo, UsuarioRepo
 from src.tenants.types import Role, Tenant, Usuario
 
 log = structlog.get_logger(__name__)
@@ -105,6 +106,57 @@ class TenantService:
         with tracer.start_as_current_span("get_active_tenants"):
             async with self._sf() as session:
                 return await self._tenant_repo.get_active_tenants(session)
+
+    async def criar_cliente_ficticio(
+        self,
+        tenant_id: str,
+        nome: str,
+        cnpj: str,
+        telefone: str | None,
+        representante_id: str | None,
+    ) -> str:
+        """Cria cliente fictício via dashboard — usado até integração ERP.
+
+        Args:
+            tenant_id: ID do tenant.
+            nome: razão social do cliente.
+            cnpj: CNPJ (com ou sem formatação — normalizado internamente).
+            telefone: telefone de contato ou None.
+            representante_id: ID do representante vinculado ou None.
+
+        Returns:
+            ID do cliente criado (UUID string).
+
+        Raises:
+            ValueError: CNPJ inválido, duplicado ou representante de outro tenant.
+        """
+        cnpj_digits = re.sub(r"\D", "", cnpj)
+        if len(cnpj_digits) != 14:
+            raise ValueError("CNPJ inválido: deve ter 14 dígitos")
+
+        with tracer.start_as_current_span("criar_cliente_ficticio") as span:
+            span.set_attribute("tenant_id", tenant_id)
+            cliente_repo = ClienteB2BCreateRepo()
+            async with self._sf() as session:
+                if representante_id:
+                    ok = await cliente_repo.representante_pertence_ao_tenant(
+                        representante_id, tenant_id, session
+                    )
+                    if not ok:
+                        raise ValueError("Representante não pertence ao tenant")
+                if await cliente_repo.exists_by_cnpj(cnpj_digits, tenant_id, session):
+                    raise ValueError("CNPJ já cadastrado neste tenant")
+                cliente_id = await cliente_repo.create(
+                    tenant_id=tenant_id,
+                    nome=nome,
+                    cnpj=cnpj_digits,
+                    telefone=telefone or None,
+                    representante_id=representante_id,
+                    session=session,
+                )
+                await session.commit()
+        log.info("cliente_ficticio_criado", tenant_id=tenant_id, cliente_id=cliente_id)
+        return cliente_id
 
     async def get_tenant(self, tenant_id: str) -> Tenant | None:
         """Retorna tenant por ID.

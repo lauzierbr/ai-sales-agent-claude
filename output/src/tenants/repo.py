@@ -208,3 +208,85 @@ class UsuarioRepo:
         )
         log.info("usuario_criado", usuario_id=usuario.id, tenant_id=usuario.tenant_id)
         return usuario
+
+
+class ClienteB2BCreateRepo:
+    """Operações de criação de clientes B2B — usadas pelo TenantService (dashboard)."""
+
+    async def exists_by_cnpj(
+        self, cnpj: str, tenant_id: str, session: AsyncSession
+    ) -> bool:
+        """Retorna True se já existe cliente ativo com este CNPJ no tenant.
+
+        Args:
+            cnpj: CNPJ normalizado (somente dígitos).
+            tenant_id: identificador do tenant.
+            session: sessão SQLAlchemy assíncrona.
+        """
+        result = await session.execute(
+            text("SELECT 1 FROM clientes_b2b WHERE cnpj = :cnpj AND tenant_id = :tid AND ativo = true"),
+            {"cnpj": cnpj, "tid": tenant_id},
+        )
+        return result.first() is not None
+
+    async def representante_pertence_ao_tenant(
+        self, representante_id: str, tenant_id: str, session: AsyncSession
+    ) -> bool:
+        """Verifica se o representante existe e pertence ao tenant.
+
+        Args:
+            representante_id: ID do representante.
+            tenant_id: identificador do tenant.
+            session: sessão SQLAlchemy assíncrona.
+        """
+        result = await session.execute(
+            text("SELECT 1 FROM representantes WHERE id = :id AND tenant_id = :tid AND ativo = true"),
+            {"id": representante_id, "tid": tenant_id},
+        )
+        return result.first() is not None
+
+    async def create(
+        self,
+        tenant_id: str,
+        nome: str,
+        cnpj: str,
+        telefone: str | None,
+        representante_id: str | None,
+        session: AsyncSession,
+    ) -> str:
+        """Cria registro em clientes_b2b e retorna o ID gerado.
+
+        Não faz commit — responsabilidade do Service.
+
+        Args:
+            tenant_id: identificador do tenant.
+            nome: razão social do cliente.
+            cnpj: CNPJ normalizado (somente dígitos).
+            telefone: número de telefone ou None.
+            representante_id: ID do representante vinculado ou None.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            ID do cliente criado (UUID string).
+        """
+        cliente_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        await session.execute(
+            text("""
+                INSERT INTO clientes_b2b
+                    (id, tenant_id, nome, cnpj, telefone, representante_id, ativo, criado_em)
+                VALUES
+                    (:id, :tid, :nome, :cnpj, :tel, :rep_id, true, :criado_em)
+            """),
+            {
+                "id": cliente_id,
+                "tid": tenant_id,
+                "nome": nome,
+                "cnpj": cnpj,
+                "tel": telefone or None,
+                "rep_id": representante_id,
+                "criado_em": now,
+            },
+        )
+        log.info("cliente_b2b_criado", cliente_id=cliente_id, tenant_id=tenant_id)
+        return cliente_id

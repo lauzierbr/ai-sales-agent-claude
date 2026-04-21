@@ -6,10 +6,12 @@ Todos os externos (repo, enricher, openai) são mockados via AsyncMock.
 
 from __future__ import annotations
 
+import io
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, call
 from uuid import UUID
 
+import pandas as pd
 import pytest
 
 from src.catalog.service import CatalogService
@@ -243,6 +245,31 @@ async def test_processar_excel_precos_arquivo_invalido(
     """processar_excel_precos deve levantar ValueError para bytes inválidos."""
     with pytest.raises(ValueError, match="Excel inválido"):
         await service.processar_excel_precos(tenant_id, b"nao e excel")
+
+
+@pytest.mark.unit
+async def test_processar_excel_precos_commit_chamado(tenant_id: str) -> None:
+    """M5: processar_excel_precos delega ao repo que chama session.commit()."""
+    from src.catalog.repo import CatalogRepo
+
+    # Cria Excel mínimo em memória com uma linha válida
+    df = pd.DataFrame([{"codigo": "SKU001", "cnpj": "12345678000195", "preco": "10.50"}])
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False)
+    excel_bytes = buf.getvalue()
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=MagicMock())
+    mock_factory = MagicMock()
+    mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    catalog_repo = CatalogRepo(session_factory=mock_factory)
+    catalog_service = CatalogService(repo=catalog_repo, enricher=None, embedding_client=None)  # type: ignore[arg-type]
+
+    await catalog_service.processar_excel_precos(tenant_id, excel_bytes)
+
+    mock_session.commit.assert_called()
 
 
 # ─────────────────────────────────────────────

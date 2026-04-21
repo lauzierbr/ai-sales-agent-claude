@@ -1,0 +1,83 @@
+{
+  "sprint": 6,
+  "sprint_name": "Pre-Pilot Hardening",
+  "rodada": 1,
+  "veredicto": "REPROVADO",
+  "data": "2026-04-21",
+  "avaliador": "Evaluator Agent",
+  "referencia": "artifacts/sprint_contract.md",
+
+  "checks_automaticos": [
+    {"id": "secrets", "comando": "grep -rn sk-ant|api_key output/src/", "resultado": "PASS", "detalhes": "0 resultados"},
+    {"id": "passwords", "comando": "grep -rn password=... output/src/", "resultado": "PASS", "detalhes": "0 resultados"},
+    {"id": "print", "comando": "grep -rn print( output/src/", "resultado": "PASS", "detalhes": "0 resultados em produção"},
+    {"id": "lint-imports", "comando": "PYTHONPATH=output .venv/bin/lint-imports", "resultado": "PASS", "detalhes": "5/5 contratos KEPT"},
+    {"id": "pytest_unit", "comando": "pytest -m unit output/src/tests/unit/", "resultado": "PASS", "detalhes": "266 passed, 0 falhas"},
+    {"id": "pytest_staging", "comando": "pytest -m staging (mac-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer mac-lablz"},
+    {"id": "smoke_a_smoke", "comando": "smoke_sprint_6.py (mac-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer mac-lablz; GAP: faltam POST clientes/novo, POST precos/upload, burst webhook"},
+    {"id": "smoke_g4", "comando": "smoke_ui.sh (mac-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer mac-lablz; script existe"}
+  ],
+
+  "criterios_alta": [
+    {"id": "A1", "nome": "B1-CLIENTE-NOVO", "status": "PASS", "testes_passaram": 4},
+    {"id": "A2", "nome": "B2-PRECOS-UPLOAD", "status": "PASS", "testes_passaram": 2},
+    {"id": "A3", "nome": "B3-TOP-PRODUTOS", "status": "PASS", "testes_passaram": 2},
+    {"id": "A4", "nome": "B4-TENANT-ISOLATION", "status": "PASS", "testes_passaram": 1},
+    {"id": "A5", "nome": "E5-STARTUP", "status": "PASS", "testes_passaram": 4},
+    {"id": "A6", "nome": "E6-RATE-LOGIN", "status": "PASS", "testes_passaram": 3},
+    {"id": "A7", "nome": "E7-RATE-WEBHOOK", "status": "PASS", "testes_passaram": 3},
+    {"id": "A8", "nome": "E8-HEALTH-ANTHROPIC", "status": "PASS", "testes_passaram": 6},
+    {"id": "A9", "nome": "E9-CORS", "status": "PASS", "testes_passaram": 2},
+    {"id": "A10", "nome": "G4-SMOKE-UI", "status": "CANNOT_RUN", "detalhes": "requer mac-lablz"},
+    {"id": "A_SMOKE", "nome": "smoke-gate-staging", "status": "CANNOT_RUN", "detalhes": "requer mac-lablz; GAP de cobertura documentado"}
+  ],
+
+  "criterios_media": [
+    {
+      "id": "M1",
+      "nome": "TYPE-HINTS",
+      "status": "FAIL",
+      "evidencia": "46 erros mypy; ~12 em arquivos do sprint (agents/ui.py:43, dashboard/ui.py:60,664,754+, main.py:140)",
+      "correcao": "Corrigir Returning Any, missing type args dict→dict[str,Any], unused type:ignore"
+    },
+    {"id": "M2", "nome": "DOCSTRINGS", "status": "PASS", "evidencia": ">=80% cobertura visual confirmada"},
+    {
+      "id": "M3",
+      "nome": "COVERAGE-UNIT",
+      "status": "FAIL",
+      "evidencia": "catalog/service.py 84% PASS; tenants/service.py 71% FAIL (linhas 133-159 não cobertas)",
+      "correcao": "Adicionar testes unitários diretos de criar_cliente_ficticio em tests/unit/tenants/test_service.py"
+    },
+    {
+      "id": "M5",
+      "nome": "COMMIT-SERVICE",
+      "status": "FAIL",
+      "evidencia": "commit.assert_called ausente em tests/unit/tenants/test_service.py e tests/unit/catalog/test_service.py",
+      "correcao": "Adicionar mock_session.commit.assert_called() nos testes de Service que escrevem no banco"
+    },
+    {
+      "id": "M_INJECT",
+      "nome": "INJECAO-DEPS",
+      "status": "FAIL",
+      "bloqueante": true,
+      "evidencia": "output/src/tests/staging/agents/test_ui_injection.py NÃO EXISTE",
+      "correcao": "Criar test_ui_injection.py com testes de AgentCliente, AgentRep, AgentGestor"
+    }
+  ],
+
+  "resumo_media": {
+    "falhas": 4,
+    "total": 5,
+    "threshold": 1,
+    "status": "EXCEDEU",
+    "m_inject_bloqueante": true
+  },
+
+  "logs_anexados": {
+    "pytest_unit": "266 passed, 0 falhas — local",
+    "lint_imports": "5/5 KEPT — local",
+    "mypy": "46 errors — local",
+    "coverage_tenants_service": "71%",
+    "coverage_catalog_service": "84%"
+  }
+}

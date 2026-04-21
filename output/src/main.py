@@ -6,9 +6,10 @@ Sprint 1: TenantProvider middleware, auth JWT, tenants, agents, scheduler.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 import structlog
 from fastapi import FastAPI
@@ -24,14 +25,36 @@ from src.agents.ui import router as agents_router
 
 log = structlog.get_logger(__name__)
 
+_REQUIRED_SECRETS = [
+    "POSTGRES_URL",
+    "REDIS_URL",
+    "JWT_SECRET",
+    "DASHBOARD_SECRET",
+    "DASHBOARD_TENANT_ID",
+    "EVOLUTION_API_KEY",
+    "EVOLUTION_WEBHOOK_SECRET",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+]
+
+
+def _validate_secrets() -> None:
+    """Falha no startup se algum secret crítico estiver ausente."""
+    missing = [k for k in _REQUIRED_SECRETS if not os.getenv(k)]
+    if missing:
+        raise RuntimeError(
+            "Secrets críticos ausentes — a aplicação não pode iniciar: "
+            + ", ".join(missing)
+        )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Gerencia ciclo de vida da aplicação — inicia e encerra scheduler."""
-    import os
-
     from src.providers.db import get_session_factory
     from src.providers.scheduler import create_scheduler, start_scheduler_from_db
+
+    _validate_secrets()
 
     # Garante diretório de PDFs
     pdf_storage_path = os.getenv("PDF_STORAGE_PATH", "./pdfs")
@@ -41,7 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler = create_scheduler()
     await start_scheduler_from_db(scheduler, get_session_factory())
 
-    log.info("app_iniciada", versao="0.4.0")
+    log.info("app_iniciada", versao="0.6.1")
     yield
 
     if scheduler.running:
@@ -56,7 +79,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Sales Agent",
         description="Agente de vendas B2B via WhatsApp para distribuidoras brasileiras",
-        version="0.6.0",
+        version="0.6.1",
         lifespan=lifespan,
     )
 
@@ -64,12 +87,23 @@ def create_app() -> FastAPI:
     # Middleware
     # ─────────────────────────────────────────────
 
-    # CORS — Sprint 1 ainda permissivo; Sprint 4 restringirá por origem
+    environment = os.getenv("ENVIRONMENT", "development")
+    if environment == "development":
+        cors_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    else:
+        raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
+        if not raw:
+            raise RuntimeError(
+                f"CORS_ALLOWED_ORIGINS deve ser definido em ambiente {environment!r}"
+            )
+        cors_origins = [o.strip() for o in raw.split(",") if o.strip()]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
+        allow_origins=cors_origins,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
+        allow_credentials=True,
     )
 
     # TenantProvider — injeta tenant em todo request (exceto rotas excluídas)
@@ -94,8 +128,7 @@ def create_app() -> FastAPI:
     app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")
 
     # PDFs gerados pelo agente
-    import os as _os
-    pdfs_dir = Path(_os.getenv("PDF_STORAGE_PATH", "./pdfs"))
+    pdfs_dir = Path(os.getenv("PDF_STORAGE_PATH", "./pdfs"))
     pdfs_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/pdfs", StaticFiles(directory=str(pdfs_dir)), name="pdfs")
 
@@ -104,9 +137,19 @@ def create_app() -> FastAPI:
     # ─────────────────────────────────────────────
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
+    async def health() -> dict[str, Any]:
         """Endpoint de health check — excluído do TenantProvider."""
-        return {"status": "ok", "version": "0.6.0"}
+        from src.agents.runtime._retry import get_anthropic_health
+
+        anthropic_state = get_anthropic_health()
+        overall = "ok" if anthropic_state == "ok" else "degraded"
+        return {
+            "status": overall,
+            "version": "0.6.1",
+            "components": {
+                "anthropic": anthropic_state,
+            },
+        }
 
     return app
 

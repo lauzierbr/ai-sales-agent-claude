@@ -30,6 +30,48 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 _COOKIE_NAME = "dashboard_session"
 _COOKIE_MAX_AGE = 8 * 3600  # 8h em segundos
 
+_LOGIN_RATE_LIMIT_MAX = 5
+_LOGIN_RATE_LIMIT_WINDOW = 15 * 60  # 15 min em segundos
+
+
+async def _get_login_attempts(ip: str) -> int:
+    """Retorna número de falhas de login recentes para o IP."""
+    try:
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+        key = f"login_fail:{ip}"
+        val = await r.get(key)
+        await r.aclose()
+        return int(val) if val else 0
+    except Exception:
+        return 0
+
+
+async def _increment_login_fail(ip: str) -> int:
+    """Incrementa contador de falhas de login para o IP; retorna novo valor."""
+    try:
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+        key = f"login_fail:{ip}"
+        count = await r.incr(key)
+        if count == 1:
+            await r.expire(key, _LOGIN_RATE_LIMIT_WINDOW)
+        await r.aclose()
+        return int(count)
+    except Exception:
+        return 0
+
+
+async def _reset_login_fail(ip: str) -> None:
+    """Remove contador de falhas após login bem-sucedido."""
+    try:
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+        await r.delete(f"login_fail:{ip}")
+        await r.aclose()
+    except Exception:
+        pass
+
 
 def _get_dashboard_secret() -> str:
     return os.getenv("DASHBOARD_SECRET", "")
@@ -79,7 +121,18 @@ async def post_login(request: Request) -> Any:
 
     Sucesso → seta cookie HttpOnly SameSite=Lax + redirect /dashboard/home.
     Falha → re-renderiza login.html com error=True.
+    Rate limit: 5 falhas por IP em 15min → HTTP 429.
     """
+    client_ip = request.client.host if request.client else "unknown"
+
+    attempts = await _get_login_attempts(client_ip)
+    if attempts >= _LOGIN_RATE_LIMIT_MAX:
+        log.warning("dashboard_login_rate_limit", ip=client_ip, attempts=attempts)
+        return HTMLResponse(
+            "<h2>Muitas tentativas. Aguarde 15 minutos e tente novamente.</h2>",
+            status_code=429,
+        )
+
     form = await request.form()
     senha = form.get("senha", "")
 
@@ -94,7 +147,8 @@ async def post_login(request: Request) -> Any:
         )
 
     if not hmac.compare_digest(stored_secret.encode(), str(senha).encode()):
-        log.warning("dashboard_login_senha_incorreta")
+        await _increment_login_fail(client_ip)
+        log.warning("dashboard_login_senha_incorreta", ip=client_ip)
         return templates.TemplateResponse(
             request,
             "login.html",
@@ -102,6 +156,7 @@ async def post_login(request: Request) -> Any:
             status_code=401,
         )
 
+    await _reset_login_fail(client_ip)
     tenant_id = _get_dashboard_tenant_id()
     token = create_access_token(
         user_id="gestor-dashboard",
@@ -116,7 +171,7 @@ async def post_login(request: Request) -> Any:
         httponly=True,
         samesite="lax",
         max_age=_COOKIE_MAX_AGE,
-        secure=False,  # True em produção com HTTPS
+        secure=os.getenv("ENVIRONMENT", "development") == "production",
     )
     log.info("dashboard_login_sucesso", tenant_id=tenant_id)
     return response
@@ -606,26 +661,30 @@ async def precos_upload(request: Request) -> HTMLResponse:
                 status_code=400,
             )
 
-        conteudo = await file.read()  # type: ignore[union-attr]
+        conteudo = await file.read()
 
-        from src.catalog.service import CatalogService
         from src.catalog.repo import CatalogRepo
+        from src.catalog.service import CatalogService
         from src.providers.db import get_session_factory
 
         factory = get_session_factory()
         catalog_repo = CatalogRepo(session_factory=factory)
         catalog_service = CatalogService(repo=catalog_repo, enricher=None, embedding_client=None)  # type: ignore[arg-type]
 
-        async with factory() as db_session:
-            n = await catalog_service.upload_excel_precos(
-                tenant_id=tenant_id,
-                conteudo=conteudo,
-                session=db_session,
-            )
+        result = await catalog_service.processar_excel_precos(
+            tenant_id=tenant_id,
+            file_bytes=conteudo,
+        )
 
-        log.info("dashboard_precos_upload_ok", tenant_id=tenant_id, n_registros=n)
+        log.info(
+            "dashboard_precos_upload_ok",
+            tenant_id=tenant_id,
+            inseridos=result.inseridos,
+            linhas=result.linhas_processadas,
+        )
         return HTMLResponse(
-            f"<div class='msg success'>✓ {n} preços atualizados com sucesso.</div>"
+            f"<div class='msg success'>✓ {result.inseridos} preços inseridos / "
+            f"{result.linhas_processadas} linhas processadas.</div>"
         )
 
     except Exception as exc:
@@ -692,7 +751,7 @@ async def _get_kpis(tenant_id: str) -> dict[str, Any]:
         return {"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0, "atualizado_em": "--:--:--"}
 
 
-async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict]:
+async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict[str, Any]]:
     """Retorna os N pedidos mais recentes do tenant."""
     try:
         from sqlalchemy import text
@@ -706,7 +765,7 @@ async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict]:
                     SELECT p.id, p.status, p.total_estimado,
                            p.criado_em, c.nome AS cliente_nome
                     FROM pedidos p
-                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id AND c.tenant_id = p.tenant_id
                     WHERE p.tenant_id = :tenant_id
                     ORDER BY p.criado_em DESC
                     LIMIT :limit
@@ -720,7 +779,7 @@ async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict]:
         return []
 
 
-async def _get_conversas_ativas(tenant_id: str) -> list[dict]:
+async def _get_conversas_ativas(tenant_id: str) -> list[dict[str, Any]]:
     """Retorna conversas das últimas 24h."""
     try:
         from sqlalchemy import text
@@ -747,7 +806,7 @@ async def _get_conversas_ativas(tenant_id: str) -> list[dict]:
         return []
 
 
-async def _get_clientes(tenant_id: str, q: str) -> list[dict]:
+async def _get_clientes(tenant_id: str, q: str) -> list[dict[str, Any]]:
     """Retorna clientes do tenant com filtro opcional por nome/CNPJ."""
     try:
         from sqlalchemy import text
@@ -786,7 +845,7 @@ async def _get_clientes(tenant_id: str, q: str) -> list[dict]:
         return []
 
 
-async def _get_representantes_com_gmv(tenant_id: str) -> list[dict]:
+async def _get_representantes_com_gmv(tenant_id: str) -> list[dict[str, Any]]:
     """Retorna representantes com GMV do mês corrente."""
     try:
         from datetime import timedelta
@@ -873,7 +932,7 @@ async def feedbacks(request: Request) -> Any:
     )
 
 
-async def _get_todos_contatos(tenant_id: str) -> list[dict]:
+async def _get_todos_contatos(tenant_id: str) -> list[dict[str, Any]]:
     try:
         from sqlalchemy import text
         from src.providers.db import get_session_factory
@@ -898,7 +957,7 @@ async def _get_todos_contatos(tenant_id: str) -> list[dict]:
         return []
 
 
-async def _get_contato_by_id(tenant_id: str, perfil: str, contato_id: str) -> dict | None:
+async def _get_contato_by_id(tenant_id: str, perfil: str, contato_id: str) -> dict[str, Any] | None:
     table = {"gestor": "gestores", "rep": "representantes", "cliente": "clientes_b2b"}.get(perfil)
     if not table:
         return None
@@ -922,7 +981,7 @@ async def _get_contato_by_id(tenant_id: str, perfil: str, contato_id: str) -> di
         return None
 
 
-async def _get_gestores(tenant_id: str) -> list[dict]:
+async def _get_gestores(tenant_id: str) -> list[dict[str, Any]]:
     try:
         from sqlalchemy import text
         from src.providers.db import get_session_factory
@@ -937,7 +996,7 @@ async def _get_gestores(tenant_id: str) -> list[dict]:
         return []
 
 
-async def _get_cliente_by_id(tenant_id: str, cliente_id: str) -> dict | None:
+async def _get_cliente_by_id(tenant_id: str, cliente_id: str) -> dict[str, Any] | None:
     try:
         from sqlalchemy import text
         from src.providers.db import get_session_factory
@@ -953,7 +1012,7 @@ async def _get_cliente_by_id(tenant_id: str, cliente_id: str) -> dict | None:
         return None
 
 
-async def _get_representantes_simples(tenant_id: str) -> list[dict]:
+async def _get_representantes_simples(tenant_id: str) -> list[dict[str, Any]]:
     try:
         from sqlalchemy import text
         from src.providers.db import get_session_factory

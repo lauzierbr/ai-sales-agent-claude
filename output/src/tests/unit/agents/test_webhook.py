@@ -328,3 +328,110 @@ async def test_webhook_dedup_redis_ignora_duplicata() -> None:
 
     assert resp1.status_code == 200
     assert len(mock_process_calls) == 1, "Primeira entrega deve ser processada"
+
+
+# ─────────────────────────────────────────────
+# A7 — E7-RATE-WEBHOOK
+# ─────────────────────────────────────────────
+
+
+def _sign(body: bytes, secret: str = _WEBHOOK_SECRET) -> str:
+    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_31o_evento_retorna_429() -> None:
+    """A7: 31º evento MESSAGES_UPSERT do mesmo remetente retorna 429."""
+    import os
+    body = json.dumps(_PAYLOAD).encode()
+    sig = _sign(body)
+
+    call_count = 0
+
+    async def fake_rate_limit(instance_id: str, remote_jid: str) -> bool:
+        nonlocal call_count
+        call_count += 1
+        return call_count > 30
+
+    with (
+        patch("src.agents.ui._check_webhook_rate_limit", new=fake_rate_limit),
+        patch("src.agents.ui._process_message", new=AsyncMock()),
+        patch.dict(os.environ, {"EVOLUTION_WEBHOOK_SECRET": _WEBHOOK_SECRET}),
+    ):
+        app = _make_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            responses = []
+            for _ in range(32):
+                resp = await client.post(
+                    "/webhook/whatsapp",
+                    content=body,
+                    headers={"Content-Type": "application/json", "X-Evolution-Signature": sig},
+                )
+                responses.append(resp.status_code)
+
+    ok_responses = [s for s in responses if s == 200]
+    rate_limited = [s for s in responses if s == 429]
+    assert len(ok_responses) == 30, f"Primeiros 30 devem ser 200, got {ok_responses}"
+    assert len(rate_limited) >= 1, "31º e acima devem ser 429"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_nao_conta_eventos_nao_upsert() -> None:
+    """A7: eventos não-MESSAGES_UPSERT não são contados no rate limit."""
+    import os
+    payload_outro = {**_PAYLOAD, "event": "CONNECTION_UPDATE"}
+    body = json.dumps(payload_outro).encode()
+    sig = _sign(body)
+
+    rate_check_calls = []
+
+    async def fake_rate_limit(instance_id: str, remote_jid: str) -> bool:
+        rate_check_calls.append((instance_id, remote_jid))
+        return False
+
+    with (
+        patch("src.agents.ui._check_webhook_rate_limit", new=fake_rate_limit),
+        patch("src.agents.ui._process_message", new=AsyncMock()),
+        patch.dict(os.environ, {"EVOLUTION_WEBHOOK_SECRET": _WEBHOOK_SECRET}),
+    ):
+        app = _make_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/webhook/whatsapp",
+                content=body,
+                headers={"Content-Type": "application/json", "X-Evolution-Signature": sig},
+            )
+
+    assert resp.status_code == 200
+    assert len(rate_check_calls) == 0, "Eventos não-UPSERT não devem ser contados no rate limit"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_429_payload_json_estavel() -> None:
+    """A7: payload 429 é JSON com campo 'error'."""
+    import os
+    body = json.dumps(_PAYLOAD).encode()
+    sig = _sign(body)
+
+    with (
+        patch("src.agents.ui._check_webhook_rate_limit", new=AsyncMock(return_value=True)),
+        patch("src.agents.ui._process_message", new=AsyncMock()),
+        patch.dict(os.environ, {"EVOLUTION_WEBHOOK_SECRET": _WEBHOOK_SECRET}),
+    ):
+        app = _make_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/webhook/whatsapp",
+                content=body,
+                headers={"Content-Type": "application/json", "X-Evolution-Signature": sig},
+            )
+
+    assert resp.status_code == 429
+    data = resp.json()
+    assert "error" in data

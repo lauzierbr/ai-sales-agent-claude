@@ -15,13 +15,35 @@ imediatamente para preservar o recovery path já existente em cada agente
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 import structlog
 
 log = structlog.get_logger(__name__)
 
 _OVERLOAD_DELAYS = (2.0, 4.0, 8.0)
+
+AnthropicHealthState = Literal["ok", "degraded", "fail"]
+_anthropic_health_state: AnthropicHealthState = "ok"
+
+
+def get_anthropic_health() -> AnthropicHealthState:
+    """Retorna o estado atual da integração Anthropic."""
+    return _anthropic_health_state
+
+
+def _set_anthropic_health(state: AnthropicHealthState) -> None:
+    global _anthropic_health_state
+    _anthropic_health_state = state
+
+
+def _is_auth_or_quota(exc: BaseException) -> bool:
+    """Identifica erros de auth/quota (401, 403, 402) — classificados como 'fail'."""
+    status = getattr(exc, "status_code", None)
+    if status in (401, 403, 402):
+        return True
+    msg = str(exc).lower()
+    return any(kw in msg for kw in ("authentication_error", "permission_error", "quota", "invalid api key"))
 
 
 def _is_overload(exc: BaseException) -> bool:
@@ -68,11 +90,17 @@ async def call_with_overload_retry(
         if delay > 0:
             await asyncio.sleep(delay)
         try:
-            return await create_fn(**kwargs)
+            result = await create_fn(**kwargs)
+            _set_anthropic_health("ok")
+            return result
         except Exception as exc:
+            if _is_auth_or_quota(exc):
+                _set_anthropic_health("fail")
+                raise
             if not _is_overload(exc):
                 raise
             last_exc = exc
+            _set_anthropic_health("degraded")
             log.warning(
                 "agent_anthropic_overload_retry",
                 agent=agent_name,

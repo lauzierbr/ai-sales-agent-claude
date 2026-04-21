@@ -246,3 +246,155 @@ async def test_get_tenant_inexistente_retorna_none() -> None:
         result = await service.get_tenant("inexistente")
 
     assert result is None
+
+
+# ─────────────────────────────────────────────
+# TenantService.criar_cliente_ficticio (M3 + M5)
+# ─────────────────────────────────────────────
+
+
+def _mock_session_factory_criar() -> tuple[MagicMock, AsyncMock]:
+    """Retorna (factory, session) onde session.commit é rastreável."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.commit = AsyncMock()
+    factory = MagicMock()
+    factory.return_value = session
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    return factory, session
+
+
+@pytest.mark.unit
+async def test_criar_cliente_ficticio_retorna_id() -> None:
+    """TenantService.criar_cliente_ficticio retorna ID UUID do cliente criado."""
+    from src.tenants.service import TenantService
+
+    factory, _ = _mock_session_factory_criar()
+
+    with patch("src.tenants.service.ClienteB2BCreateRepo") as MockRepo:
+        mock_repo = AsyncMock()
+        mock_repo.representante_pertence_ao_tenant = AsyncMock(return_value=True)
+        mock_repo.exists_by_cnpj = AsyncMock(return_value=False)
+        mock_repo.create = AsyncMock(return_value="cliente-uuid-001")
+        MockRepo.return_value = mock_repo
+
+        service = TenantService(factory)
+        cliente_id = await service.criar_cliente_ficticio(
+            tenant_id="jmb",
+            nome="Empresa Teste",
+            cnpj="12345678000195",
+            telefone="11999999999",
+            representante_id=None,
+        )
+
+    assert cliente_id == "cliente-uuid-001"
+
+
+@pytest.mark.unit
+async def test_criar_cliente_ficticio_commit_chamado() -> None:
+    """M5: TenantService.criar_cliente_ficticio chama session.commit() explicitamente."""
+    from src.tenants.service import TenantService
+
+    factory, session = _mock_session_factory_criar()
+
+    with patch("src.tenants.service.ClienteB2BCreateRepo") as MockRepo:
+        mock_repo = AsyncMock()
+        mock_repo.representante_pertence_ao_tenant = AsyncMock(return_value=True)
+        mock_repo.exists_by_cnpj = AsyncMock(return_value=False)
+        mock_repo.create = AsyncMock(return_value="cliente-uuid-002")
+        MockRepo.return_value = mock_repo
+
+        service = TenantService(factory)
+        await service.criar_cliente_ficticio(
+            tenant_id="jmb",
+            nome="Empresa Commit",
+            cnpj="12345678000195",
+            telefone=None,
+            representante_id=None,
+        )
+
+    session.commit.assert_called()
+
+
+@pytest.mark.unit
+async def test_criar_cliente_ficticio_cnpj_invalido_levanta_value_error() -> None:
+    """M3: criar_cliente_ficticio levanta ValueError para CNPJ < 14 dígitos."""
+    from src.tenants.service import TenantService
+
+    factory, _ = _mock_session_factory_criar()
+    service = TenantService(factory)
+
+    with pytest.raises(ValueError, match="CNPJ inválido"):
+        await service.criar_cliente_ficticio(
+            tenant_id="jmb", nome="X", cnpj="12345", telefone=None, representante_id=None,
+        )
+
+
+@pytest.mark.unit
+async def test_criar_cliente_ficticio_cnpj_duplicado_levanta_value_error() -> None:
+    """M3: criar_cliente_ficticio levanta ValueError quando CNPJ já existe no tenant."""
+    from src.tenants.service import TenantService
+
+    factory, _ = _mock_session_factory_criar()
+
+    with patch("src.tenants.service.ClienteB2BCreateRepo") as MockRepo:
+        mock_repo = AsyncMock()
+        mock_repo.exists_by_cnpj = AsyncMock(return_value=True)
+        MockRepo.return_value = mock_repo
+
+        service = TenantService(factory)
+        with pytest.raises(ValueError, match="já cadastrado"):
+            await service.criar_cliente_ficticio(
+                tenant_id="jmb", nome="X", cnpj="12345678000195", telefone=None, representante_id=None,
+            )
+
+
+@pytest.mark.unit
+async def test_criar_cliente_ficticio_rep_invalido_levanta_value_error() -> None:
+    """M3: criar_cliente_ficticio levanta ValueError para representante de outro tenant."""
+    from src.tenants.service import TenantService
+
+    factory, _ = _mock_session_factory_criar()
+
+    with patch("src.tenants.service.ClienteB2BCreateRepo") as MockRepo:
+        mock_repo = AsyncMock()
+        mock_repo.representante_pertence_ao_tenant = AsyncMock(return_value=False)
+        mock_repo.exists_by_cnpj = AsyncMock(return_value=False)
+        MockRepo.return_value = mock_repo
+
+        service = TenantService(factory)
+        with pytest.raises(ValueError, match="Representante"):
+            await service.criar_cliente_ficticio(
+                tenant_id="jmb", nome="X", cnpj="12345678000195",
+                telefone=None, representante_id="rep-outro-tenant",
+            )
+
+
+@pytest.mark.unit
+async def test_criar_cliente_ficticio_normaliza_cnpj() -> None:
+    """M3: criar_cliente_ficticio normaliza CNPJ removendo pontuação."""
+    from src.tenants.service import TenantService
+
+    factory, _ = _mock_session_factory_criar()
+    cnpj_passado_para_repo: list[str] = []
+
+    with patch("src.tenants.service.ClienteB2BCreateRepo") as MockRepo:
+        mock_repo = AsyncMock()
+        mock_repo.exists_by_cnpj = AsyncMock(return_value=False)
+
+        async def captura_create(**kwargs: Any) -> str:
+            cnpj_passado_para_repo.append(kwargs["cnpj"])
+            return "cliente-uuid-003"
+
+        mock_repo.create = captura_create
+        MockRepo.return_value = mock_repo
+
+        service = TenantService(factory)
+        await service.criar_cliente_ficticio(
+            tenant_id="jmb", nome="X", cnpj="12.345.678/0001-95",
+            telefone=None, representante_id=None,
+        )
+
+    assert cnpj_passado_para_repo == ["12345678000195"]
