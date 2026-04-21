@@ -75,10 +75,10 @@ ssh "$REMOTE_HOST" "
 echo "    Aguardando Postgres..."
 ssh "$REMOTE_HOST" "
     for i in \$(seq 1 15); do
-        docker exec ai_sales_postgres pg_isready -U aisales >/dev/null 2>&1 && break
+        docker exec ai-sales-postgres pg_isready -U aisales >/dev/null 2>&1 && break
         sleep 1
     done
-    docker exec ai_sales_postgres pg_isready -U aisales
+    docker exec ai-sales-postgres pg_isready -U aisales
 "
 
 # ─────────────────────────────────────────────
