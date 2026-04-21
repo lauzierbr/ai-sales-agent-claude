@@ -574,21 +574,12 @@ class AgentGestor:
     async def _buscar_clientes(
         self, query: str, tenant_id: str, session: AsyncSession
     ) -> list[dict]:
-        clientes = await self._cliente_b2b_repo.buscar_todos_por_nome(
+        # buscar_todos_com_representante retorna dicts com representante_nome via JOIN
+        return await self._cliente_b2b_repo.buscar_todos_com_representante(
             tenant_id=tenant_id,
             query=query,
             session=session,
         )
-        return [
-            {
-                "id": c.id,
-                "nome": c.nome,
-                "cnpj": c.cnpj,
-                "telefone": c.telefone,
-                "representante_id": c.representante_id,
-            }
-            for c in clientes
-        ]
 
     async def _buscar_produtos(
         self, query: str, limit: int, tenant_id: str
@@ -801,6 +792,7 @@ class AgentGestor:
             {
                 "id": p["id"],
                 "cliente_nome": p["cliente_nome"],
+                "representante_nome": p["representante_nome"] or "Sem representante",
                 "total_estimado": str(p["total_estimado"]),
                 "status": p["status"],
                 "criado_em": p["criado_em"].strftime("%d/%m/%Y %H:%M") if p["criado_em"] else None,

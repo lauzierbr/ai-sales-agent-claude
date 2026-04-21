@@ -198,8 +198,17 @@ async def test_agent_gestor_g01_buscar_clientes_sem_filtro_rep(
     mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
     mock_conversa_repo.add_mensagem = AsyncMock()
 
+    # buscar_clientes agora usa buscar_todos_com_representante (retorna dicts com nome do rep)
+    cliente_dict = {
+        "id": cliente_com_rep.id,
+        "nome": cliente_com_rep.nome,
+        "cnpj": cliente_com_rep.cnpj,
+        "telefone": cliente_com_rep.telefone,
+        "representante_id": cliente_com_rep.representante_id,
+        "representante_nome": "João Silva",
+    }
     mock_cliente_repo = AsyncMock(spec=ClienteB2BRepo)
-    mock_cliente_repo.buscar_todos_por_nome = AsyncMock(return_value=[cliente_com_rep])
+    mock_cliente_repo.buscar_todos_com_representante = AsyncMock(return_value=[cliente_dict])
 
     mock_order_service = AsyncMock()
     mock_pdf = MagicMock()
@@ -241,13 +250,11 @@ async def test_agent_gestor_g01_buscar_clientes_sem_filtro_rep(
     with patch("src.agents.service.send_whatsapp_message", new=AsyncMock()):
         await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
 
-    mock_cliente_repo.buscar_todos_por_nome.assert_called_once()
-    call_kwargs = mock_cliente_repo.buscar_todos_por_nome.call_args
-
-    # Asserta explicitamente que representante_id NÃO está nos argumentos
+    # Agora usa buscar_todos_com_representante (com JOIN para nome do rep)
+    mock_cliente_repo.buscar_todos_com_representante.assert_called_once()
+    call_kwargs = mock_cliente_repo.buscar_todos_com_representante.call_args
     all_kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
-    all_args = call_kwargs.args if call_kwargs.args else ()
-    assert "representante_id" not in all_kwargs, "buscar_todos_por_nome não deve receber representante_id"
+    assert "representante_id" not in all_kwargs, "buscar_todos_com_representante não deve receber representante_id"
 
 
 # ─────────────────────────────────────────────
@@ -1023,6 +1030,7 @@ async def test_agent_gestor_g14_listar_pedidos_por_status(
         {
             "id": "ped-001",
             "cliente_nome": "LZ Muzel",
+            "representante_nome": "João Silva",   # agora incluso via JOIN
             "total_estimado": Decimal("299.80"),
             "status": "pendente",
             "criado_em": datetime(2026, 4, 20, tzinfo=timezone.utc),

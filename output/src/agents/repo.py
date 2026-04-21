@@ -262,6 +262,53 @@ class ClienteB2BRepo:
         ]
         return sorted(clientes, key=lambda c: c.nome)
 
+    async def buscar_todos_com_representante(
+        self,
+        tenant_id: str,
+        query: str,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Busca clientes B2B com nome do representante via JOIN.
+
+        Variante de `buscar_todos_por_nome` que retorna dicts enriquecidos
+        com `representante_nome` (para o AgentGestor exibir ao usuário).
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            query: texto livre para busca no nome do cliente.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de dicts: id, nome, cnpj, telefone, representante_id,
+            representante_nome.
+        """
+        result = await session.execute(
+            text("""
+                SELECT c.id, c.nome, c.cnpj, c.telefone, c.representante_id,
+                       r.nome AS representante_nome
+                FROM clientes_b2b c
+                LEFT JOIN representantes r
+                    ON r.id = c.representante_id AND r.tenant_id = c.tenant_id
+                WHERE c.tenant_id = :tenant_id
+                  AND c.ativo = true
+                  AND unaccent(lower(c.nome)) ILIKE unaccent(lower('%' || :query || '%'))
+                ORDER BY c.nome
+            """),
+            {"tenant_id": tenant_id, "query": query},
+        )
+        rows = result.mappings().all()
+        return [
+            {
+                "id": r["id"],
+                "nome": r["nome"],
+                "cnpj": r["cnpj"],
+                "telefone": r["telefone"],
+                "representante_id": r["representante_id"],
+                "representante_nome": r["representante_nome"] or "Sem representante",
+            }
+            for r in rows
+        ]
+
     async def get_by_id(
         self,
         id: str,

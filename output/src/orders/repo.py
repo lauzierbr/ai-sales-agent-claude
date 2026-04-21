@@ -235,13 +235,18 @@ class OrderRepo:
         from datetime import datetime, timedelta, timezone
         data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)
 
+        base_select = """
+            SELECT p.id, p.total_estimado, p.status, p.criado_em,
+                   COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome,
+                   r.nome AS representante_nome
+            FROM pedidos p
+            LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+            LEFT JOIN representantes r
+                ON r.id = p.representante_id AND r.tenant_id = p.tenant_id
+        """
         if status is not None:
             result = await session.execute(
-                text("""
-                    SELECT p.id, p.total_estimado, p.status, p.criado_em,
-                           COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome
-                    FROM pedidos p
-                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+                text(base_select + """
                     WHERE p.tenant_id = :tenant_id AND p.status = :status
                       AND p.criado_em >= :data_inicio
                     LIMIT :limit
@@ -250,11 +255,7 @@ class OrderRepo:
             )
         else:
             result = await session.execute(
-                text("""
-                    SELECT p.id, p.total_estimado, p.status, p.criado_em,
-                           COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome
-                    FROM pedidos p
-                    LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+                text(base_select + """
                     WHERE p.tenant_id = :tenant_id
                       AND p.criado_em >= :data_inicio
                     LIMIT :limit
@@ -266,6 +267,7 @@ class OrderRepo:
             {
                 "id": row["id"],
                 "cliente_nome": row["cliente_nome"],
+                "representante_nome": row["representante_nome"],
                 "total_estimado": Decimal(str(row["total_estimado"])),
                 "status": row["status"],
                 "criado_em": row["criado_em"],
