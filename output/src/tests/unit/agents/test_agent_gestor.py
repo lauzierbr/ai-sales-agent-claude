@@ -268,8 +268,11 @@ async def test_agent_gestor_g02_buscar_produtos_chama_catalog(
     mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
     mock_conversa_repo.add_mensagem = AsyncMock()
 
+    # AgentGestor agora usa buscar_semantico (+ get_por_codigo para queries numéricas),
+    # mesmo padrão do AgentCliente. Ver fix: _buscar_produtos no agent_gestor.py.
     mock_catalog = AsyncMock()
-    mock_catalog.buscar_produtos = AsyncMock(return_value=[])
+    mock_catalog.buscar_semantico = AsyncMock(return_value=[])
+    mock_catalog.get_por_codigo = AsyncMock(return_value=None)
 
     tool_block = MagicMock()
     tool_block.type = "tool_use"
@@ -302,7 +305,8 @@ async def test_agent_gestor_g02_buscar_produtos_chama_catalog(
     with patch("src.agents.service.send_whatsapp_message", new=AsyncMock()):
         await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
 
-    mock_catalog.buscar_produtos.assert_called_once_with(
+    # Query "shampoo" não é dígito → pula get_por_codigo, vai direto para busca semântica.
+    mock_catalog.buscar_semantico.assert_called_once_with(
         tenant_id="jmb", query="shampoo", limit=5
     )
 

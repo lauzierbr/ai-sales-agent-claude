@@ -7,7 +7,6 @@ Decisão D022: validação HMAC-SHA256 + resposta 200 imediata + BackgroundTask.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from typing import Any
 
@@ -17,8 +16,7 @@ from fastapi.responses import JSONResponse
 
 from src.agents.service import (
     mark_message_as_read,
-    send_typing_indicator,
-    send_typing_stop,
+    show_typing_presence,
     validate_webhook_signature,
 )
 from src.agents.types import WebhookPayload
@@ -198,120 +196,115 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             from_number_hash=from_hash,
         )
 
-        # 4b. Feedback visual: "digitando..." — fire-and-forget, não bloqueia o agente.
-        # WhatsApp apaga o indicador sozinho quando a mensagem chega.
-        asyncio.create_task(
-            send_typing_indicator(
-                instancia_id=payload.instance,
-                remote_jid=mensagem.de,
-                duration_ms=30000,
-            )
-        )
-
-        # 5. Chama agente correspondente
+        # 4b+5. Feedback visual 'digitando...' + dispatch do agente.
+        #
+        # show_typing_presence é um context manager que:
+        # - Emite 'composing' ao entrar (awaited → ordenação garantida).
+        # - Re-emite a cada 15s (contorna cap de 20s do Baileys).
+        # - Emite 'paused' ao sair (sucesso OU erro) — Evolution API NÃO
+        #   limpa o indicador automaticamente quando sendText é chamado
+        #   (issue EvolutionAPI/evolution-api #1639). A fire-and-forget
+        #   anterior causava 'digitando...' persistente após a resposta.
         try:
-            if persona == Persona.GESTOR:
-                # Identifica gestor para injetar no AgentGestor
-                telefone_norm_gestor = mensagem.de.split("@")[0]
-                gestor = await GestorRepo().get_by_telefone(
-                    tenant_id, telefone_norm_gestor, session
-                )
-                if gestor is None:
-                    log.warning(
-                        "gestor_nao_encontrado",
-                        tenant_id=tenant_id,
-                        telefone_hash=hashlib.sha256(telefone_norm_gestor.encode()).hexdigest(),
+            async with show_typing_presence(
+                instancia_id=payload.instance, remote_jid=mensagem.de
+            ):
+                if persona == Persona.GESTOR:
+                    # Identifica gestor para injetar no AgentGestor
+                    telefone_norm_gestor = mensagem.de.split("@")[0]
+                    gestor = await GestorRepo().get_by_telefone(
+                        tenant_id, telefone_norm_gestor, session
                     )
-                    return
+                    if gestor is None:
+                        log.warning(
+                            "gestor_nao_encontrado",
+                            tenant_id=tenant_id,
+                            telefone_hash=hashlib.sha256(telefone_norm_gestor.encode()).hexdigest(),
+                        )
+                        return
 
-                agent_gestor = AgentGestor(
-                    order_service=_order_service,
-                    conversa_repo=ConversaRepo(),
-                    pdf_generator=_pdf_generator,
-                    config=AgentGestorConfig(),
-                    gestor=gestor,
-                    catalog_service=_catalog_service,
-                    redis_client=_redis,
-                    cliente_b2b_repo=_cliente_b2b_repo,
-                    relatorio_repo=_relatorio_repo,
-                )
-                await agent_gestor.responder(
-                    mensagem=mensagem,
-                    tenant=tenant,
-                    session=session,
-                )
-
-            elif persona == Persona.CLIENTE_B2B:
-                # Identifica cliente B2B para injetar ID no AgentCliente
-                cliente_b2b_id: str | None = None
-                telefone_norm = mensagem.de.split("@")[0]
-                cliente = await ClienteB2BRepo().get_by_telefone(
-                    tenant_id, telefone_norm, session
-                )
-                if cliente is not None:
-                    cliente_b2b_id = cliente.id
-
-                # Instancia AgentCliente com dependências injetadas
-                agent_cliente = AgentCliente(
-                    order_service=_order_service,
-                    conversa_repo=ConversaRepo(),
-                    pdf_generator=_pdf_generator,
-                    config=AgentClienteConfig(),
-                    catalog_service=_catalog_service,
-                    redis_client=_redis,
-                )
-                await agent_cliente.responder(
-                    mensagem=mensagem,
-                    tenant=tenant,
-                    session=session,
-                    cliente_b2b_id=cliente_b2b_id,
-                    representante_id=None,
-                )
-
-            elif persona == Persona.REPRESENTANTE:
-                # Identifica representante para injetar no AgentRep
-                telefone_norm_rep = mensagem.de.split("@")[0]
-                rep = await RepresentanteRepo().get_by_telefone(
-                    tenant_id, telefone_norm_rep, session
-                )
-                if rep is None:
-                    log.warning(
-                        "representante_nao_encontrado",
-                        tenant_id=tenant_id,
-                        telefone_hash=hashlib.sha256(telefone_norm_rep.encode()).hexdigest(),
+                    agent_gestor = AgentGestor(
+                        order_service=_order_service,
+                        conversa_repo=ConversaRepo(),
+                        pdf_generator=_pdf_generator,
+                        config=AgentGestorConfig(),
+                        gestor=gestor,
+                        catalog_service=_catalog_service,
+                        redis_client=_redis,
+                        cliente_b2b_repo=_cliente_b2b_repo,
+                        relatorio_repo=_relatorio_repo,
                     )
-                    return
+                    await agent_gestor.responder(
+                        mensagem=mensagem,
+                        tenant=tenant,
+                        session=session,
+                    )
 
-                # Instancia AgentRep com dependências injetadas
-                agent_rep = AgentRep(
-                    order_service=_order_service,
-                    conversa_repo=ConversaRepo(),
-                    pdf_generator=_pdf_generator,
-                    config=AgentRepConfig(),
-                    representante=rep,
-                    catalog_service=_catalog_service,
-                    redis_client=_redis,
-                )
-                await agent_rep.responder(
-                    mensagem=mensagem,
-                    tenant=tenant,
-                    session=session,
-                )
+                elif persona == Persona.CLIENTE_B2B:
+                    # Identifica cliente B2B para injetar ID no AgentCliente
+                    cliente_b2b_id: str | None = None
+                    telefone_norm = mensagem.de.split("@")[0]
+                    cliente = await ClienteB2BRepo().get_by_telefone(
+                        tenant_id, telefone_norm, session
+                    )
+                    if cliente is not None:
+                        cliente_b2b_id = cliente.id
 
-            else:
-                await AgentDesconhecido().responder(mensagem, tenant, session)
+                    # Instancia AgentCliente com dependências injetadas
+                    agent_cliente = AgentCliente(
+                        order_service=_order_service,
+                        conversa_repo=ConversaRepo(),
+                        pdf_generator=_pdf_generator,
+                        config=AgentClienteConfig(),
+                        catalog_service=_catalog_service,
+                        redis_client=_redis,
+                    )
+                    await agent_cliente.responder(
+                        mensagem=mensagem,
+                        tenant=tenant,
+                        session=session,
+                        cliente_b2b_id=cliente_b2b_id,
+                        representante_id=None,
+                    )
+
+                elif persona == Persona.REPRESENTANTE:
+                    # Identifica representante para injetar no AgentRep
+                    telefone_norm_rep = mensagem.de.split("@")[0]
+                    rep = await RepresentanteRepo().get_by_telefone(
+                        tenant_id, telefone_norm_rep, session
+                    )
+                    if rep is None:
+                        log.warning(
+                            "representante_nao_encontrado",
+                            tenant_id=tenant_id,
+                            telefone_hash=hashlib.sha256(telefone_norm_rep.encode()).hexdigest(),
+                        )
+                        return
+
+                    # Instancia AgentRep com dependências injetadas
+                    agent_rep = AgentRep(
+                        order_service=_order_service,
+                        conversa_repo=ConversaRepo(),
+                        pdf_generator=_pdf_generator,
+                        config=AgentRepConfig(),
+                        representante=rep,
+                        catalog_service=_catalog_service,
+                        redis_client=_redis,
+                    )
+                    await agent_rep.responder(
+                        mensagem=mensagem,
+                        tenant=tenant,
+                        session=session,
+                    )
+
+                else:
+                    await AgentDesconhecido().responder(mensagem, tenant, session)
 
         except Exception as exc:
+            # O context manager já garantiu 'paused' antes desta linha.
             log.error(
                 "agent_resposta_erro",
                 tenant_id=tenant_id,
                 persona=persona.value,
                 error=str(exc),
-            )
-            # Apaga o indicador só em falha — em sucesso o WhatsApp limpa sozinho.
-            asyncio.create_task(
-                send_typing_stop(
-                    instancia_id=payload.instance,
-                    remote_jid=mensagem.de,
-                )
             )

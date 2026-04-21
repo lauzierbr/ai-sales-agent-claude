@@ -169,6 +169,7 @@ async def test_webhook_agent_gestor_deps_nao_none() -> None:
         patch("src.providers.db.get_redis", return_value=AsyncMock()),
         patch("src.agents.service.mark_message_as_read", new=AsyncMock()),
         patch("src.agents.service.send_typing_indicator", new=AsyncMock()),
+        patch("src.agents.service.send_typing_stop", new=AsyncMock()),
         patch("src.agents.runtime.agent_gestor.AgentGestor", new=AgentGestorCaptura),
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "EVOLUTION_WEBHOOK_SECRET": "x"}),
     ):

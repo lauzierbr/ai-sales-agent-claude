@@ -122,19 +122,32 @@ def test_b6_deploy_nao_usa_rsync_relative() -> None:
 
 
 @pytest.mark.unit
-def test_b7_typing_indicator_fire_and_forget() -> None:
-    """B7: typing indicator síncrono bloqueava a resposta do agente.
+def test_b7_typing_indicator_via_context_manager() -> None:
+    """B7 (atualizado pós-Sprint 5): typing indicator via context manager.
 
-    Sprint 4: `send_typing_indicator` fazia POST HTTP bloqueante antes de
-    o agente responder → atraso perceptível. O fix foi envolver em
-    `asyncio.create_task(...)` (fire-and-forget).
+    Histórico:
+    - Sprint 4: typing era síncrono → atraso. Fix: `asyncio.create_task(...)`
+      (fire-and-forget).
+    - Pós-Sprint 5: fire-and-forget causava 'digitando...' persistente após
+      a resposta (Evolution API #1639: sendText não emite 'paused'; race
+      condition entre sendPresence e sendText). Fix definitivo: context
+      manager `show_typing_presence` que pulsa durante o processamento e
+      garante 'paused' explícito ao sair.
+
+    O atraso original foi resolvido por outra via: `_process_message`
+    roda como BackgroundTask, então awaitar a presença não bloqueia o
+    webhook ACK.
     """
     ui_code = (REPO_ROOT / "output" / "src" / "agents" / "ui.py").read_text()
     pattern = re.compile(
-        r"asyncio\.create_task\(\s*send_typing_indicator\(", re.DOTALL
+        r"async with show_typing_presence\(", re.DOTALL
     )
     assert pattern.search(ui_code), (
-        "agents/ui.py não envolve mais send_typing_indicator em create_task (B7)"
+        "agents/ui.py não usa show_typing_presence como context manager (B7)"
+    )
+    # Anti-regressão: fire-and-forget não deve voltar — ele causa o bug.
+    assert "asyncio.create_task(\n            send_typing_indicator" not in ui_code, (
+        "fire-and-forget de send_typing_indicator voltou — causa 'digitando' fantasma (B7)"
     )
 
 
@@ -144,20 +157,24 @@ def test_b8_typing_indicator_timeout_limitado() -> None:
 
     Sprint 4: sem timeout, a chamada a Evolution podia demorar dezenas
     de segundos. O fix foi adicionar `httpx.AsyncClient(timeout=...)`
-    curto no helper `send_typing_indicator`.
+    curto nos helpers `send_typing_indicator` e `send_typing_stop`.
     """
     service_code = (
         REPO_ROOT / "output" / "src" / "agents" / "service.py"
     ).read_text()
 
-    func_start = service_code.find("async def send_typing_indicator")
-    assert func_start > 0, "send_typing_indicator foi removido"
-    func_end = service_code.find("async def ", func_start + 1)
-    func_body = service_code[func_start:func_end]
+    for fn_name in ("send_typing_indicator", "send_typing_stop"):
+        func_start = service_code.find(f"async def {fn_name}")
+        assert func_start > 0, f"{fn_name} foi removido"
+        func_end = service_code.find("async def ", func_start + 1)
+        # Se for a última função, pega até o final do arquivo
+        if func_end < 0:
+            func_end = len(service_code)
+        func_body = service_code[func_start:func_end]
 
-    assert re.search(r"timeout=\s*\d", func_body), (
-        "send_typing_indicator perdeu o timeout explícito do httpx (B8)"
-    )
+        assert re.search(r"timeout=\s*\d", func_body), (
+            f"{fn_name} perdeu o timeout explícito do httpx (B8)"
+        )
 
 
 @pytest.mark.unit

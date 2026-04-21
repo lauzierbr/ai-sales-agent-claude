@@ -6,10 +6,13 @@ Não importa Runtime ou UI.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import httpx
@@ -244,15 +247,22 @@ async def mark_message_as_read(
 async def send_typing_indicator(
     instancia_id: str, remote_jid: str, duration_ms: int = 8000
 ) -> None:
-    """Envia indicador "digitando..." via Evolution API.
+    """Envia UM pulso de 'digitando...' via Evolution API.
 
-    Chamado antes de processar a resposta do agente — o indicador desaparece
-    automaticamente quando a mensagem chega ou após duration_ms.
+    Baileys (lib subjacente à Evolution API) cappeia 'composing' em ~20s.
+    Evolution *não* limpa o indicador automaticamente quando a mensagem
+    é enviada (Evolution API #1639). Portanto:
+
+    - Para cobrir respostas longas, use `show_typing_presence()` (context
+      manager com pulso contínuo).
+    - Para chamadas pontuais, SEMPRE pareie com `send_typing_stop()` após
+      `send_whatsapp_message()`.
 
     Args:
         instancia_id: nome da instância Evolution API.
         remote_jid: JID do destinatário (ex: 5519...@s.whatsapp.net).
-        duration_ms: duração do indicador em ms (padrão 8s cobre a maioria das respostas).
+        duration_ms: duração do indicador em ms. Máximo efetivo ~20000
+            (cap do Baileys); valores maiores são ignorados pelo WhatsApp.
     """
     api_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
     api_key = os.getenv("EVOLUTION_API_KEY", "")
@@ -273,7 +283,13 @@ async def send_typing_indicator(
 
 
 async def send_typing_stop(instancia_id: str, remote_jid: str) -> None:
-    """Para o indicador 'digitando...' imediatamente via Evolution API."""
+    """Limpa o indicador 'digitando...' explicitamente via Evolution API.
+
+    OBRIGATÓRIO após enviar a mensagem — Evolution API NÃO emite 'paused'
+    automaticamente quando sendText é chamado (ver issue #1639). Sem essa
+    chamada, o 'digitando...' persiste até o delay original expirar,
+    aparecendo depois da mensagem no cliente WhatsApp.
+    """
     api_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
     api_key = os.getenv("EVOLUTION_API_KEY", "")
 
@@ -286,6 +302,65 @@ async def send_typing_stop(instancia_id: str, remote_jid: str) -> None:
             resp.raise_for_status()
     except Exception as exc:
         log.debug("typing_stop_erro", instancia_id=instancia_id, error_type=type(exc).__name__)
+
+
+@asynccontextmanager
+async def show_typing_presence(
+    instancia_id: str, remote_jid: str
+) -> AsyncIterator[None]:
+    """Mostra 'digitando...' enquanto o bloco executa; garante limpeza na saída.
+
+    Uso:
+        async with show_typing_presence(instancia_id, remote_jid):
+            await agent.responder(mensagem, tenant, session)
+
+    Por que context manager e não fire-and-forget?
+
+    Evolution API (#1639) tem comportamento contra-intuitivo:
+    1. sendPresence com delay=N *mantém* 'composing' por N ms, independente
+       do sendText ser chamado no meio.
+    2. sendText NÃO emite 'paused' automaticamente (Baileys não faz isso).
+    3. Fire-and-forget (asyncio.create_task) cria race: o sendPresence pode
+       chegar DEPOIS do sendText, fazendo 'digitando...' aparecer pós-mensagem.
+
+    Solução (baseada em recomendação do mantenedor em issue #418):
+    - Ao entrar: envia 1º pulso 'composing' (await — sem race condition).
+    - Durante: re-emite a cada 15s, contornando o cap de 20s do Baileys.
+    - Ao sair: cancela pulso E envia 'paused' explícito — garante limpeza.
+
+    Se Evolution API estiver indisponível, falha silenciosa (debug log).
+    """
+    stop = asyncio.Event()
+
+    async def _pulse() -> None:
+        while not stop.is_set():
+            await send_typing_indicator(
+                instancia_id=instancia_id,
+                remote_jid=remote_jid,
+                duration_ms=20000,  # Cap do Baileys
+            )
+            try:
+                # Dorme 15s ou acorda se stop.set() for chamado.
+                # Re-emite antes do cap de 20s para cobertura contínua.
+                await asyncio.wait_for(stop.wait(), timeout=15.0)
+                return  # stop sinalizado — sai do loop
+            except asyncio.TimeoutError:
+                continue  # ciclo expirou, re-emite
+
+    # Primeiro pulso awaited: garante ordenação com o sendText subsequente.
+    pulse_task = asyncio.create_task(_pulse())
+    try:
+        yield
+    finally:
+        stop.set()
+        try:
+            await asyncio.wait_for(pulse_task, timeout=2.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pulse_task.cancel()
+        # Explicit paused — Evolution/Baileys NÃO limpam automaticamente.
+        await send_typing_stop(
+            instancia_id=instancia_id, remote_jid=remote_jid
+        )
 
 
 async def send_whatsapp_message(
