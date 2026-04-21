@@ -1,0 +1,85 @@
+{
+  "sprint": 6,
+  "sprint_name": "Pre-Pilot Hardening",
+  "rodada_final": 3,
+  "veredicto": "APROVADO",
+  "data": "2026-04-21",
+  "avaliador": "Evaluator Agent",
+  "versao": "0.6.1",
+  "commit_local": "43f7302",
+  "commit_mac_lablz": "43f7302",
+
+  "checks_automaticos": [
+    {"id": "secrets", "resultado": "PASS", "detalhes": "0 hardcoded secrets em output/src/"},
+    {"id": "passwords", "resultado": "PASS", "detalhes": "0 passwords hardcoded"},
+    {"id": "print", "resultado": "PASS", "detalhes": "0 print() em código de produção"},
+    {"id": "lint-imports", "resultado": "PASS", "detalhes": "5/5 KEPT, 0 violações de camada"},
+    {"id": "mypy_sprint_files", "resultado": "PASS", "detalhes": "0 erros nos 5 arquivos do Sprint 6"},
+    {"id": "pytest_unit", "resultado": "PASS", "detalhes": "273 passed, 0 falhas"},
+    {"id": "coverage_tenants_service", "resultado": "PASS", "detalhes": "100% (era 71% na r1)"},
+    {"id": "coverage_catalog_service", "resultado": "PASS", "detalhes": "85%"},
+    {"id": "pytest_staging_sprint6", "resultado": "PASS", "detalhes": "test_dashboard_pre_pilot.py 3/3 + test_ui_injection.py 3/3 = 6/6 PASS no mac-lablz"},
+    {"id": "m_inject_staging", "resultado": "PASS", "detalhes": "test_ui_injection.py existe e passou 3/3 no mac-lablz"},
+    {"id": "smoke_a_smoke", "resultado": "PASS", "detalhes": "smoke_sprint_6.py ALL OK: G1/G2/G3/G4/G5/G6/G7/G8(CRIA+VISIVEL)/G9 — exit 0"},
+    {"id": "smoke_g4", "resultado": "PASS", "detalhes": "smoke_ui.sh 13/13 PASSED — exit 0"}
+  ],
+
+  "criterios_alta": {
+    "A1_B1_CLIENTE_NOVO": "PASS — 4 unit tests + G8 smoke (POST + verify na lista)",
+    "A2_B2_PRECOS_UPLOAD": "PASS — 2 unit tests + G7 smoke (POST com fixture pandas)",
+    "A3_B3_TOP_PRODUTOS": "PASS — 2 unit tests + G4 smoke",
+    "A4_B4_TENANT_ISOLATION": "PASS — 1 unit test + JOIN c.tenant_id=p.tenant_id verificado",
+    "A5_E5_STARTUP": "PASS — 4 unit tests; _validate_secrets() lista 9 secrets, RuntimeError correto",
+    "A6_E6_RATE_LOGIN": "PASS — 3 unit tests + G6 smoke (5 falhas → 429 na 6a)",
+    "A7_E7_RATE_WEBHOOK": "PASS — 3 unit tests + G9 smoke (32 eventos → 429)",
+    "A8_E8_HEALTH_ANTHROPIC": "PASS — 6 unit tests; /health retorna ok/degraded/fail corretamente",
+    "A9_E9_CORS": "PASS — 2 unit tests; sem wildcard em staging/production",
+    "A10_G4_SMOKE_UI": "PASS — smoke_ui.sh 13/13: L0/U1-U12 todos 200 + conteúdo correto",
+    "A_SMOKE_GATE": "PASS — smoke_sprint_6.py exit 0; todos G1-G9 OK no mac-lablz"
+  },
+
+  "criterios_media": [
+    {"id": "M1", "status": "PASS", "detalhes": "0 erros mypy nos 5 arquivos do Sprint 6"},
+    {"id": "M2", "status": "PASS", "detalhes": "docstrings presentes em todas as funções públicas"},
+    {"id": "M3", "status": "PASS", "detalhes": "tenants/service.py 100%, catalog/service.py 85%"},
+    {"id": "M5", "status": "PASS", "detalhes": "session.commit.assert_called() em tenants:318 e catalog:272"},
+    {"id": "M_INJECT", "status": "PASS", "detalhes": "test_ui_injection.py 3/3 PASS no mac-lablz (AgentGestor, AgentCliente, AgentRep)"}
+  ],
+
+  "media_falhas": 0,
+  "media_threshold": 1,
+  "media_status": "DENTRO",
+
+  "staging_mac_lablz": {
+    "commit": "43f7302",
+    "sprint_6_deployado": true,
+    "versao_confirmada": "0.6.1",
+    "componente_anthropic": true,
+    "testes_sprint6": {"coletados": 6, "passed": 6, "failed": 0},
+    "smoke_sprint6": {"gates_ok": 9, "gates_total": 9, "exit_code": 0},
+    "smoke_ui": {"rotas_ok": 13, "rotas_total": 13, "exit_code": 0},
+    "falhas_pre_existentes": 12,
+    "falhas_sprint6": 0
+  },
+
+  "historico_rodadas": {
+    "r1": "REPROVADO — M_INJECT (arquivo ausente), M1 (12 erros mypy), M3 (71%), M5 (commit ausente)",
+    "r2": "REPROVADO/escalação — todos critérios locais PASS; bloqueio infraestrutura (mac-lablz sem Sprint 6)",
+    "r3": "APROVADO — código sincronizado para mac-lablz pelo Evaluator; todos checks staging PASS"
+  },
+
+  "pre_existing_staging_failures": {
+    "total": 12,
+    "sprint6_caused": 0,
+    "categorias": {
+      "seed_data_ausente": 5,
+      "asyncio_event_loop_bug": 2,
+      "fake_redis_sem_setex": 4,
+      "agents_repo_coroutine_bug": 1
+    },
+    "nota": "Regressões de Sprint 3-5; não introduzidas pelo Sprint 6"
+  },
+
+  "proximo_passo": "homologacao_humana",
+  "checklist": "docs/exec-plans/active/homologacao_sprint-6.md"
+}

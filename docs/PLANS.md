@@ -15,7 +15,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 4 | ✅ | Produto | Painel do gestor |
 | Sprint 5-teste | ✅ | Harness | Validação harness v2 — top produtos (gates mecânicos) |
 | Sprint 5 | ✅ | Produto | Observabilidade LLM, feedback, UX dashboard, contatos — v0.6.0 |
-| Sprint 6 | 🔄 | Hardening | Pre-pilot hardening do dashboard e baseline operacional mínimo |
+| Sprint 6 | 🏁 | Hardening | Pre-pilot hardening do dashboard e baseline operacional mínimo — aguardando homologação |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 
@@ -144,20 +144,28 @@ Bugs corrigidos na homologação (pós-QA):
 - Langfuse (auto-hospedado via Docker): instrumentação dos 3 agentes com traces por tool call, custo por conversa e avaliação de qualidade
 - Doc-gardening agent (verifica documentação vs código)
 
-### Sprint 6 — Pre-Pilot Hardening 🔄 Em planejamento
+### Sprint 6 — Pre-Pilot Hardening 🏁 Aguardando homologação
 Plano detalhado: `docs/exec-plans/active/sprint-6-pre-pilot-hardening.md`
+Commit: `43f7302` | Versão alvo: v0.7.0
 
-Escopo previsto:
-- corrigir cadastro de cliente via dashboard
-- corrigir upload de preços via dashboard
-- revisar fluxo/navegação de top produtos
-- revisar queries do dashboard com foco em tenant isolation
-- validar secrets críticos no startup
-- aplicar rate limiting em login do dashboard e webhook WhatsApp
-- expor monitoramento/health check para falhas Anthropic
-- ajustar CORS/cookie por ambiente
-- expandir testes críticos do dashboard
-- fechar smoke e homologação pré-piloto
+Entregue:
+- Cadastro de cliente via dashboard (E1) — `TenantService.criar_cliente_ficticio()`
+- Upload de preços via dashboard (E2) — `CatalogService.processar_excel_precos()`
+- Top produtos: fluxo e navegação corrigidos (E3)
+- Tenant isolation em 9 queries do dashboard (E4)
+- Startup validation — 9 secrets obrigatórios (E5)
+- Rate limiting login: 5 falhas/IP/15min → 429 (E6)
+- Rate limiting webhook: 30/min/instance+jid → 429 (E7)
+- Health Anthropic ok/degraded/fail + health_check.py exit ≠ 0 (E8)
+- CORS por ambiente + cookie Secure apenas em production (E9)
+- 281 unit tests; test_ui_injection.py; smoke G1–G9 (E10–E11)
+
+Próximos passos:
+1. `./scripts/deploy.sh staging` → sincronizar mac-lablz
+2. `python scripts/seed_homologacao_sprint-6.py`
+3. `python scripts/smoke_sprint_6.py` → ALL OK
+4. Homologação manual H1–H7
+5. Tag v0.7.0 + mover para completed/
 
 ### Sprints futuros (backlog)
 - Sugestão proativa por ciclo de compra
