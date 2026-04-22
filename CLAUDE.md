@@ -75,6 +75,11 @@ O contrato está em artifacts/sprint_contract.md. Execute a avaliação completa
 4. **Zero print()** — structlog sempre
 5. **Testes unitários** — pytest -m unit antes de qualquer aprovação
 6. **Nunca edite código manualmente** — corrija o prompt ou o contrato
+7. **Sem worktrees** — o Generator trabalha diretamente no repo principal
+   (`/Users/lauzier/MyRepos/ai-sales-agent-claude`). Nunca use
+   `isolation: "worktree"` ao acionar subagentes. Worktrees ficam obsoletos
+   rapidamente e criam confusão de CWD sem benefício (o Evaluator já é o
+   mecanismo de revisão antes de qualquer merge).
 
 ## Estrutura de arquivos
 

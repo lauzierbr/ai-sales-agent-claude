@@ -42,3 +42,6 @@ output/images/
 # Cache Python dentro de output/
 output/**/__pycache__/
 output/**/*.pyc
+
+# Claude Code — worktrees de sessão (criados automaticamente, nunca commitar)
+.claude/worktrees/

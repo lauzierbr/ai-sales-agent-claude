@@ -58,6 +58,18 @@ ssh "$REMOTE_HOST" "
     cd $REMOTE_PATH
 
     git fetch --all --prune
+
+    # Avisa sobre mudanças locais não-commitadas antes de descartar
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo ''
+        echo '⚠️  ATENÇÃO: há mudanças locais NÃO-COMMITADAS no servidor:'
+        git status --short
+        echo ''
+        echo 'Essas mudanças serão PERDIDAS pelo checkout -f.'
+        echo 'Pressione Enter para continuar ou Ctrl+C para cancelar e commitar antes.'
+        read -r _CONFIRM
+    fi
+
     git checkout -f '$REF'
     git log -1 --oneline
 "
