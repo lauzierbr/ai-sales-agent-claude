@@ -22,10 +22,33 @@ Segurança:
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import structlog
 from opentelemetry import trace
+
+# Langfuse — instrumentação LLM (condicional)
+_LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "true").lower() != "false"
+if _LANGFUSE_ENABLED:
+    try:
+        from langfuse.decorators import langfuse_context as _lf_ctx
+        from langfuse.decorators import observe as _lf_observe
+    except ImportError:
+        _LANGFUSE_ENABLED = False
+
+if not _LANGFUSE_ENABLED:
+    def _lf_observe(*args: Any, **kwargs: Any) -> Any:
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return lambda f: f
+
+    class _DummyLfCtx:
+        @staticmethod
+        def update_current_trace(**kwargs: Any) -> None:
+            pass
+
+    _lf_ctx = _DummyLfCtx()
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.config import AgentRepConfig
@@ -240,6 +263,7 @@ class AgentRep:
         # System prompt resolvido na inicialização com nome do representante
         self._system_prompt_cache: str | None = None
 
+    @_lf_observe(name="processar_mensagem_rep")  # type: ignore[untyped-decorator]
     async def responder(
         self,
         mensagem: Mensagem,
@@ -261,6 +285,11 @@ class AgentRep:
             tenant: dados do tenant para personalização e notificação.
             session: sessão SQLAlchemy assíncrona.
         """
+        _lf_ctx.update_current_trace(
+            metadata={"persona": "representante", "tenant_id": tenant.id},
+            tags=[tenant.id],
+            user_id=tenant.id,
+        )
         with tracer.start_as_current_span("agent_rep_responder") as span:
             span.set_attribute("tenant_id", tenant.id)
             span.set_attribute("rep_id", self._representante.id)

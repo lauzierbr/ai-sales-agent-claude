@@ -16,11 +16,34 @@ Memória:
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import structlog
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Langfuse — instrumentação LLM (condicional)
+_LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "true").lower() != "false"
+if _LANGFUSE_ENABLED:
+    try:
+        from langfuse.decorators import langfuse_context as _lf_ctx
+        from langfuse.decorators import observe as _lf_observe
+    except ImportError:
+        _LANGFUSE_ENABLED = False
+
+if not _LANGFUSE_ENABLED:
+    def _lf_observe(*args: Any, **kwargs: Any) -> Any:
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return lambda f: f
+
+    class _DummyLfCtx:
+        @staticmethod
+        def update_current_trace(**kwargs: Any) -> None:
+            pass
+
+    _lf_ctx = _DummyLfCtx()
 
 from src.agents.config import AgentClienteConfig
 from src.agents.repo import ConversaRepo
@@ -184,6 +207,7 @@ class AgentCliente:
         self._redis = redis_client
         self._order_repo = order_repo or OrderRepo()
 
+    @_lf_observe(name="processar_mensagem_cliente")  # type: ignore[untyped-decorator]
     async def responder(
         self,
         mensagem: Mensagem,
@@ -210,6 +234,11 @@ class AgentCliente:
             representante_id: ID do representante (se houver).
             cliente_nome: nome da empresa cliente (para exibição no PDF).
         """
+        _lf_ctx.update_current_trace(
+            metadata={"persona": "cliente", "tenant_id": tenant.id},
+            tags=[tenant.id],
+            user_id=tenant.id,
+        )
         with tracer.start_as_current_span("agent_cliente_responder") as span:
             span.set_attribute("tenant_id", tenant.id)
             span.set_attribute("instancia_id", mensagem.instancia_id)

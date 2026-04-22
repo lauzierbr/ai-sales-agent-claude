@@ -21,12 +21,35 @@ Segurança:
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Langfuse — instrumentação LLM (condicional: desativado em testes com LANGFUSE_ENABLED=false)
+_LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "true").lower() != "false"
+if _LANGFUSE_ENABLED:
+    try:
+        from langfuse.decorators import langfuse_context as _lf_ctx
+        from langfuse.decorators import observe as _lf_observe
+    except ImportError:
+        _LANGFUSE_ENABLED = False
+
+if not _LANGFUSE_ENABLED:
+    def _lf_observe(*args: Any, **kwargs: Any) -> Any:
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return lambda f: f
+
+    class _DummyLfCtx:
+        @staticmethod
+        def update_current_trace(**kwargs: Any) -> None:
+            pass
+
+    _lf_ctx = _DummyLfCtx()
 
 from src.agents.config import AgentGestorConfig
 from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
@@ -323,6 +346,7 @@ class AgentGestor:
         self._relatorio_repo = relatorio_repo or RelatorioRepo()
         self._order_repo = order_repo or OrderRepo()
 
+    @_lf_observe(name="processar_mensagem_gestor")  # type: ignore[untyped-decorator]
     async def responder(
         self,
         mensagem: Mensagem,
@@ -336,6 +360,11 @@ class AgentGestor:
             tenant: dados do tenant para personalização.
             session: sessão SQLAlchemy assíncrona.
         """
+        _lf_ctx.update_current_trace(
+            metadata={"persona": "gestor", "tenant_id": tenant.id},
+            tags=[tenant.id],
+            user_id=tenant.id,
+        )
         with tracer.start_as_current_span("agent_gestor_responder") as span:
             span.set_attribute("tenant_id", tenant.id)
             span.set_attribute("gestor_id", self._gestor.id)
