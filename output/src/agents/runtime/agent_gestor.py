@@ -123,7 +123,7 @@ _TOOLS: list[dict[str, Any]] = [
         "name": "relatorio_vendas",
         "description": (
             "Gera relatório de vendas por período. "
-            "Períodos: hoje, semana (últimos 7 dias), mes (mês atual), 30d (últimos 30 dias). "
+            "Períodos: hoje, ontem, semana (últimos 7 dias), mes (mês atual), 30d (últimos 30 dias). "
             "Tipos: totais (GMV geral), por_rep (por representante), por_cliente (por cliente)."
         ),
         "input_schema": {
@@ -131,7 +131,7 @@ _TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "periodo": {
                     "type": "string",
-                    "enum": ["hoje", "semana", "mes", "30d"],
+                    "enum": ["hoje", "ontem", "semana", "mes", "30d"],
                     "description": "Período do relatório.",
                 },
                 "tipo": {
@@ -731,8 +731,12 @@ class AgentGestor:
         now = datetime.now(timezone.utc)
         data_fim = now
 
+        hoje_inicio = now.replace(hour=0, minute=0, second=0, microsecond=0)
         if periodo == "hoje":
-            data_inicio = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            data_inicio = hoje_inicio
+        elif periodo == "ontem":
+            data_inicio = hoje_inicio - timedelta(days=1)
+            data_fim = hoje_inicio - timedelta(microseconds=1)
         elif periodo == "semana":
             data_inicio = now - timedelta(days=7)
         elif periodo == "mes":
