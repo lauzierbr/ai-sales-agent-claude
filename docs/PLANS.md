@@ -15,7 +15,9 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 4 | ✅ | Produto | Painel do gestor |
 | Sprint 5-teste | ✅ | Harness | Validação harness v2 — top produtos (gates mecânicos) |
 | Sprint 5 | ✅ | Produto | Observabilidade LLM, feedback, UX dashboard, contatos — v0.6.0 |
-| Sprint 6 | 🏁 | Hardening | Pre-pilot hardening do dashboard e baseline operacional mínimo — aguardando homologação |
+| Sprint 6 | ✅ | Hardening | Pre-pilot hardening — rate limit, startup validation, CORS, health Anthropic — v0.6.1 APROVADO |
+| **Piloto JMB** | 🚀 | Piloto | Teste com usuários reais iniciado 2026-04-22 — banco limpo, staging em v0.6.1 |
+| Sprint 7 | 📋 | Produto | Notificação gestor (TD-08) + próximas funcionalidades |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 
