@@ -4,7 +4,7 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export PATH="/usr/local/Cellar/infisical/0.43.72/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export PATH="/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export HOME="/Users/dev"
 export DOCKER_HOST="unix:///Users/dev/.docker/run/docker.sock"
 
@@ -12,7 +12,7 @@ LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 VENV_UVICORN="$ROOT_DIR/.venv/bin/uvicorn"
-INFISICAL="/usr/local/Cellar/infisical/0.43.72/bin/infisical"
+INFISICAL="/usr/local/bin/infisical"
 
 # ── 1. Aguarda Docker daemon ficar pronto (max 60s) ────────────────────────
 echo "[staging-up] Aguardando Docker daemon..."
