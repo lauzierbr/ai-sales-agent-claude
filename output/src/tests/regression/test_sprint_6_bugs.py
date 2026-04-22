@@ -4,8 +4,11 @@ Fonte: homologacao_sprint-6.md — bugs reportados pós-aprovação do Evaluator
 
 Bug H6-B1: AgentGestor não suportava período "ontem" em relatorio_vendas —
   o bot respondia "não consigo filtrar por ontem" e listava apenas
-  hoje/semana/mes/30d. Corrigido adicionando "ontem" ao enum e à lógica
-  de data_inicio/data_fim em _relatorio_vendas.
+  hoje/semana/mes/30d. Corrigido adicionando "ontem" à lógica de data_inicio/data_fim.
+
+Bug H6-B2: relatorio_vendas recusava períodos arbitrários como "3 dias" —
+  o enum restritivo impedia o gestor de perguntar "últimos 3 dias", "últimos 10 dias" etc.
+  Corrigido removendo o enum e aceitando "Nd" (ex: "3d", "10d", "90d") na tool e na lógica.
 """
 
 from __future__ import annotations
@@ -26,29 +29,20 @@ AGENT_GESTOR_PATH = REPO_ROOT / "output" / "src" / "agents" / "runtime" / "agent
 
 
 @pytest.mark.unit
-def test_relatorio_vendas_enum_contem_ontem() -> None:
-    """H6-B1: 'ontem' deve estar no enum de períodos da ferramenta relatorio_vendas.
+def test_relatorio_vendas_suporta_periodo_ontem() -> None:
+    """H6-B1: _relatorio_vendas deve ter branch explícita para período 'ontem'.
 
-    Antes da correção: enum era ["hoje", "semana", "mes", "30d"].
-    Depois: ["hoje", "ontem", "semana", "mes", "30d"].
+    Antes da correção: período 'ontem' não era tratado (caia no else do 30d).
+    Depois: branch elif periodo == "ontem" presente, com cálculo correto de data_fim.
     """
     source = AGENT_GESTOR_PATH.read_text()
-    # Localiza o bloco da ferramenta relatorio_vendas
     assert '"ontem"' in source, (
         "Bug H6-B1 regrediu: 'ontem' ausente no source de agent_gestor.py"
     )
-    # Garante que está dentro do enum de periodo (não apenas em description)
-    import ast
-    tree = ast.parse(source)
-    # Procura lista com "ontem" próxima a "hoje" (enum do campo periodo)
-    found_enum = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.List):
-            elts = [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
-            if "ontem" in elts and "hoje" in elts and "semana" in elts:
-                found_enum = True
-                break
-    assert found_enum, "Bug H6-B1 regrediu: 'ontem' não encontrado no enum do input_schema de relatorio_vendas"
+    # Garante que existe um branch elif para "ontem" na lógica (não apenas na description)
+    assert 'periodo == "ontem"' in source, (
+        "Bug H6-B1 regrediu: branch 'elif periodo == \"ontem\"' ausente em _relatorio_vendas"
+    )
 
 
 @pytest.mark.unit
@@ -119,3 +113,132 @@ async def test_relatorio_vendas_ontem_calcula_intervalo_correto() -> None:
     assert data_fim.date() == ontem_inicio.date(), (
         f"data_fim deve ser ontem ({ontem_inicio.date()}), got {data_fim.date()}"
     )
+
+
+# ─────────────────────────────────────────────
+# H6-B2: períodos arbitrários "Nd" em relatorio_vendas
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_relatorio_vendas_tool_sem_enum_restritivo() -> None:
+    """H6-B2: tool relatorio_vendas não deve ter 'enum' restritivo no campo periodo.
+
+    Antes da correção: enum era ["hoje", "ontem", "semana", "mes", "30d"].
+    Depois: campo periodo é string livre com description explicativa.
+    """
+    source = AGENT_GESTOR_PATH.read_text()
+    import ast
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
+            if "name" in keys and "input_schema" in keys:
+                # Procura dict da tool relatorio_vendas
+                for i, k in enumerate(node.keys):
+                    if isinstance(k, ast.Constant) and k.value == "name":
+                        val = node.values[i]
+                        if isinstance(val, ast.Constant) and val.value == "relatorio_vendas":
+                            # Garante que não há lista enum com apenas os 5 períodos fixos
+                            tool_source = ast.unparse(node)
+                            assert '"hoje", "ontem", "semana", "mes", "30d"' not in tool_source, (
+                                "Bug H6-B2 regrediu: enum restritivo ainda presente em relatorio_vendas"
+                            )
+                            return
+
+    pytest.fail("Tool relatorio_vendas não encontrada no source de agent_gestor.py")
+
+
+@pytest.mark.unit
+async def test_relatorio_vendas_periodo_3d_calcula_intervalo_correto() -> None:
+    """H6-B2: _relatorio_vendas com periodo='3d' deve cobrir os últimos 3 dias."""
+    from src.agents.config import AgentGestorConfig
+    from src.agents.types import Gestor
+
+    gestor = Gestor(
+        id="g1",
+        tenant_id="jmb",
+        telefone="5519999999999",
+        nome="Gestor Teste",
+        ativo=True,
+        usuario_id=None,
+        criado_em=datetime.now(timezone.utc),
+    )
+
+    mock_relatorio_repo = AsyncMock()
+    mock_relatorio_repo.totais_periodo = AsyncMock(
+        return_value={"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0}
+    )
+
+    from src.agents.runtime.agent_gestor import AgentGestor
+
+    agent = AgentGestor(
+        order_service=AsyncMock(),
+        conversa_repo=AsyncMock(),
+        pdf_generator=MagicMock(),
+        config=AgentGestorConfig(),
+        gestor=gestor,
+        catalog_service=AsyncMock(),
+        redis_client=AsyncMock(),
+        cliente_b2b_repo=AsyncMock(),
+        relatorio_repo=mock_relatorio_repo,
+    )
+
+    mock_session = AsyncMock()
+    await agent._relatorio_vendas("3d", "totais", "jmb", mock_session)
+
+    assert mock_relatorio_repo.totais_periodo.called
+    call_kwargs = mock_relatorio_repo.totais_periodo.call_args.kwargs
+    data_inicio: datetime = call_kwargs["data_inicio"]
+    data_fim: datetime = call_kwargs["data_fim"]
+
+    now = datetime.now(timezone.utc)
+    esperado_inicio = now - timedelta(days=3)
+
+    # Tolerância de 5s para execução do teste
+    diff = abs((data_inicio - esperado_inicio).total_seconds())
+    assert diff < 5, f"data_inicio esperado ~3 dias atrás, got {data_inicio} (diff {diff:.1f}s)"
+    assert data_fim >= data_inicio, "data_fim deve ser >= data_inicio"
+
+
+@pytest.mark.unit
+async def test_relatorio_vendas_periodo_arbitrario_nao_trava() -> None:
+    """H6-B2: período desconhecido faz fallback para 30d sem exceção."""
+    from src.agents.config import AgentGestorConfig
+    from src.agents.types import Gestor
+
+    gestor = Gestor(
+        id="g1",
+        tenant_id="jmb",
+        telefone="5519999999999",
+        nome="Gestor Teste",
+        ativo=True,
+        usuario_id=None,
+        criado_em=datetime.now(timezone.utc),
+    )
+
+    mock_relatorio_repo = AsyncMock()
+    mock_relatorio_repo.totais_periodo = AsyncMock(
+        return_value={"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0}
+    )
+
+    from src.agents.runtime.agent_gestor import AgentGestor
+
+    agent = AgentGestor(
+        order_service=AsyncMock(),
+        conversa_repo=AsyncMock(),
+        pdf_generator=MagicMock(),
+        config=AgentGestorConfig(),
+        gestor=gestor,
+        catalog_service=AsyncMock(),
+        redis_client=AsyncMock(),
+        cliente_b2b_repo=AsyncMock(),
+        relatorio_repo=mock_relatorio_repo,
+    )
+
+    mock_session = AsyncMock()
+    # Período inválido/desconhecido — não deve lançar exceção
+    await agent._relatorio_vendas("quinzena", "totais", "jmb", mock_session)
+
+    assert mock_relatorio_repo.totais_periodo.called, "totais_periodo deve ser chamado mesmo com período inválido"

@@ -7,7 +7,7 @@ Ferramentas expostas ao modelo:
   - buscar_clientes: busca qualquer cliente do tenant por nome (sem filtro de carteira)
   - buscar_produtos: busca semântica no catálogo
   - confirmar_pedido_em_nome_de: cria pedido em nome de qualquer cliente (DP-03)
-  - relatorio_vendas: relatório GMV por período (hoje/semana/mes/30d)
+  - relatorio_vendas: relatório GMV por período (hoje/ontem/semana/mes/Nd)
   - clientes_inativos: lista clientes sem pedido nos últimos N dias
   - listar_pedidos_por_status: lista pedidos filtrando por status (pendente/confirmado/cancelado)
   - aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes em lote
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -146,7 +147,8 @@ _TOOLS: list[dict[str, Any]] = [
         "name": "relatorio_vendas",
         "description": (
             "Gera relatório de vendas por período. "
-            "Períodos: hoje, ontem, semana (últimos 7 dias), mes (mês atual), 30d (últimos 30 dias). "
+            "Aceita períodos nomeados (hoje, ontem, semana, mes) ou qualquer número de dias "
+            "no formato Nd — ex: '3d', '10d', '45d'. "
             "Tipos: totais (GMV geral), por_rep (por representante), por_cliente (por cliente)."
         ),
         "input_schema": {
@@ -154,8 +156,11 @@ _TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "periodo": {
                     "type": "string",
-                    "enum": ["hoje", "ontem", "semana", "mes", "30d"],
-                    "description": "Período do relatório.",
+                    "description": (
+                        "Período do relatório. Exemplos: 'hoje', 'ontem', 'semana' (7 dias), "
+                        "'mes' (mês atual), '3d' (últimos 3 dias), '30d' (últimos 30 dias), "
+                        "'90d' (últimos 90 dias)."
+                    ),
                 },
                 "tipo": {
                     "type": "string",
@@ -770,8 +775,11 @@ class AgentGestor:
             data_inicio = now - timedelta(days=7)
         elif periodo == "mes":
             data_inicio = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        else:  # 30d
-            data_inicio = now - timedelta(days=30)
+        else:
+            # Aceita qualquer "Nd" — ex: "3d", "15d", "90d"
+            match = re.match(r"^(\d+)d$", periodo)
+            dias_n = int(match.group(1)) if match else 30
+            data_inicio = now - timedelta(days=dias_n)
 
         if tipo == "por_rep":
             dados = await self._relatorio_repo.totais_por_rep(
