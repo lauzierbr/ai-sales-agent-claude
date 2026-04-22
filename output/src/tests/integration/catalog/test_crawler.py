@@ -2,7 +2,7 @@
 
 @pytest.mark.integration @pytest.mark.slow
 NÃO rodam automaticamente no Evaluator.
-Executar manualmente no mac-lablz com infra rodando:
+Executar manualmente no macmini-lablz com infra rodando:
 
     infisical run --env=dev -- pytest -m integration output/src/tests/integration/ -v
 

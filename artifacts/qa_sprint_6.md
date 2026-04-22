@@ -5,7 +5,7 @@
 **Referência:** artifacts/sprint_contract.md
 **Versão entregue:** 0.6.1
 **Commit:** 43f7302
-**Rodadas:** 3 (r1: REPROVADO, r2: escalação, r3: APROVADO após sync mac-lablz)
+**Rodadas:** 3 (r1: REPROVADO, r2: escalação, r3: APROVADO após sync macmini-lablz)
 
 ---
 
@@ -13,7 +13,7 @@
 
 **APROVADO**
 
-Todos os critérios de Alta e Média passaram com evidências de execução no mac-lablz (staging real).
+Todos os critérios de Alta e Média passaram com evidências de execução no macmini-lablz (staging real).
 273 unit tests PASS. 6/6 staging tests PASS. Smoke gate G1-G9 ALL OK. smoke_ui.sh 13/13 PASSED.
 
 ---
@@ -30,10 +30,10 @@ Todos os critérios de Alta e Média passaram com evidências de execução no m
 | pytest unit | `pytest -m unit output/src/tests/unit/` | **PASS** — 273 passed, 0 falhas |
 | coverage tenants/service | `--cov=output/src/tenants/service` | **PASS** — 100% |
 | coverage catalog/service | `--cov=output/src/catalog/service` | **PASS** — 85% |
-| pytest staging Sprint 6 | `test_dashboard_pre_pilot.py + test_ui_injection.py` (mac-lablz) | **PASS** — 6/6 |
-| M_INJECT | `pytest test_ui_injection.py` (mac-lablz) | **PASS** — 3/3 |
-| smoke gate A_SMOKE | `smoke_sprint_6.py` (mac-lablz) | **PASS** — ALL OK, exit 0 |
-| smoke gate A10 | `smoke_ui.sh` (mac-lablz) | **PASS** — 13/13, exit 0 |
+| pytest staging Sprint 6 | `test_dashboard_pre_pilot.py + test_ui_injection.py` (macmini-lablz) | **PASS** — 6/6 |
+| M_INJECT | `pytest test_ui_injection.py` (macmini-lablz) | **PASS** — 3/3 |
+| smoke gate A_SMOKE | `smoke_sprint_6.py` (macmini-lablz) | **PASS** — ALL OK, exit 0 |
+| smoke gate A10 | `smoke_ui.sh` (macmini-lablz) | **PASS** — 13/13, exit 0 |
 
 ---
 
@@ -116,7 +116,7 @@ tests/unit/catalog/test_service.py:272  mock_session.commit.assert_called()  ✅
 ### M_INJECT — Injeção de dependências
 **Status:** PASS
 
-`output/src/tests/staging/agents/test_ui_injection.py` — 3/3 PASS no mac-lablz:
+`output/src/tests/staging/agents/test_ui_injection.py` — 3/3 PASS no macmini-lablz:
 - `test_ui_injection_agent_gestor_deps_nao_none` ✅ — catalog_service, order_service, pdf_generator, relatorio_repo, cliente_b2b_repo, redis_client todos não-None
 - `test_ui_injection_agent_cliente_deps_nao_none` ✅ — catalog_service, order_service, pdf_generator, redis_client, conversa_repo todos não-None
 - `test_ui_injection_agent_rep_deps_nao_none` ✅ — catalog_service, order_service, pdf_generator, redis_client, conversa_repo, representante todos não-None
@@ -129,7 +129,7 @@ tests/unit/catalog/test_service.py:272  mock_session.commit.assert_called()  ✅
 
 ## Falhas de staging pre-existentes (não introduzidas pelo Sprint 6)
 
-O `pytest -m staging` no mac-lablz tem 12 falhas de Sprint 3-5 que persistem:
+O `pytest -m staging` no macmini-lablz tem 12 falhas de Sprint 3-5 que persistem:
 
 | Categoria | Falhas | Sprint 6? |
 |-----------|--------|-----------|
@@ -147,7 +147,7 @@ Nenhuma das 12 falhas foi introduzida pelo Sprint 6.
 | Rodada | Veredicto | Motivo |
 |--------|-----------|--------|
 | R1 | REPROVADO | M_INJECT (arquivo ausente), M1 (12 erros mypy), M3 (71%), M5 (commit ausente) |
-| R2 | Escalação | Todos critérios locais PASS; mac-lablz sem código Sprint 6 |
+| R2 | Escalação | Todos critérios locais PASS; macmini-lablz sem código Sprint 6 |
 | R3 | **APROVADO** | Código sincronizado pelo Evaluator; todos staging/smoke PASS |
 
 ---

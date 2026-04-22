@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup.sh — Setup inicial do ai-sales-agent no mac-lablz
+# setup.sh — Setup inicial do ai-sales-agent no macmini-lablz
 set -e
 
 echo "AI Sales Agent — Setup inicial"

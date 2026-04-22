@@ -141,7 +141,7 @@ critério. "import-linter passa sem violações" é critério. "pytest -m unit
 passa com cobertura ≥ 80% das funções de Service" é critério.
 
 **Smoke gate obrigatório:** Todo sprint que toca Runtime ou UI deve especificar
-um critério de smoke staging executável no mac-lablz com infra real. Não é
+um critério de smoke staging executável no macmini-lablz com infra real. Não é
 opcional — sem smoke gate, o Evaluator não pode aprovar o sprint.
 
 ---
@@ -199,7 +199,7 @@ o Generator DEVE tratar explicitamente. Vazio se nenhum identificado.]
 
 Script: `scripts/smoke_sprint_N.py`
 
-O script deve verificar automaticamente, contra infra real (mac-lablz):
+O script deve verificar automaticamente, contra infra real (macmini-lablz):
 - [ ] [verificação do caminho crítico principal]
 - [ ] [verificação de persistência no banco]
 - [ ] [verificação de integração externa se aplicável]

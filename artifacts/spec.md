@@ -213,7 +213,7 @@ Com esses pontos quebrados, qualquer hardening mais amplo perde valor: o gestor 
 
 Script: `scripts/smoke_sprint_6.py`
 
-O script deve verificar automaticamente, contra infra real (mac-lablz/macmini-lablz):
+O script deve verificar automaticamente, contra infra real (macmini-lablz/macmini-lablz):
 - [ ] `GET /health` retorna 200 e o componente Anthropic não está em `fail`
 - [ ] `POST /dashboard/login` com senha correta seta cookie e permite acessar `/dashboard/home`
 - [ ] `POST /dashboard/clientes/novo` cria cliente de teste e o registro fica visível em `/dashboard/clientes`

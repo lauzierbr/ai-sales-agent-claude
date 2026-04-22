@@ -552,7 +552,7 @@ def run_sprint(sprint_prompt: str) -> None:
         print()
         info("Próximos passos:")
         info("  1. Revise artifacts/ e commite o código gerado em output/")
-        info("  2. Execute os testes de integração manualmente no mac-lablz")
+        info("  2. Execute os testes de integração manualmente no macmini-lablz")
         info(f"  3. Mova docs/exec-plans/active/sprint-{sprint_n}-*.md → completed/")
         info(f"  4. Execute: python3 scripts/run_sprint.py '<próximo sprint>'")
         return
@@ -634,7 +634,7 @@ def run_sprint(sprint_prompt: str) -> None:
         print()
         info("Próximos passos:")
         info("  1. Revise artifacts/ e commite o código gerado em output/")
-        info("  2. Execute os testes de integração manualmente no mac-lablz")
+        info("  2. Execute os testes de integração manualmente no macmini-lablz")
         info(f"  3. Mova docs/exec-plans/active/sprint-{sprint_n}-*.md → completed/")
         info(f"  4. Execute: python3 scripts/run_sprint.py '<próximo sprint>'")
         return

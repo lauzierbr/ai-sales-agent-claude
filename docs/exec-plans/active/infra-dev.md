@@ -1,7 +1,7 @@
 # Exec Plan: Sprint Infra-Dev
 
 **Status:** ✅ Concluído (2026-04-13)
-**Ambiente:** mac-lablz (desenvolvimento)
+**Ambiente:** macmini-lablz (desenvolvimento)
 **Executado via:** Claude Code no terminal (sem harness Planner/Generator/Evaluator)
 **Pré-requisito para:** todos os sprints seguintes
 
@@ -9,7 +9,7 @@
 
 ## Objetivo
 
-Ambiente de desenvolvimento completamente funcional no mac-lablz.
+Ambiente de desenvolvimento completamente funcional no macmini-lablz.
 Ao final deste sprint, qualquer sprint subsequente pode assumir que
 todos os serviços de infraestrutura estão disponíveis e configurados.
 

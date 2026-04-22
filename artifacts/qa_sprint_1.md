@@ -251,7 +251,7 @@ python -m mypy --strict src/ --ignore-missing-imports
 
 ## Próximos passos
 
-1. Rodar `pytest -m integration` em mac-lablz com PostgreSQL e Redis ativos
+1. Rodar `pytest -m integration` em macmini-lablz com PostgreSQL e Redis ativos
 2. Executar migrações 0003, 0004, 0005 em staging
 3. Provisionar segundo tenant via `scripts/provision_tenant.py`
 4. Configurar webhook Evolution API com `EVOLUTION_WEBHOOK_SECRET`

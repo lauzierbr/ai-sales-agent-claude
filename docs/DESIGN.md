@@ -27,7 +27,7 @@
 
 | Ambiente | Máquina | Uso |
 |----------|---------|-----|
-| development | mac-lablz | desenvolvimento local |
+| development | macmini-lablz | desenvolvimento local |
 | staging | macmini-lablz | validação antes de produção |
 | production | macmini-lablz (futuro: VPS) | tenants reais |
 
@@ -50,7 +50,7 @@ infisical run --env=staging -- python scripts/health_check.py
 ### Projeto Infisical: `ai-sales-agent`
 ```
 ai-sales-agent
-├── development    ← mac-lablz
+├── development    ← macmini-lablz
 ├── staging        ← macmini-lablz
 └── production     ← futuro VPS
 ```

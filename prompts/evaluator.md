@@ -46,7 +46,7 @@ avalie cada critério com as seguintes perguntas:
 OBJEÇÃO A_SMOKE ausente: Sprint toca Runtime/UI mas não há critério de smoke
 staging com infra real. Todo sprint nessa categoria requer:
   A_SMOKE. smoke gate staging — caminho crítico completo
-    Teste: python scripts/smoke_sprint_N.py (no mac-lablz)
+    Teste: python scripts/smoke_sprint_N.py (no macmini-lablz)
     Evidência esperada: saída "ALL OK", exit code 0
 
 OBJEÇÃO M_INJECT ausente: Sprint instancia AgentCliente/deps em ui.py mas
@@ -108,12 +108,12 @@ grep -rn "print(" output/src/
 pytest -m unit -v --tb=short
 # Esperado: 0 falhas
 
-# 5. Testes staging — bloqueante (roda no mac-lablz)
+# 5. Testes staging — bloqueante (roda no macmini-lablz)
 ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
   infisical run --env=staging -- pytest -m staging -v --tb=short"
 # Esperado: 0 falhas
 
-# 6. Smoke gate — bloqueante (roda no mac-lablz)
+# 6. Smoke gate — bloqueante (roda no macmini-lablz)
 ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
   infisical run --env=staging -- python ../scripts/smoke_sprint_N.py"
 # Esperado: saída "ALL OK", exit code 0
@@ -144,11 +144,11 @@ Em caso de FAIL, documente obrigatoriamente:
 
 ### Avaliação de A_SMOKE (critério especial)
 
-O smoke gate é executado no mac-lablz com infra real. Não pode ser
+O smoke gate é executado no macmini-lablz com infra real. Não pode ser
 substituído por mocks nem por inspeção de código.
 
 ```bash
-# No mac-lablz:
+# No macmini-lablz:
 ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
   infisical run --env=staging -- python ../scripts/smoke_sprint_N.py"
 ```
@@ -196,7 +196,7 @@ Testes marcados com `@pytest.mark.integration` ou `@pytest.mark.slow`
 pytest -m unit -v --tb=short
 ```
 
-Testes `@pytest.mark.staging` são executados no mac-lablz via SSH — não
+Testes `@pytest.mark.staging` são executados no macmini-lablz via SSH — não
 no container do Evaluator.
 
 **Exceção que vira Alta:** se um teste marcado como `@pytest.mark.unit`
@@ -265,7 +265,7 @@ Motivo resumido (1-2 frases):
 | import-linter | lint-imports | PASS / FAIL (N violações) |
 | print() proibido | grep print( | PASS / FAIL (N ocorrências) |
 | pytest unit | pytest -m unit | PASS / FAIL (N falhas) |
-| pytest staging | pytest -m staging (mac-lablz) | PASS / FAIL (N falhas) |
+| pytest staging | pytest -m staging (macmini-lablz) | PASS / FAIL (N falhas) |
 | smoke gate | python scripts/smoke_sprint_N.py | PASS / FAIL |
 
 ## Critérios de Alta
@@ -279,7 +279,7 @@ Motivo resumido (1-2 frases):
 
 ### A_SMOKE — Smoke gate staging
 **Status:** PASS | FAIL
-**Comando:** `python scripts/smoke_sprint_N.py` (mac-lablz)
+**Comando:** `python scripts/smoke_sprint_N.py` (macmini-lablz)
 **Evidência observada:** [output completo do script]
 **Checks que falharam (se FAIL):** [lista]
 
@@ -317,10 +317,10 @@ em sprint futuro]
 # Testes unitários (sem infra)
 pytest -m unit -v
 
-# Testes staging (mac-lablz)
+# Testes staging (macmini-lablz)
 pytest -m staging -v
 
-# Smoke gate (mac-lablz)
+# Smoke gate (macmini-lablz)
 python scripts/smoke_sprint_N.py
 
 # Linter e segurança
@@ -402,7 +402,7 @@ Falhas novas introduzidas na correção: [lista, se houver]
 
 **Nunca:**
 - Aprovar sem evidência de testes executados (incluindo smoke gate)
-- Aprovar sem rodar `pytest -m staging` no mac-lablz
+- Aprovar sem rodar `pytest -m staging` no macmini-lablz
 - Reprovar sem arquivo, linha e causa raiz
 - Editar código em output/ — apenas ler e executar
 - Dar uma "terceira chance" informal ao Generator sem aprovação do usuário

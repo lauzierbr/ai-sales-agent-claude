@@ -13,16 +13,16 @@
     {"id": "print", "resultado": "PASS"},
     {"id": "lint-imports", "resultado": "PASS", "detalhes": "5/5 KEPT"},
     {"id": "pytest_unit", "resultado": "PASS", "detalhes": "273 passed, 0 falhas"},
-    {"id": "pytest_staging", "resultado": "FAIL", "detalhes": "12 failed / 17 pass / 3 skip — TODAS pre-existentes (Sprint 3-5), Sprint 6 não deployado no mac-lablz"},
-    {"id": "m_inject_staging", "resultado": "FAIL", "detalhes": "test_ui_injection.py não existe no mac-lablz (código não sincronizado)"},
-    {"id": "smoke_a_smoke", "resultado": "NAO_EXECUTADO", "detalhes": "código Sprint 6 não no mac-lablz; script OK localmente"},
+    {"id": "pytest_staging", "resultado": "FAIL", "detalhes": "12 failed / 17 pass / 3 skip — TODAS pre-existentes (Sprint 3-5), Sprint 6 não deployado no macmini-lablz"},
+    {"id": "m_inject_staging", "resultado": "FAIL", "detalhes": "test_ui_injection.py não existe no macmini-lablz (código não sincronizado)"},
+    {"id": "smoke_a_smoke", "resultado": "NAO_EXECUTADO", "detalhes": "código Sprint 6 não no macmini-lablz; script OK localmente"},
     {"id": "smoke_g4", "resultado": "NAO_EXECUTADO", "detalhes": "idem"}
   ],
 
   "criterios_alta": {
     "A1_A9": "PASS — 273 unit tests",
-    "A10": "NAO_EXECUTADO — mac-lablz sem Sprint 6",
-    "A_SMOKE": "NAO_EXECUTADO — mac-lablz sem Sprint 6"
+    "A10": "NAO_EXECUTADO — macmini-lablz sem Sprint 6",
+    "A_SMOKE": "NAO_EXECUTADO — macmini-lablz sem Sprint 6"
   },
 
   "criterios_media": [
@@ -30,7 +30,7 @@
     {"id": "M2", "status": "PASS"},
     {"id": "M3", "status": "PASS", "detalhes": "tenants/service.py 100%, catalog/service.py 85%"},
     {"id": "M5", "status": "PASS", "detalhes": "commit.assert_called em tenants:318 e catalog:272"},
-    {"id": "M_INJECT", "status": "PASS_LOCAL_FAIL_STAGING", "detalhes": "arquivo existe localmente com 3 testes; não existe no mac-lablz"}
+    {"id": "M_INJECT", "status": "PASS_LOCAL_FAIL_STAGING", "detalhes": "arquivo existe localmente com 3 testes; não existe no macmini-lablz"}
   ],
 
   "media_falhas": 0,

@@ -149,7 +149,7 @@ seus próprios artefatos nele.
 | `infra/docker-compose.dev.yml` | Configuração de ambiente físico — irrelevante para agentes de código |
 | `infra/grafana/` | Configuração de infraestrutura — não influencia geração de código |
 | `infra/init-db.sql` | O Generator escreve migrations; não precisa do SQL de init |
-| `scripts/setup.sh` | Script de setup do mac-lablz — não relevante no container |
+| `scripts/setup.sh` | Script de setup do macmini-lablz — não relevante no container |
 | `scripts/deploy.sh` | Script de deploy — não relevante para geração de código |
 | `scripts/health-check.sh` | Script de saúde da infra local — não relevante no container |
 | `scripts/health_check.py` | Idem |

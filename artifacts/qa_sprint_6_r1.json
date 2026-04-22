@@ -13,9 +13,9 @@
     {"id": "print", "comando": "grep -rn print( output/src/", "resultado": "PASS", "detalhes": "0 resultados em produção"},
     {"id": "lint-imports", "comando": "PYTHONPATH=output .venv/bin/lint-imports", "resultado": "PASS", "detalhes": "5/5 contratos KEPT"},
     {"id": "pytest_unit", "comando": "pytest -m unit output/src/tests/unit/", "resultado": "PASS", "detalhes": "266 passed, 0 falhas"},
-    {"id": "pytest_staging", "comando": "pytest -m staging (mac-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer mac-lablz"},
-    {"id": "smoke_a_smoke", "comando": "smoke_sprint_6.py (mac-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer mac-lablz; GAP: faltam POST clientes/novo, POST precos/upload, burst webhook"},
-    {"id": "smoke_g4", "comando": "smoke_ui.sh (mac-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer mac-lablz; script existe"}
+    {"id": "pytest_staging", "comando": "pytest -m staging (macmini-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer macmini-lablz"},
+    {"id": "smoke_a_smoke", "comando": "smoke_sprint_6.py (macmini-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer macmini-lablz; GAP: faltam POST clientes/novo, POST precos/upload, burst webhook"},
+    {"id": "smoke_g4", "comando": "smoke_ui.sh (macmini-lablz)", "resultado": "CANNOT_RUN", "detalhes": "requer macmini-lablz; script existe"}
   ],
 
   "criterios_alta": [
@@ -28,8 +28,8 @@
     {"id": "A7", "nome": "E7-RATE-WEBHOOK", "status": "PASS", "testes_passaram": 3},
     {"id": "A8", "nome": "E8-HEALTH-ANTHROPIC", "status": "PASS", "testes_passaram": 6},
     {"id": "A9", "nome": "E9-CORS", "status": "PASS", "testes_passaram": 2},
-    {"id": "A10", "nome": "G4-SMOKE-UI", "status": "CANNOT_RUN", "detalhes": "requer mac-lablz"},
-    {"id": "A_SMOKE", "nome": "smoke-gate-staging", "status": "CANNOT_RUN", "detalhes": "requer mac-lablz; GAP de cobertura documentado"}
+    {"id": "A10", "nome": "G4-SMOKE-UI", "status": "CANNOT_RUN", "detalhes": "requer macmini-lablz"},
+    {"id": "A_SMOKE", "nome": "smoke-gate-staging", "status": "CANNOT_RUN", "detalhes": "requer macmini-lablz; GAP de cobertura documentado"}
   ],
 
   "criterios_media": [

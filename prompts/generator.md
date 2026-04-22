@@ -101,8 +101,8 @@ Máximo de falhas de Média permitidas: [N]
 
 ## Ambiente de testes
 pytest -m unit    → roda no container do Evaluator (sem serviços externos)
-pytest -m staging → roda no mac-lablz com Postgres + Redis reais, sem WhatsApp real
-pytest -m integration → não roda no container; requer mac-lablz com infra completa
+pytest -m staging → roda no macmini-lablz com Postgres + Redis reais, sem WhatsApp real
+pytest -m integration → não roda no container; requer macmini-lablz com infra completa
 ```
 
 ---
@@ -232,7 +232,7 @@ Antes de declarar implementação concluída, verifique um a um:
 # Cobre: lógica de negócio, cálculos, parsing, regras de validação.
 
 @pytest.mark.staging
-# Requer mac-lablz com Postgres + Redis reais. Sem WhatsApp real.
+# Requer macmini-lablz com Postgres + Redis reais. Sem WhatsApp real.
 # Roda como parte do smoke gate antes da homologação humana.
 # Cobre: queries SQL reais, session lifecycle, comportamentos de driver,
 #        injeção de dependências em ui.py, persistência após commit.
@@ -260,8 +260,8 @@ externo é tratado como **falha de Alta** pelo Evaluator.
 @pytest.mark.unit        # sem I/O externo, mocks obrigatórios
                          # SEMPRE escrito, roda no container do Evaluator
 
-@pytest.mark.staging     # requer Postgres + Redis reais no mac-lablz
-                         # roda no mac-lablz como parte do smoke gate
+@pytest.mark.staging     # requer Postgres + Redis reais no macmini-lablz
+                         # roda no macmini-lablz como parte do smoke gate
                          # obrigatório para toda query não-trivial e escrita no banco
 
 @pytest.mark.integration # requer tudo, incluindo Evolution API
@@ -385,9 +385,9 @@ output/src/tests/
 │       └── test_ui_injection.py ← _process_message sem None em deps
 └── integration/
     ├── catalog/
-    │   └── test_crawler.py  ← requer Playwright + site EFOS (mac-lablz)
+    │   └── test_crawler.py  ← requer Playwright + site EFOS (macmini-lablz)
     └── agents/
-        └── test_webhook.py  ← requer Evolution API rodando (mac-lablz)
+        └── test_webhook.py  ← requer Evolution API rodando (macmini-lablz)
 ```
 
 ### conftest.py — fixtures essenciais
@@ -429,7 +429,7 @@ async def real_redis():
 
 Para todo sprint que toca Runtime ou UI, o Generator deve entregar:
 
-1. `scripts/smoke_sprint_N.py` — script executável no mac-lablz
+1. `scripts/smoke_sprint_N.py` — script executável no macmini-lablz
 2. `output/src/tests/staging/test_smoke.py` — testes importados pelo script
 
 O smoke script deve:
@@ -443,7 +443,7 @@ O smoke script deve:
 ```python
 #!/usr/bin/env python3
 """Smoke gate Sprint N — [Nome]
-Executa contra mac-lablz com infra real. Não requer WhatsApp real.
+Executa contra macmini-lablz com infra real. Não requer WhatsApp real.
 """
 import asyncio
 import sys
@@ -534,7 +534,7 @@ Testes unitários
 [ ] Todo Service que escreve no banco tem mock_session.commit.assert_called_once()
 
 Testes staging
-[ ] pytest -m staging passa com 0 falhas no mac-lablz
+[ ] pytest -m staging passa com 0 falhas no macmini-lablz
 [ ] test_ui_injection.py verifica que nenhuma dep crítica é None
 [ ] Toda query não-trivial tem teste staging verificando resultado real
 
@@ -543,7 +543,7 @@ Gotchas
 [ ] Há teste staging verificando o comportamento real de cada gotcha
 
 Smoke gate
-[ ] scripts/smoke_sprint_N.py existe e retorna exit code 0 no mac-lablz
+[ ] scripts/smoke_sprint_N.py existe e retorna exit code 0 no macmini-lablz
 [ ] Smoke cria dados, verifica persistência em nova sessão, limpa dados de teste
 
 Harness v2 — pipeline mecânico obrigatório

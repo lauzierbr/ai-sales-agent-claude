@@ -25,9 +25,9 @@ Você tem uma rodada de correção. Se reprovar novamente, o sprint será escala
 | print() proibido | `grep -rn "print(" output/src/` (excl. testes) | PASS — 0 resultados em produção |
 | import-linter | `.venv/bin/lint-imports` (PYTHONPATH=output) | PASS — 5/5 contratos KEPT, 0 violações |
 | pytest unit | `.venv/bin/python -m pytest -m unit output/src/tests/unit/` | PASS — 266 passed, 0 falhas |
-| pytest staging | `pytest -m staging` (mac-lablz) | CANNOT RUN — requer mac-lablz |
-| smoke gate A_SMOKE | `scripts/smoke_sprint_6.py` (mac-lablz) | CANNOT RUN — requer mac-lablz |
-| smoke gate A10 | `scripts/smoke_ui.sh` (mac-lablz) | CANNOT RUN — requer mac-lablz |
+| pytest staging | `pytest -m staging` (macmini-lablz) | CANNOT RUN — requer macmini-lablz |
+| smoke gate A_SMOKE | `scripts/smoke_sprint_6.py` (macmini-lablz) | CANNOT RUN — requer macmini-lablz |
+| smoke gate A10 | `scripts/smoke_ui.sh` (macmini-lablz) | CANNOT RUN — requer macmini-lablz |
 
 ---
 
@@ -84,18 +84,18 @@ Você tem uma rodada de correção. Se reprovar novamente, o sprint será escala
 **CORS verificado em código:** `create_app()` usa `CORS_ALLOWED_ORIGINS` explícito em staging; levanta `RuntimeError` se ausente
 
 ### A10 — [G4-SMOKE-UI] Todas as rotas do dashboard retornam 200
-**Status:** CANNOT RUN — requer mac-lablz
+**Status:** CANNOT RUN — requer macmini-lablz
 **Teste:** `ssh macmini-lablz "... infisical run --env=staging -- bash ../scripts/smoke_ui.sh"`
-**Nota:** `scripts/smoke_ui.sh` existe no repositório ✅; execução pendente no mac-lablz.
+**Nota:** `scripts/smoke_ui.sh` existe no repositório ✅; execução pendente no macmini-lablz.
 
 ### A_SMOKE — Smoke gate staging — caminho crítico completo
-**Status:** CANNOT RUN — requer mac-lablz + NOTA DE GAP
+**Status:** CANNOT RUN — requer macmini-lablz + NOTA DE GAP
 **Teste:** `ssh macmini-lablz "... infisical run --env=staging -- python ../scripts/smoke_sprint_6.py"`
 **Nota de GAP:** `scripts/smoke_sprint_6.py` existe ✅ mas tem cobertura incompleta vs. spec:
 - G7 verifica apenas `GET /dashboard/precos` (página carrega) ❌ em vez de `POST /dashboard/precos/upload` (processar fixture)
 - Smoke NÃO verifica `POST /dashboard/clientes/novo` com criação real
 - Smoke NÃO verifica burst de webhook → 429
-Mesmo que retorne "ALL OK" no mac-lablz, esses três caminhos críticos não serão exercitados. Registrado como débito — script deve ser corrigido na rodada de correção.
+Mesmo que retorne "ALL OK" no macmini-lablz, esses três caminhos críticos não serão exercitados. Registrado como débito — script deve ser corrigido na rodada de correção.
 
 ---
 
@@ -202,13 +202,13 @@ PYTHONPATH=output .venv/bin/lint-imports
 grep -rn "commit.assert_called" output/src/tests/unit/tenants/
 grep -rn "commit.assert_called" output/src/tests/unit/catalog/
 
-# M_INJECT (mac-lablz)
+# M_INJECT (macmini-lablz)
 pytest -m staging output/src/tests/staging/agents/test_ui_injection.py -v
 
-# Testes staging (mac-lablz)
+# Testes staging (macmini-lablz)
 pytest -m staging output/src/tests/staging/ -v
 
-# Smoke gate (mac-lablz)
+# Smoke gate (macmini-lablz)
 infisical run --env=staging -- python scripts/smoke_sprint_6.py
 infisical run --env=staging -- bash scripts/smoke_ui.sh
 ```

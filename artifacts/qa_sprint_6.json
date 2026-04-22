@@ -7,7 +7,7 @@
   "avaliador": "Evaluator Agent",
   "versao": "0.6.1",
   "commit_local": "43f7302",
-  "commit_mac_lablz": "43f7302",
+  "commit_macmini_lablz": "43f7302",
 
   "checks_automaticos": [
     {"id": "secrets", "resultado": "PASS", "detalhes": "0 hardcoded secrets em output/src/"},
@@ -18,8 +18,8 @@
     {"id": "pytest_unit", "resultado": "PASS", "detalhes": "273 passed, 0 falhas"},
     {"id": "coverage_tenants_service", "resultado": "PASS", "detalhes": "100% (era 71% na r1)"},
     {"id": "coverage_catalog_service", "resultado": "PASS", "detalhes": "85%"},
-    {"id": "pytest_staging_sprint6", "resultado": "PASS", "detalhes": "test_dashboard_pre_pilot.py 3/3 + test_ui_injection.py 3/3 = 6/6 PASS no mac-lablz"},
-    {"id": "m_inject_staging", "resultado": "PASS", "detalhes": "test_ui_injection.py existe e passou 3/3 no mac-lablz"},
+    {"id": "pytest_staging_sprint6", "resultado": "PASS", "detalhes": "test_dashboard_pre_pilot.py 3/3 + test_ui_injection.py 3/3 = 6/6 PASS no macmini-lablz"},
+    {"id": "m_inject_staging", "resultado": "PASS", "detalhes": "test_ui_injection.py existe e passou 3/3 no macmini-lablz"},
     {"id": "smoke_a_smoke", "resultado": "PASS", "detalhes": "smoke_sprint_6.py ALL OK: G1/G2/G3/G4/G5/G6/G7/G8(CRIA+VISIVEL)/G9 — exit 0"},
     {"id": "smoke_g4", "resultado": "PASS", "detalhes": "smoke_ui.sh 13/13 PASSED — exit 0"}
   ],
@@ -35,7 +35,7 @@
     "A8_E8_HEALTH_ANTHROPIC": "PASS — 6 unit tests; /health retorna ok/degraded/fail corretamente",
     "A9_E9_CORS": "PASS — 2 unit tests; sem wildcard em staging/production",
     "A10_G4_SMOKE_UI": "PASS — smoke_ui.sh 13/13: L0/U1-U12 todos 200 + conteúdo correto",
-    "A_SMOKE_GATE": "PASS — smoke_sprint_6.py exit 0; todos G1-G9 OK no mac-lablz"
+    "A_SMOKE_GATE": "PASS — smoke_sprint_6.py exit 0; todos G1-G9 OK no macmini-lablz"
   },
 
   "criterios_media": [
@@ -43,14 +43,14 @@
     {"id": "M2", "status": "PASS", "detalhes": "docstrings presentes em todas as funções públicas"},
     {"id": "M3", "status": "PASS", "detalhes": "tenants/service.py 100%, catalog/service.py 85%"},
     {"id": "M5", "status": "PASS", "detalhes": "session.commit.assert_called() em tenants:318 e catalog:272"},
-    {"id": "M_INJECT", "status": "PASS", "detalhes": "test_ui_injection.py 3/3 PASS no mac-lablz (AgentGestor, AgentCliente, AgentRep)"}
+    {"id": "M_INJECT", "status": "PASS", "detalhes": "test_ui_injection.py 3/3 PASS no macmini-lablz (AgentGestor, AgentCliente, AgentRep)"}
   ],
 
   "media_falhas": 0,
   "media_threshold": 1,
   "media_status": "DENTRO",
 
-  "staging_mac_lablz": {
+  "staging_macmini_lablz": {
     "commit": "43f7302",
     "sprint_6_deployado": true,
     "versao_confirmada": "0.6.1",
@@ -64,8 +64,8 @@
 
   "historico_rodadas": {
     "r1": "REPROVADO — M_INJECT (arquivo ausente), M1 (12 erros mypy), M3 (71%), M5 (commit ausente)",
-    "r2": "REPROVADO/escalação — todos critérios locais PASS; bloqueio infraestrutura (mac-lablz sem Sprint 6)",
-    "r3": "APROVADO — código sincronizado para mac-lablz pelo Evaluator; todos checks staging PASS"
+    "r2": "REPROVADO/escalação — todos critérios locais PASS; bloqueio infraestrutura (macmini-lablz sem Sprint 6)",
+    "r3": "APROVADO — código sincronizado para macmini-lablz pelo Evaluator; todos checks staging PASS"
   },
 
   "pre_existing_staging_failures": {

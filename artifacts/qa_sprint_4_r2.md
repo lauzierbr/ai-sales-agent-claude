@@ -88,13 +88,13 @@ a probabilidade do modelo usá-la para "quais os pedidos pendentes".
 
 ## Pendências para homologação humana (não bloqueantes para APROVADO)
 
-1. **Staging tests** (`pytest -m staging`) — devem ser executados no mac-lablz
+1. **Staging tests** (`pytest -m staging`) — devem ser executados no macmini-lablz
    antes da homologação manual. O teste staging existente não cobre
    `listar_pedidos_por_status` — coverage staging é opcional para esta rodada
    de correção, mas recomendado.
-2. **Smoke gate** `scripts/smoke_gate_sprint4.sh` — deve passar no mac-lablz
+2. **Smoke gate** `scripts/smoke_gate_sprint4.sh` — deve passar no macmini-lablz
    com `infisical run --env=staging`.
-3. **Deploy dos arquivos modificados** para o mac-lablz:
+3. **Deploy dos arquivos modificados** para o macmini-lablz:
    - `output/src/agents/runtime/agent_gestor.py`
    - `output/src/agents/config.py`
    - `output/src/orders/repo.py`
@@ -105,7 +105,7 @@ a probabilidade do modelo usá-la para "quais os pedidos pendentes".
 ## Próximos passos
 
 1. Deploy staging (arquivos acima) + reiniciar uvicorn
-2. `infisical run --env=staging -- pytest -m staging` no mac-lablz
+2. `infisical run --env=staging -- pytest -m staging` no macmini-lablz
 3. `infisical run --env=staging -- bash scripts/smoke_gate_sprint4.sh`
 4. Homologação manual pelo checklist `docs/exec-plans/active/homologacao_sprint4.md`
    — cenários H1–H12 (incluindo "quais os pedidos pendentes" → deve responder)

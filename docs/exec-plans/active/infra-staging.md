@@ -9,19 +9,19 @@
 
 ## Objetivo
 
-macmini-lablz com infraestrutura espelhando o development do mac-lablz.
+macmini-lablz com infraestrutura espelhando o development do macmini-lablz.
 Deploy funcional via `scripts/deploy.sh`. Serviços com auto-start via launchd.
 
 ## Pré-condições
 
-- Sprint Infra-Dev concluído no mac-lablz
+- Sprint Infra-Dev concluído no macmini-lablz
 - SSH configurado: `ssh macmini-lablz` funciona sem senha
 - macmini-lablz com macOS e acesso à internet
 
 ## Entregas
 
 ### 1. SSH e acesso remoto
-- [ ] Chave SSH do mac-lablz copiada para macmini-lablz
+- [ ] Chave SSH do macmini-lablz copiada para macmini-lablz
 - [ ] `ssh macmini-lablz` funciona sem senha
 - [ ] `ssh macmini-lablz "hostname"` retorna correto
 
@@ -55,7 +55,7 @@ Deploy funcional via `scripts/deploy.sh`. Serviços com auto-start via launchd.
 - [ ] `launchctl list | grep ai-sales` mostra todos ativos
 
 ### 6. Deploy script funcional
-- [ ] `scripts/deploy.sh` executa sem erro a partir do mac-lablz
+- [ ] `scripts/deploy.sh` executa sem erro a partir do macmini-lablz
 - [ ] `git pull` + restart de serviços funcionam
 - [ ] Log do deploy acessível
 
@@ -65,7 +65,7 @@ Deploy funcional via `scripts/deploy.sh`. Serviços com auto-start via launchd.
 
 ## Critérios de conclusão
 
-A partir do mac-lablz:
+A partir do macmini-lablz:
 ```bash
 # Deploy funciona
 ./scripts/deploy.sh

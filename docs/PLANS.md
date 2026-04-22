@@ -6,7 +6,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 
 | Sprint | Status | Tipo | Descrição |
 |--------|--------|------|-----------|
-| Infra-Dev | ✅ | Infra | Ambiente desenvolvimento (mac-lablz) |
+| Infra-Dev | ✅ | Infra | Ambiente desenvolvimento (macmini-lablz) |
 | Infra-Staging | ✅ | Infra | Ambiente staging (macmini-lablz) |
 | Sprint 0 | ✅ | Produto | Catálogo — crawler + enriquecimento |
 | Sprint 1 | ✅ | Produto | Infraestrutura da aplicação |
@@ -19,7 +19,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 
-### Sprint Infra-Dev — mac-lablz
+### Sprint Infra-Dev — macmini-lablz
 **Pré-requisito:** todos os sprints de produto dependem desta infra.
 
 Entregas:
@@ -42,7 +42,7 @@ Entregas:
 **Pré-requisito:** Sprint Infra-Dev completo.
 
 Entregas:
-- [ ] SSH mac-lablz → macmini-lablz configurado e testado
+- [ ] SSH macmini-lablz → macmini-lablz configurado e testado
 - [ ] Mesmos serviços do Infra-Dev no mac-mini
 - [ ] `docker-compose.staging.yml` commitado
 - [ ] Ambiente `staging` no Infisical com variáveis
@@ -161,7 +161,7 @@ Entregue:
 - 281 unit tests; test_ui_injection.py; smoke G1–G9 (E10–E11)
 
 Próximos passos:
-1. `./scripts/deploy.sh staging` → sincronizar mac-lablz
+1. `./scripts/deploy.sh staging` → sincronizar macmini-lablz
 2. `python scripts/seed_homologacao_sprint-6.py`
 3. `python scripts/smoke_sprint_6.py` → ALL OK
 4. Homologação manual H1–H7

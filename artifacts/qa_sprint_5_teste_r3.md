@@ -112,7 +112,7 @@ exit code = 1   (débito R2 corrigido)
 é uma instância obsoleta (start Tue 09AM, PID 10039) rodando código de
 `/Users/lauzier/MyRepos/ai-sales-agent-claude/` que antecede o commit
 `1d7cc37`. O código deste worktree, quando carregado via TestClient,
-retorna 302 corretamente (ver A1). Em um deploy fresh (mac-lablz ou
+retorna 302 corretamente (ver A1). Em um deploy fresh (macmini-lablz ou
 restart local), S1 passaria.
 **Ação:** o próximo handoff ao usuário deve restartar o uvicorn
 apontando para o worktree antes de considerar S1 como evidência final.
@@ -184,5 +184,5 @@ O usuário pode encerrar o ciclo e seguir para o próximo sprint real.
 **Observação ao usuário:** há um `uvicorn` antigo em `localhost:8000`
 (PID 10039) servindo um caminho anterior. Para um smoke end-to-end
 limpo no futuro, reinicie apontando para o worktree em avaliação, ou
-deixe o smoke contra o staging mac-lablz (onde o deploy é via git
+deixe o smoke contra o staging macmini-lablz (onde o deploy é via git
 checkout, sem esse problema).

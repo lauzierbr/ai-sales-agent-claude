@@ -1,7 +1,7 @@
 """Testes de staging — dashboard pré-piloto Sprint 6 (M_INJECT + fluxos críticos).
 
 @pytest.mark.staging — requer Postgres + Redis reais; sem WhatsApp real.
-Roda no mac-lablz: infisical run --env=staging -- pytest -m staging
+Roda no macmini-lablz: infisical run --env=staging -- pytest -m staging
 """
 
 from __future__ import annotations

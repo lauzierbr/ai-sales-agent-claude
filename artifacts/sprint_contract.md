@@ -107,5 +107,5 @@ Máximo de falhas de Média permitidas: 1 de 5
 ## Ambiente de testes
 
 pytest -m unit    → roda no container do Evaluator (sem serviços externos)
-pytest -m staging → roda no mac-lablz com Postgres + Redis reais, sem WhatsApp real
-pytest -m integration → não roda no container; requer mac-lablz com infra completa
+pytest -m staging → roda no macmini-lablz com Postgres + Redis reais, sem WhatsApp real
+pytest -m integration → não roda no container; requer macmini-lablz com infra completa

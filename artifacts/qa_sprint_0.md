@@ -175,4 +175,4 @@ TOTAL                           825 stmts 338 miss    59%  (fail_under=50 — PA
 
 **APROVADO** — todos os 9 critérios de alta (A1–A9) passaram. Todos os 3 critérios de média (M1–M3) satisfeitos.
 
-O Sprint 0 pode avançar para integração (pytest -m integration) no mac-lablz com infra rodando.
+O Sprint 0 pode avançar para integração (pytest -m integration) no macmini-lablz com infra rodando.

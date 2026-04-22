@@ -4,7 +4,7 @@
 **Sprint:** 6 — Pre-Pilot Hardening
 **Versão:** v0.7.0-rc1
 **Commit:** 43f7302
-**Status:** Aguardando homologação manual no mac-lablz
+**Status:** Aguardando homologação manual no macmini-lablz
 
 ---
 
