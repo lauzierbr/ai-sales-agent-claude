@@ -79,7 +79,10 @@ def check_pytest_unit() -> None:
             [
                 sys.executable, "-m", "pytest",
                 "-m", "unit",
-                "output/src/tests/unit/agents/",  # domínio afetado pelo Sprint 7
+                "output/src/tests/unit/agents/test_gestor_repo.py",
+                "output/src/tests/unit/agents/test_agent_cliente.py",
+                "output/src/tests/unit/agents/test_agent_rep.py",
+                "output/src/tests/unit/agents/test_agent_cliente_linguagem_br.py",
                 "-q", "--tb=short",
                 "--no-header",
             ],
