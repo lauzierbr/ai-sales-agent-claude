@@ -1,5 +1,45 @@
 # Reliability & Observabilidade — AI Sales Agent
 
+## Langfuse CLI
+
+Ferramenta de linha de comando para inspecionar traces, generations e scores do Langfuse diretamente no terminal.
+
+**Instalação (global, já feita):**
+```bash
+npm install -g langfuse-cli
+```
+
+**Uso básico — requer as env vars do projeto:**
+```bash
+# Listar traces recentes
+langfuse api traces list --limit 10
+
+# Inspecionar um trace específico
+langfuse api traces get <trace-id>
+
+# Ver observations/generations de um trace (tokens, custo, modelo)
+langfuse api observations list --traceId <trace-id>
+
+# Listar sessions
+langfuse api sessions list --limit 10
+
+# Listar todos os recursos disponíveis
+langfuse api __schema
+```
+
+**Credenciais** — via Infisical (staging):
+```bash
+infisical run --env=staging -- sh -c \
+  'langfuse --public-key "$LANGFUSE_PUBLIC_KEY" --secret-key "$LANGFUSE_SECRET_KEY" --host "$LANGFUSE_HOST" api traces list --limit 10'
+```
+
+Host staging: `http://100.113.28.85:3000` (macmini-lablz, Tailscale)
+
+> Útil para debug do B-12 (instrumentação incompleta): confirma o que está
+> chegando ao Langfuse antes e depois da correção.
+
+---
+
 ## Stack de observabilidade
 
 ```

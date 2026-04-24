@@ -5,6 +5,33 @@
 | ID   | Descrição                                           | Severidade | Sprint origem    | Data abertura |
 |------|-----------------------------------------------------|------------|------------------|---------------|
 | B-01 | Gestor não recebe notificação quando pedido é feito | Alta       | Sprint 6 homolog | 2026-04-21    |
+| B-10 | Pedido criado sem representante mesmo quando cliente tem rep. vinculado | Alta | Piloto | 2026-04-24 |
+| B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |
+| B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
+
+> **B-12 detalhe:** Três gaps na instrumentação Langfuse dos três agentes:
+> 1. `output=null`: `resposta_final` nunca repassada via `_lf_ctx.update_current_observation(output=...)`.
+>    Arquivos: agent_gestor.py:489, agent_rep.py:429, agent_cliente.py:384.
+> 2. Zero tokens/custo/generations: `AsyncAnthropic()` instanciado sem wrapper Langfuse em
+>    agent_gestor.py:920, agent_rep.py:464, agent_cliente.py:402. Calls a `client.messages.create()`
+>    são invisíveis ao Langfuse.
+> 3. Sem sessions: `session_id` nunca definido no trace (agent_gestor.py:368, agent_rep.py:291,
+>    agent_cliente.py:240) — impossível agrupar conversas por usuário/tenant.
+> Corrigir: wrappear AsyncAnthropic com instrumentação Langfuse + setar session_id usando
+> `conversa.id` (já disponível em todos os agentes) + chamar `update_current_observation(output=...)`.
+
+> **B-11 detalhe:** Ao trocar a persona de um número (ex: cliente → gestor), o Redis não invalida
+> a chave da persona anterior (`conv:{tenant_id}:{numero}`). Se alguma mensagem for roteada para
+> AgentRep/AgentCliente durante ou após a transição, o agente carrega histórico stale da persona
+> antiga. Adicionalmente, AgentRep e AgentCliente compartilham a mesma chave Redis — ao contrário
+> do AgentGestor que usa `hist:gestor:{tenant_id}:{numero}`. Corrigir: ao alterar persona de um
+> contato, invalidar todas as chaves Redis associadas ao número.
+> Arquivos: `output/src/agents/runtime/agent_rep.py:481`, `agent_cliente.py:419`.
+
+> **B-10 detalhe:** `get_by_telefone()` não faz SELECT em `representante_id`
+> ([output/src/agents/repo.py:109](../output/src/agents/repo.py)) e `ui.py:297` passa
+> `representante_id=None` hardcoded ao chamar `agent_cliente.responder()`. Corrigir: incluir
+> `representante_id` no SELECT e propagar o campo do `ClienteB2B` para o input do pedido.
 
 > **B-01 detalhe:** `tenant.whatsapp_number` é None — precisa buscar todos os gestores
 > ativos via `GestorRepo` e notificar pelo campo `telefone`. Afeta AgentCliente e AgentRep.
