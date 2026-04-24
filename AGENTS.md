@@ -25,6 +25,9 @@ Multi-tenant. Cliente piloto: JMB Distribuidora (Vinhedo-SP).
 | Qualidade por domínio | `docs/QUALITY_SCORE.md` |
 | Como usar o harness | `docs/design-docs/harness.md` |
 | Roadmap de sprints | `docs/PLANS.md` |
+| Feedbacks do piloto JMB | `docs/FEEDBACK.md` |
+| Bugs abertos e histórico | `docs/BUGS.md` |
+| Backlog de features | `docs/BACKLOG.md` |
 
 ## Regras inegociáveis (enforçadas mecanicamente)
 

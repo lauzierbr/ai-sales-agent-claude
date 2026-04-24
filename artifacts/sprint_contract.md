@@ -1,111 +1,183 @@
-# Sprint Contract — Sprint 6 — Pre-Pilot Hardening
+# Sprint Contract — Sprint 7 — Notificação ao Gestor
 
-**Status:** ACEITO — implementação completa (2026-04-21)
-**Data:** 2026-04-21
+**Status:** ACEITO
+**Data:** 2026-04-24
+
+---
 
 ## Entregas comprometidas
 
-1. **E1** — `TenantService.criar_cliente_ficticio(...)` implementado; `POST /dashboard/clientes/novo` funcional com validação de CNPJ, duplicata por tenant e `representante_id` válido.
-2. **E2** — `POST /dashboard/precos/upload` usa `CatalogService.processar_excel_precos(...)` e trata `ExcelUploadResult` sem AttributeError; feedback inline de sucesso/erro.
-3. **E3** — `/dashboard/top-produtos` com entrada visível na navegação, link de retorno para `/dashboard/home` e filtros `dias`/`limite` preservados.
-4. **E4** — `_get_pedidos_recentes` e todas as queries tocadas neste sprint filtram por `tenant_id`; JOINs entre tabelas multi-tenant incluem condição explícita de tenant.
-5. **E5** — App falha no startup se qualquer secret crítico estiver ausente; lista todos os ausentes numa mensagem única legível.
-6. **E6** — Rate limiting no login: 5 tentativas falhas por IP por 15min → HTTP 429 com mensagem visível.
-7. **E7** — Rate limiting no webhook: 30 eventos/min por `instance_id + remoteJid` → HTTP 429; particionado por tenant.
-8. **E8** — `/health` expõe componente Anthropic com estados `ok/degraded/fail`; `health_check.py` retorna exit ≠ 0 quando `fail`.
-9. **E9** — CORS sem wildcard em staging/production; cookie `dashboard_session` com `Secure=True` apenas em production.
-10. **E10** — Testes unitários cobrem todos os fluxos críticos (E1–E9); testes staging cobrem login + 3 fluxos críticos do gestor contra infra real.
-11. **E11** — `scripts/smoke_sprint_6.py` e `scripts/seed_homologacao_sprint-6.py` entregues e passando no macmini-lablz.
+1. **E1 — GestorRepo.listar_ativos_por_tenant**: método async adicionado em
+   `output/src/agents/repo.py` após a linha 629 (fim do método `get_by_telefone`),
+   retornando `list[Gestor]` com filtros obrigatórios `tenant_id` e `ativo = true`.
+
+2. **E2 — AgentCliente._confirmar_pedido loop de notificação**: bloco
+   `if tenant.whatsapp_number:` (linhas 713–726 de `agent_cliente.py`) substituído
+   por consulta a `GestorRepo.listar_ativos_por_tenant` e loop `for gestor in gestores:`;
+   `GestorRepo` injetado no `__init__` do `AgentCliente`.
+
+3. **E3 — AgentRep._confirmar_pedido_em_nome_de loop de notificação**: mesma
+   correção aplicada em `agent_rep.py` linhas 888–903; caption mantém
+   `Rep: {representante.nome}`; `GestorRepo` injetado no `__init__` do `AgentRep`.
+
+4. **E4 — Testes unitários**: teste A8 atualizado em
+   `test_agent_cliente.py`; novo A8b (lista vazia); testes análogos para
+   `AgentRep`; novo `test_gestor_repo.py` com 3 casos; todos `@pytest.mark.unit`;
+   `pytest -m unit` passa sem erros.
+
+5. **E5 — Smoke script**: `scripts/smoke_sprint_7.py` verifica `/health`,
+   gestor ativo no banco JMB e `pytest -m unit`; saída `ALL OK`, exit 0.
+
+---
 
 ## Critérios de aceitação — Alta (bloqueantes)
 
-A1. **[B1-CLIENTE-NOVO]** POST /dashboard/clientes/novo cria cliente e redireciona
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_dashboard.py -k cliente_novo`
-    Evidência esperada: 0 falhas; cobre criação válida, CNPJ inválido (<14 dígitos), CNPJ duplicado no mesmo tenant, `representante_id` de outro tenant
+**A1. GestorRepo.listar_ativos_por_tenant — assinatura e isolamento de tenant**
+    Teste:
+    ```python
+    import inspect, src.agents.repo as r
+    sig = inspect.signature(r.GestorRepo.listar_ativos_por_tenant)
+    assert "tenant_id" in sig.parameters
+    assert "session" in sig.parameters
+    ```
+    Evidência esperada: sem `AssertionError`; tipo de retorno anotado como
+    `list[Gestor]`; corpo da função contém `WHERE tenant_id = :tenant_id AND ativo = true`.
 
-A2. **[B2-PRECOS-UPLOAD]** POST /dashboard/precos/upload processa ExcelUploadResult sem AttributeError
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_dashboard.py -k precos_upload`
-    Evidência esperada: 0 falhas; cobre fixture xlsx válida, arquivo ausente e arquivo inválido
+**A2. GestorRepo.listar_ativos_por_tenant — lista vazia segura**
+    Teste: `pytest -m unit output/src/tests/unit/agents/test_gestor_repo.py::test_listar_ativos_lista_vazia`
+    Evidência esperada: 1 passed; mock retorna 0 rows; método devolve `[]` sem levantar exceção.
 
-A3. **[B3-TOP-PRODUTOS]** GET /dashboard/top-produtos retorna 200 e sem link para rota inexistente
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_dashboard.py -k top_produtos`
-    Evidência esperada: 0 falhas; response HTML não contém `href="/dashboard"` isolado; link "Voltar" aponta para `/dashboard/home`
+**A3. GestorRepo.listar_ativos_por_tenant — gestor inativo excluído**
+    Teste: `pytest -m unit output/src/tests/unit/agents/test_gestor_repo.py::test_listar_ativos_exclui_inativos`
+    Evidência esperada: 1 passed; gestor com `ativo=false` não aparece na lista.
 
-A4. **[B4-TENANT-ISOLATION]** Queries corrigidas do dashboard não vazam dados entre tenants
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_dashboard.py -k tenant_isolation`
-    Evidência esperada: 0 falhas; testes com 2 tenants; `/dashboard/clientes`, `/dashboard/top-produtos` e fluxos de criação/edição não leem nem alteram registros do tenant vizinho
+**A4. GestorRepo.listar_ativos_por_tenant — isolamento de tenant**
+    Teste: `pytest -m unit output/src/tests/unit/agents/test_gestor_repo.py::test_listar_ativos_isolamento_tenant`
+    Evidência esperada: 1 passed; gestor de tenant diferente não aparece na lista.
 
-A5. **[E5-STARTUP]** App não aceita requests quando qualquer secret crítico está ausente
-    Teste: `pytest -m unit output/src/tests/unit/providers/test_startup_validation.py`
-    Evidência esperada: 0 falhas; teste com múltiplos secrets ausentes → mensagem única lista todos os ausentes; `create_app()` não retorna app saudável
-    Variáveis obrigatórias verificadas: `POSTGRES_URL`, `REDIS_URL`, `JWT_SECRET`, `DASHBOARD_SECRET`, `DASHBOARD_TENANT_ID`, `EVOLUTION_API_KEY`, `EVOLUTION_WEBHOOK_SECRET`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+**A5. AgentCliente — loop notifica 2 gestores**
+    Teste: `pytest -m unit output/src/tests/unit/agents/test_agent_cliente.py::test_agent_cliente_confirmar_pedido_cadeia_completa`
+    (teste A8 atualizado)
+    Evidência esperada: 1 passed; `send_whatsapp_media` chamado exatamente
+    2 vezes com telefones dos 2 gestores mockados; `tenant.whatsapp_number` não referenciado.
 
-A6. **[E6-RATE-LOGIN]** 6ª tentativa falha de login dentro de 15min retorna 429
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_dashboard.py -k rate_limit_login`
-    Evidência esperada: 0 falhas; 5ª tentativa ainda retorna 401; login correto antes do limite retorna 302; login correto após falhas abaixo do limite reseta contador
+**A6. AgentCliente — lista vazia não chama send_whatsapp_media**
+    Teste: `pytest -m unit output/src/tests/unit/agents/test_agent_cliente.py::test_agent_cliente_confirmar_pedido_sem_gestores`
+    (teste A8b novo)
+    Evidência esperada: 1 passed; `send_whatsapp_media` chamado 0 vezes;
+    pedido retornado normalmente sem exceção.
 
-A7. **[E7-RATE-WEBHOOK]** 31º evento MESSAGES_UPSERT do mesmo remetente retorna 429
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_webhook.py -k rate_limit`
-    Evidência esperada: 0 falhas; eventos não-MESSAGES_UPSERT não são contados; payload 429 é JSON estável
+**A7. AgentRep — loop notifica gestores com caption correta**
+    Teste: `pytest -m unit output/src/tests/unit/agents/test_agent_rep.py` (teste análogo ao A5)
+    Evidência esperada: 1 passed; `send_whatsapp_media` chamado para cada gestor;
+    `caption` contém a substring `"Rep: "`.
 
-A8. **[E8-HEALTH-ANTHROPIC]** /health classifica estado Anthropic como ok/degraded/fail
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_anthropic_health.py`
-    Evidência esperada: 0 falhas; overload 529/timeout → `degraded`; auth/quota/chave inválida → `fail`; `health_check.py` sai com exit ≠ 0 quando `fail`
+**A8. AgentRep — lista vazia não chama send_whatsapp_media**
+    Teste: `pytest -m unit output/src/tests/unit/agents/test_agent_rep.py` (teste análogo ao A6)
+    Evidência esperada: 1 passed; `send_whatsapp_media` chamado 0 vezes;
+    pedido retornado normalmente.
 
-A9. **[E9-CORS]** Staging não usa wildcard CORS; cookie Secure=True apenas em production
-    Teste: `pytest -m unit output/src/tests/unit/agents/test_dashboard.py -k cors_cookie`
-    Evidência esperada: 0 falhas; `ENVIRONMENT=development` aceita localhost; `staging` exige `CORS_ALLOWED_ORIGINS` explícito; Set-Cookie tem `Secure=False` em staging
+**A9. Nenhum teste unit realiza I/O externo**
+    Teste: `pytest -m unit --tb=short 2>&1 | grep -i "socket\|connection\|asyncpg\|psycopg\|redis"`
+    Evidência esperada: saída vazia (nenhuma conexão real tentada).
 
-A10. **[G4-SMOKE-UI]** Todas as rotas do dashboard retornam 200 após mudanças do sprint
-    Teste: `ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
-           infisical run --env=staging -- bash ../scripts/smoke_ui.sh"`
-    Evidência esperada: `logs/smoke_ui.log` contém "ALL OK", exit code 0
+**A10. if tenant.whatsapp_number removido de ambos os agents**
+    Teste:
+    ```bash
+    grep -n "tenant.whatsapp_number" \
+      output/src/agents/runtime/agent_cliente.py \
+      output/src/agents/runtime/agent_rep.py
+    ```
+    Evidência esperada: zero ocorrências em ambos os arquivos.
 
-A_SMOKE. **Smoke gate staging — caminho crítico completo com infra real**
-    Teste: `ssh macmini-lablz "cd ~/ai-sales-agent-claude/output && \
-           infisical run --env=staging -- python ../scripts/smoke_sprint_6.py"`
-    Evidência esperada: saída "ALL OK", exit code 0
-    Nota: obrigatório — sprint toca Runtime e UI.
+**A11. GestorRepo injetado nos __init__ de AgentCliente e AgentRep**
+    Teste:
+    ```bash
+    grep -n "gestor_repo\|GestorRepo" \
+      output/src/agents/runtime/agent_cliente.py \
+      output/src/agents/runtime/agent_rep.py
+    ```
+    Evidência esperada: ocorrências no `__init__` de ambas as classes e na
+    atribuição `self._gestor_repo = ...`.
+
+**A12. pytest -m unit passa integralmente**
+    Teste: `pytest -m unit output/src/tests/unit/ -q`
+    Evidência esperada: zero falhas; zero erros de coleta.
+
+**A_SMOKE. Smoke gate staging — caminho crítico com infra real**
+    Teste:
+    ```bash
+    ssh macmini-lablz "cd ~/ai-sales-agent-claude && \
+      python scripts/smoke_sprint_7.py"
+    ```
+    Evidência esperada: saída contém `ALL OK`, exit code 0.
+    Checks mínimos do script:
+    - `GET http://100.113.28.85:8000/health` responde `{"status": "ok"}`
+    - `SELECT COUNT(*) FROM gestores WHERE tenant_id = '<jmb_id>' AND ativo = true` retorna >= 1
+    - `pytest -m unit` passa no macmini-lablz
+    Nota: obrigatório pois o sprint toca Runtime.
+
+---
 
 ## Critérios de aceitação — Média (não bloqueantes individualmente)
 
-M1. **[TYPE-HINTS]** type hints em todas as funções públicas novas/modificadas de Service e Repo
-    Teste: `mypy --strict output/src/`
-    Evidência esperada: 0 erros nos arquivos modificados neste sprint
+**M1. Type hints completos em GestorRepo.listar_ativos_por_tenant e nos __init__ modificados**
+    Teste: `mypy --strict output/src/agents/repo.py output/src/agents/runtime/agent_cliente.py output/src/agents/runtime/agent_rep.py`
+    Evidência esperada: 0 erros.
 
-M2. **[DOCSTRINGS]** docstrings em funções públicas de Service novas/modificadas
-    Teste: inspeção manual + pydocstyle
-    Evidência esperada: cobertura ≥ 80%
+**M2. Docstring em GestorRepo.listar_ativos_por_tenant**
+    Teste: inspeção manual do método adicionado.
+    Evidência esperada: docstring presente com Args, Returns e nota de
+    isolamento de tenant.
 
-M3. **[COVERAGE-UNIT]** cobertura ≥ 80% das funções de Service novas/modificadas
-    Teste: `pytest -m unit --cov=output/src --cov-report=term`
-    Evidência esperada: cobertura ≥ 80% em `tenants/service.py` e `catalog/service.py` tocados
+**M3. Cobertura de testes unitários nas funções modificadas**
+    Teste: `pytest -m unit --cov=output/src/agents --cov-report=term-missing`
+    Evidência esperada: cobertura das funções modificadas/novas >= 80%.
 
-M5. **[COMMIT-SERVICE]** Testes unitários de Service verificam session.commit()
-    Teste: `grep -rn "commit.assert_called" output/src/tests/unit/`
-    Evidência esperada: ao menos 1 match em testes de `TenantService` (E1) e 1 match em testes de `CatalogService` (E2)
+**M_INJECT. Injeção de GestorRepo sem None em ui.py**
+    Teste: inspeção de `output/src/agents/ui.py` (ou arquivo de factory) para
+    confirmar que `GestorRepo()` e instanciado e passado ao construir
+    `AgentCliente` e `AgentRep`.
+    Evidência esperada: nenhuma instância de `AgentCliente` ou `AgentRep` e
+    construida sem `gestor_repo` (parametro obrigatorio ou default nao-None).
 
-M_INJECT. **Injeção de dependências em ui.py sem None após _process_message**
-    Teste: `pytest -m staging output/src/tests/staging/agents/test_ui_injection.py`
-    Evidência esperada: nenhum atributo crítico de AgentCliente/AgentRep/AgentGestor é None após construção em `_process_message`
+---
 
 ## Threshold de Média
 
-Máximo de falhas de Média permitidas: 1 de 5
-**Exceção:** M_INJECT falha sozinha → bloqueia independente das outras (injeção None causou bugs históricos no Sprint 2).
+Máximo de falhas de Média permitidas: **1 de 4**
+
+(Se 2 ou mais critérios de Média falharem, o sprint é reprovado mesmo com
+todos os de Alta passando.)
+
+---
 
 ## Fora do escopo deste contrato
 
-- Redesenho de auth multi-usuário do dashboard (D023 — adiado)
-- Refactor amplo para remover toda SQL da camada UI além das queries tocadas nos blockers
-- Hardening genérico de endpoints além de `/dashboard/login` e `/webhook/whatsapp`
-- Teste de carga, chaos engineering ou tuning de performance além do smoke gate
-- Novas features de produto no dashboard
-- Observabilidade Langfuse / spans OTEL filhos (backlog)
-- Onboarding de segundo tenant
+- AgentGestor (`agent_gestor.py`) — não alterado neste sprint.
+- Nenhuma migration de banco (tabela `gestores` já existe desde migration 0015).
+- Dashboard de configuração de notificações por gestor.
+- Retry automático em falha na Evolution API.
+- CRUD de gestores no painel.
+- Nenhuma alteração em `catalog/`, `orders/`, `tenants/` ou `providers/`.
+- Teste de multi-turn (A_MULTITURN) — este sprint não altera fluxo conversacional,
+  apenas o bloco de notificação pós-confirmação de pedido.
+
+---
 
 ## Ambiente de testes
 
-pytest -m unit    → roda no container do Evaluator (sem serviços externos)
-pytest -m staging → roda no macmini-lablz com Postgres + Redis reais, sem WhatsApp real
-pytest -m integration → não roda no container; requer macmini-lablz com infra completa
+```
+pytest -m unit    -> roda no container do Evaluator (sem servicos externos)
+                    obrigatorio: mocks para asyncpg/SQLAlchemy e Anthropic
+pytest -m staging -> roda no macmini-lablz com Postgres + Redis reais, sem WhatsApp real
+                    abrange: query real de gestores, injecao de deps em ui.py
+pytest -m integration -> nao roda no container; requer macmini-lablz com Evolution API
+```
+
+### Gotchas conhecidos (workarounds obrigatórios na implementação)
+
+| Área | Gotcha | Workaround |
+|------|--------|------------|
+| asyncpg | `result.mappings().all()` retorna lista vazia, não None | Tratar retorno como lista — `if gestores:` antes do loop |
+| Evolution API | `send_whatsapp_media` silencia exceção | `try/except` por gestor com `log.warning("notif_gestor_falha", gestor_id=..., error=...)` |

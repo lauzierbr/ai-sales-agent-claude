@@ -52,7 +52,7 @@ if not _LANGFUSE_ENABLED:
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.config import AgentRepConfig
-from src.agents.repo import ClienteB2BRepo, ConversaRepo
+from src.agents.repo import ClienteB2BRepo, ConversaRepo, GestorRepo
 from src.agents.runtime._retry import call_with_overload_retry
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import Mensagem, Persona, Representante
@@ -234,6 +234,7 @@ class AgentRep:
         redis_client: Any | None = None,  # redis.asyncio.Redis
         cliente_b2b_repo: ClienteB2BRepo | None = None,
         order_repo: OrderRepo | None = None,
+        gestor_repo: GestorRepo | None = None,
     ) -> None:
         """Inicializa AgentRep com dependências injetadas.
 
@@ -248,6 +249,7 @@ class AgentRep:
             redis_client: cliente Redis assíncrono (opcional — sem memória Redis se None).
             cliente_b2b_repo: repositório de clientes B2B (opcional — instanciado internamente).
             order_repo: repositório de pedidos (opcional — instanciado internamente).
+            gestor_repo: repositório de gestores para notificação de pedidos.
         """
         self._order_service = order_service
         self._conversa_repo = conversa_repo
@@ -259,6 +261,7 @@ class AgentRep:
         self._redis = redis_client
         self._cliente_b2b_repo = cliente_b2b_repo or ClienteB2BRepo()
         self._order_repo = order_repo or OrderRepo()
+        self._gestor_repo = gestor_repo or GestorRepo()
 
         # System prompt resolvido na inicialização com nome do representante
         self._system_prompt_cache: str | None = None
@@ -885,8 +888,9 @@ class AgentRep:
                 representante_nome=self._representante.nome,
             )
 
-            # Notifica gestor via WhatsApp
-            if tenant.whatsapp_number:
+            # Notifica gestores ativos via WhatsApp
+            gestores = await self._gestor_repo.listar_ativos_por_tenant(tenant.id, session)
+            if gestores:
                 total_br = f"{pedido.total_estimado:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 caption = (
                     f"Novo pedido PED-{pedido.id[:8].upper()} | "
@@ -894,13 +898,17 @@ class AgentRep:
                     f"{len(pedido.itens)} iten(s) | "
                     f"R$ {total_br}"
                 )
-                await send_whatsapp_media(
-                    instancia_id=instancia_id,
-                    numero=tenant.whatsapp_number,
-                    pdf_bytes=pdf_bytes,
-                    caption=caption,
-                    file_name=f"pedido-{pedido.id[:8]}.pdf",
-                )
+                for gestor in gestores:
+                    try:
+                        await send_whatsapp_media(
+                            instancia_id=instancia_id,
+                            numero=gestor.telefone,
+                            pdf_bytes=pdf_bytes,
+                            caption=caption,
+                            file_name=f"pedido-{pedido.id[:8]}.pdf",
+                        )
+                    except Exception as exc:
+                        log.warning("notif_gestor_falha", gestor_id=gestor.id, error=str(exc))
         except Exception as exc:
             log.warning("agent_rep_pdf_erro", error=str(exc))
 

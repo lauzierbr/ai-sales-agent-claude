@@ -97,3 +97,25 @@ Ver `scripts/managed-agents/` e `docs/design-docs/memory-stores.md` (D015).
 
 Para rodar o mesmo fluxo manualmente no Codex Desktop com chats separados
 por papel, ver `docs/design-docs/harness-codex-playbook.md`.
+
+## Novo operacional — subagents nativos (desde Sprint 7)
+
+Em vez de 3 sessões paralelas no app, o harness opera com **uma sessão principal**
+(você como Planner) que delega via subagents declarados em `.claude/agents/`:
+
+| Subagent | Arquivo | Quando invocar |
+|----------|---------|----------------|
+| generator | `.claude/agents/generator.md` | Após sprint_contract.md ACEITO |
+| evaluator | `.claude/agents/evaluator.md` | Após Generator entregar handoff |
+| tester | `.claude/agents/tester.md` | Durante desenvolvimento, feedback rápido |
+| product-owner | `.claude/agents/product-owner.md` | Sessão separada para priorização |
+
+**Invocação:**
+```
+Use o @generator para implementar a Fase 2 do Sprint 7.
+Use o @evaluator para avaliar o código entregue.
+Use o @tester para rodar os testes do domínio notifications.
+```
+
+**Ganho:** os subagents executam em contexto isolado e devolvem apenas o sumário —
+o histórico interno (leituras de arquivo, tool calls) não contamina a sessão principal.

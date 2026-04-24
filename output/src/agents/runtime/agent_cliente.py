@@ -46,7 +46,7 @@ if not _LANGFUSE_ENABLED:
     _lf_ctx = _DummyLfCtx()
 
 from src.agents.config import AgentClienteConfig
-from src.agents.repo import ConversaRepo
+from src.agents.repo import ConversaRepo, GestorRepo
 from src.agents.runtime._retry import call_with_overload_retry
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import IntentoPedido, ItemIntento, Mensagem, Persona
@@ -185,6 +185,7 @@ class AgentCliente:
         anthropic_client: Any | None = None,  # anthropic.AsyncAnthropic
         redis_client: Any | None = None,  # redis.asyncio.Redis
         order_repo: OrderRepo | None = None,
+        gestor_repo: GestorRepo | None = None,
     ) -> None:
         """Inicializa AgentCliente com dependências injetadas.
 
@@ -197,6 +198,7 @@ class AgentCliente:
             anthropic_client: cliente Anthropic assíncrono (opcional — criado internamente se None).
             redis_client: cliente Redis assíncrono (opcional — sem memória Redis se None).
             order_repo: repositório de pedidos (opcional — instanciado internamente).
+            gestor_repo: repositório de gestores para notificação de pedidos.
         """
         self._order_service = order_service
         self._conversa_repo = conversa_repo
@@ -206,6 +208,7 @@ class AgentCliente:
         self._anthropic = anthropic_client
         self._redis = redis_client
         self._order_repo = order_repo or OrderRepo()
+        self._gestor_repo = gestor_repo or GestorRepo()
 
     @_lf_observe(name="processar_mensagem_cliente")  # type: ignore[untyped-decorator]
     async def responder(
@@ -709,21 +712,26 @@ class AgentCliente:
                 cliente_nome=cliente_nome,
             )
 
-            # 3. Notifica gestor via WhatsApp
-            if tenant.whatsapp_number:
+            # 3. Notifica gestores ativos via WhatsApp
+            gestores = await self._gestor_repo.listar_ativos_por_tenant(tenant.id, session)
+            if gestores:
                 total_br = f"{pedido.total_estimado:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 caption = (
                     f"Novo pedido PED-{pedido.id[:8].upper()} | "
                     f"{len(pedido.itens)} iten(s) | "
                     f"R$ {total_br}"
                 )
-                await send_whatsapp_media(
-                    instancia_id=instancia_id,
-                    numero=tenant.whatsapp_number,
-                    pdf_bytes=pdf_bytes,
-                    caption=caption,
-                    file_name=f"pedido-{pedido.id[:8]}.pdf",
-                )
+                for gestor in gestores:
+                    try:
+                        await send_whatsapp_media(
+                            instancia_id=instancia_id,
+                            numero=gestor.telefone,
+                            pdf_bytes=pdf_bytes,
+                            caption=caption,
+                            file_name=f"pedido-{pedido.id[:8]}.pdf",
+                        )
+                    except Exception as exc:
+                        log.warning("notif_gestor_falha", gestor_id=gestor.id, error=str(exc))
         except Exception as exc:
             log.warning("agent_cliente_pdf_erro", error=str(exc))
 

@@ -13,8 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.agents.repo import GestorRepo
 from src.agents.runtime.agent_cliente import AgentCliente
-from src.agents.types import Conversa, Mensagem, Persona
+from src.agents.types import Conversa, Gestor, Mensagem, Persona
 from src.orders.types import ItemPedido, Pedido, StatusPedido
 from src.tenants.types import Tenant
 
@@ -153,17 +154,40 @@ def _make_agent(
 # ─────────────────────────────────────────────
 
 
+@pytest.fixture
+def gestores_fixture() -> list[Gestor]:
+    return [
+        Gestor(
+            id="gest-001",
+            tenant_id="jmb",
+            telefone="5519111110001",
+            nome="Gestor Alice",
+            ativo=True,
+            criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+        Gestor(
+            id="gest-002",
+            tenant_id="jmb",
+            telefone="5519111110002",
+            nome="Gestor Bob",
+            ativo=True,
+            criado_em=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+    ]
+
+
 @pytest.mark.unit
 async def test_agent_cliente_confirmar_pedido_cadeia_completa(
     tenant_jmb: Tenant,
     mensagem_cliente: Mensagem,
     conversa_fixture: Conversa,
     pedido_fixture: Pedido,
+    gestores_fixture: list[Gestor],
 ) -> None:
-    """A8: confirmar_pedido chama (1) OrderService, (2) PDFGenerator, (3) send_whatsapp_media."""
+    """A8: confirmar_pedido chama (1) OrderService, (2) PDFGenerator, (3) send_whatsapp_media 2x — um por gestor."""
     from src.agents.runtime.agent_cliente import AgentCliente
     from src.agents.config import AgentClienteConfig
-    from src.agents.repo import ConversaRepo
+    from src.agents.repo import ConversaRepo, GestorRepo
     from src.orders.repo import OrderRepo
     from src.orders.runtime.pdf_generator import PDFGenerator
     from src.orders.service import OrderService
@@ -178,6 +202,10 @@ async def test_agent_cliente_confirmar_pedido_cadeia_completa(
     mock_pdf = MagicMock(spec=PDFGenerator)
     fake_pdf_bytes = b"PDF_FAKE" * 200
     mock_pdf.gerar_pdf_pedido = MagicMock(return_value=fake_pdf_bytes)
+
+    # Mock GestorRepo retornando 2 gestores ativos
+    mock_gestor_repo = AsyncMock(spec=GestorRepo)
+    mock_gestor_repo.listar_ativos_por_tenant = AsyncMock(return_value=gestores_fixture)
 
     # Anthropic: primeira chamada tool_use confirmar_pedido, segunda end_turn
     tool_input = {
@@ -207,6 +235,7 @@ async def test_agent_cliente_confirmar_pedido_cadeia_completa(
         catalog_service=None,
         anthropic_client=mock_anthropic,
         redis_client=None,
+        gestor_repo=mock_gestor_repo,
     )
 
     media_calls: list[dict[str, Any]] = []
@@ -238,10 +267,101 @@ async def test_agent_cliente_confirmar_pedido_cadeia_completa(
     call_args = mock_pdf.gerar_pdf_pedido.call_args
     assert call_args[0][0].id == pedido_fixture.id, "PDFGenerator chamado com pedido errado"
 
-    # (3) send_whatsapp_media chamado com pdf_bytes e tenant.whatsapp_number
-    assert len(media_calls) >= 1, "send_whatsapp_media não foi chamado"
-    assert media_calls[0]["numero"] == tenant_jmb.whatsapp_number
-    assert media_calls[0]["pdf_bytes"] == fake_pdf_bytes
+    # (3) send_whatsapp_media chamado exatamente 2 vezes — um por gestor
+    assert len(media_calls) == 2, f"send_whatsapp_media deve ser chamado 2x, obtido {len(media_calls)}x"
+    numeros_notificados = {c["numero"] for c in media_calls}
+    assert numeros_notificados == {"5519111110001", "5519111110002"}, (
+        f"Números notificados: {numeros_notificados!r}"
+    )
+    assert all(c["pdf_bytes"] == fake_pdf_bytes for c in media_calls)
+
+
+# ─────────────────────────────────────────────
+# A8b: confirmar_pedido sem gestores não chama send_whatsapp_media
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_agent_cliente_confirmar_pedido_sem_gestores(
+    tenant_jmb: Tenant,
+    mensagem_cliente: Mensagem,
+    conversa_fixture: Conversa,
+    pedido_fixture: Pedido,
+) -> None:
+    """A8b: lista vazia de gestores → send_whatsapp_media NÃO chamado; pedido criado normalmente."""
+    from src.agents.runtime.agent_cliente import AgentCliente
+    from src.agents.config import AgentClienteConfig
+    from src.agents.repo import ConversaRepo, GestorRepo
+    from src.orders.runtime.pdf_generator import PDFGenerator
+    from src.orders.service import OrderService
+
+    mock_conversa_repo = AsyncMock(spec=ConversaRepo)
+    mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_fixture)
+    mock_conversa_repo.add_mensagem = AsyncMock(return_value=MagicMock())
+
+    mock_order_service = AsyncMock(spec=OrderService)
+    mock_order_service.criar_pedido_from_intent = AsyncMock(return_value=pedido_fixture)
+
+    mock_pdf = MagicMock(spec=PDFGenerator)
+    mock_pdf.gerar_pdf_pedido = MagicMock(return_value=b"PDF_FAKE" * 200)
+
+    # Mock GestorRepo retornando lista vazia
+    mock_gestor_repo = AsyncMock(spec=GestorRepo)
+    mock_gestor_repo.listar_ativos_por_tenant = AsyncMock(return_value=[])
+
+    tool_input = {
+        "itens": [
+            {
+                "produto_id": "prod-001",
+                "codigo_externo": "SKU001",
+                "nome_produto": "Shampoo 300ml",
+                "quantidade": 5,
+                "preco_unitario": "29.90",
+            }
+        ],
+        "observacao": None,
+    }
+    tool_response = _make_anthropic_tool_use("confirmar_pedido", tool_input)
+    end_response = _make_anthropic_end_turn("Pedido confirmado!")
+
+    mock_anthropic = MagicMock()
+    mock_anthropic.messages.create = AsyncMock(side_effect=[tool_response, end_response])
+
+    config = AgentClienteConfig()
+    agent = AgentCliente(
+        order_service=mock_order_service,
+        conversa_repo=mock_conversa_repo,
+        pdf_generator=mock_pdf,
+        config=config,
+        catalog_service=None,
+        anthropic_client=mock_anthropic,
+        redis_client=None,
+        gestor_repo=mock_gestor_repo,
+    )
+
+    media_calls: list[dict[str, Any]] = []
+
+    async def mock_send_media(instancia_id: str, numero: str, pdf_bytes: bytes, caption: str, file_name: str) -> None:
+        media_calls.append({"numero": numero})
+
+    session = AsyncMock()
+
+    with patch("src.agents.runtime.agent_cliente.send_whatsapp_media", new=mock_send_media):
+        with patch("src.agents.runtime.agent_cliente.send_whatsapp_message", new=AsyncMock()):
+            await agent.responder(
+                mensagem=mensagem_cliente,
+                tenant=tenant_jmb,
+                session=session,
+                cliente_b2b_id="cli-001",
+            )
+
+    # Pedido foi criado normalmente
+    assert mock_order_service.criar_pedido_from_intent.called, "OrderService deve ter sido chamado"
+
+    # send_whatsapp_media NÃO deve ter sido chamado
+    assert len(media_calls) == 0, (
+        f"send_whatsapp_media não deve ser chamado sem gestores, mas foi chamado {len(media_calls)}x"
+    )
 
 
 # ─────────────────────────────────────────────

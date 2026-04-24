@@ -287,7 +287,7 @@ O usuário executa e registra o resultado.
 
 ---
 
-## O que fazer ao terminar
+## O que fazer ao terminar o planejamento
 
 1. Salvar `artifacts/spec.md` com o conteúdo completo
 2. Criar `docs/exec-plans/active/sprint-N-nome.md` com seções:
@@ -296,3 +296,51 @@ O usuário executa e registra o resultado.
 4. Atualizar `docs/PLANS.md`: status do sprint para 🔄
 5. Comunicar ao usuário que o spec está disponível para revisão
 6. Aguardar aprovação explícita antes de qualquer outra ação
+
+---
+
+## Pipeline de implementação — executar após aprovação do spec
+
+Quando o usuário aprovar o spec, executar o pipeline completo na ordem abaixo
+**sem interrupção**, reportando progresso a cada etapa concluída.
+
+### Passo 1 — Contrato (Generator Fase 1)
+```
+Use o @generator para propor o sprint_contract.md (Fase 1).
+```
+Aguardar o contrato. Em seguida:
+
+### Passo 2 — Revisão do contrato (Evaluator)
+```
+Use o @evaluator para revisar o sprint_contract.md.
+```
+- Se **ACEITO**: prosseguir para Passo 3.
+- Se **objeções**: negociar com `@generator` até ACEITO (máx 2 rodadas).
+- Se 2 rodadas sem acordo: **escalar ao usuário**.
+
+### Passo 3 — Implementação (Generator Fase 2)
+```
+Use o @generator para implementar o sprint conforme o contrato ACEITO (Fase 2).
+```
+Aguardar o handoff com arquivos alterados e auto-avaliação.
+
+### Passo 4 — Sanity check (Tester)
+```
+Use o @tester para rodar pytest e lint nos arquivos alterados.
+```
+- Se **falhas**: passar resultado ao `@generator` para correção; repetir Passo 4.
+- Se **limpo**: prosseguir para Passo 5.
+
+### Passo 5 — Avaliação final (Evaluator)
+```
+Use o @evaluator para avaliar o código entregue.
+```
+- Se **APROVADO**: prosseguir para encerramento.
+- Se **REPROVADO**: `@generator` tem **1 rodada** de correção → novo `@tester` → novo `@evaluator`.
+- Se 2x REPROVADO: **escalar ao usuário** com lista de issues.
+
+### Encerramento
+Ao receber APROVADO do Evaluator, reportar ao usuário:
+- Veredicto final
+- Arquivos alterados (resumo do handoff)
+- Próximo passo: homologação manual conforme `docs/exec-plans/active/homologacao_sprint-N.md`

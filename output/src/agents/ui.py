@@ -146,6 +146,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
     _pdf_generator = PDFGenerator()
     _relatorio_repo = RelatorioRepo()
     _cliente_b2b_repo = ClienteB2BRepo()
+    _gestor_repo = GestorRepo()
 
     # Validação de deps não-None
     if _catalog_service is None:
@@ -286,6 +287,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         config=AgentClienteConfig(),
                         catalog_service=_catalog_service,
                         redis_client=_redis,
+                        gestor_repo=_gestor_repo,
                     )
                     await agent_cliente.responder(
                         mensagem=mensagem,
@@ -319,6 +321,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         representante=rep,
                         catalog_service=_catalog_service,
                         redis_client=_redis,
+                        gestor_repo=_gestor_repo,
                     )
                     await agent_rep.responder(
                         mensagem=mensagem,

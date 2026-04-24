@@ -628,6 +628,40 @@ class GestorRepo:
             criado_em=row["criado_em"],
         )
 
+    async def listar_ativos_por_tenant(
+        self, tenant_id: str, session: AsyncSession
+    ) -> list[Gestor]:
+        """Retorna todos os gestores ativos do tenant, ordenados por criado_em.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório para isolamento.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de gestores ativos. Vazia se nenhum cadastrado.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, telefone, nome, ativo, criado_em
+                FROM gestores
+                WHERE tenant_id = :tenant_id AND ativo = true
+                ORDER BY criado_em ASC
+            """),
+            {"tenant_id": tenant_id},
+        )
+        rows = result.mappings().all()
+        return [
+            Gestor(
+                id=row["id"],
+                tenant_id=row["tenant_id"],
+                telefone=row["telefone"],
+                nome=row["nome"],
+                ativo=row["ativo"],
+                criado_em=row["criado_em"],
+            )
+            for row in rows
+        ]
+
 
 class RelatorioRepo:
     """Repositório de relatórios — queries agregadas sobre pedidos."""

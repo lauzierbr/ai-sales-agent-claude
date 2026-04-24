@@ -29,9 +29,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.agents.config import AgentClienteConfig
-from src.agents.repo import ConversaRepo
+from src.agents.repo import ConversaRepo, GestorRepo
 from src.agents.runtime.agent_cliente import AgentCliente
-from src.agents.types import Conversa, Mensagem, Persona
+from src.agents.types import Conversa, Gestor, Mensagem, Persona
 from src.orders.runtime.pdf_generator import PDFGenerator
 from src.orders.service import OrderService
 from src.orders.types import ItemPedido, Pedido, StatusPedido
@@ -127,6 +127,24 @@ def _make_tool_use(
     return response
 
 
+def _make_gestor_mock() -> AsyncMock:
+    """Cria GestorRepo mock que retorna 1 gestor ativo (padrão para testes linguagem)."""
+    mock_gestor_repo = AsyncMock(spec=GestorRepo)
+    mock_gestor_repo.listar_ativos_por_tenant = AsyncMock(
+        return_value=[
+            Gestor(
+                id="gest-br-001",
+                tenant_id="jmb",
+                telefone="5519999990000",
+                nome="Gestor JMB",
+                ativo=True,
+                criado_em=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            )
+        ]
+    )
+    return mock_gestor_repo
+
+
 def _make_agent(
     anthropic_responses: list[MagicMock],
     conversa_fixture: Conversa,
@@ -178,6 +196,7 @@ def _make_agent(
         catalog_service=None,  # não testado aqui
         anthropic_client=mock_anthropic,
         redis_client=mock_redis,
+        gestor_repo=_make_gestor_mock(),
     )
 
     return agent, mock_order_service, mock_anthropic, mock_redis
@@ -1137,7 +1156,8 @@ async def test_grupo_h_h01_confirmar_pedido_cadeia_completa(
     assert mock_order.criar_pedido_from_intent.called
     assert mock_pdf.gerar_pdf_pedido.called
     assert len(media_calls) >= 1
-    assert media_calls[0]["numero"] == tenant_jmb.whatsapp_number
+    # Numero deve ser o telefone do gestor (não mais tenant.whatsapp_number)
+    assert media_calls[0]["numero"] == "5519999990000"
 
 
 @pytest.mark.unit
