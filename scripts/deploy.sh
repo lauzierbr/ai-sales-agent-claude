@@ -21,7 +21,7 @@ ENV="${1:-staging}"
 REF="${2:-main}"
 REMOTE_HOST="macmini-lablz"
 REMOTE_PATH="~/ai-sales-agent-claude"
-INFISICAL="/usr/local/Cellar/infisical/0.43.72/bin/infisical"
+INFISICAL="/usr/local/bin/infisical"
 VENV_PYTHON="/Users/dev/ai-sales-agent-claude/.venv/bin/python"
 VENV_UVICORN="/Users/dev/ai-sales-agent-claude/.venv/bin/uvicorn"
 LOG_DIR="$REMOTE_PATH/logs"
@@ -71,6 +71,7 @@ ssh "$REMOTE_HOST" "
     fi
 
     git checkout -f '$REF'
+    git reset --hard origin/'$REF'
     git log -1 --oneline
 "
 

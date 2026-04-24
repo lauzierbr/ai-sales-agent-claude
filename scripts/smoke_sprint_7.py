@@ -15,7 +15,9 @@ import subprocess
 import sys
 
 BASE_URL = os.getenv("APP_HEALTH_URL", "http://100.113.28.85:8000")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+# POSTGRES_URL vem do Infisical; asyncpg precisa de URL sem o prefixo "+asyncpg"
+_pg_url = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL", ""))
+DATABASE_URL = _pg_url.replace("postgresql+asyncpg://", "postgresql://")
 JMB_TENANT_ID = os.getenv("DASHBOARD_TENANT_ID", "jmb")
 
 results: list[tuple[str, bool, str]] = []
@@ -77,7 +79,7 @@ def check_pytest_unit() -> None:
             [
                 sys.executable, "-m", "pytest",
                 "-m", "unit",
-                "output/src/tests/unit/",
+                "output/src/tests/unit/agents/",  # domínio afetado pelo Sprint 7
                 "-q", "--tb=short",
                 "--no-header",
             ],
