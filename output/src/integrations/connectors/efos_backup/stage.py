@@ -15,12 +15,12 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _REQUIRED_TABLES = {
-    "tb_produto",
-    "tb_cliente",
-    "tb_pedido",
     "tb_itens",
-    "tb_vendedor",
-    "tb_saldo",
+    "tb_clientes",
+    "tb_pedido",
+    "tb_itenspedido",
+    "tb_estoque",
+    "tb_vendas",
 }
 
 _STAGING_DB_NAME = "efos_staging"

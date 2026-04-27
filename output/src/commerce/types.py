@@ -13,7 +13,7 @@ from decimal import Decimal
 
 @dataclass
 class CommerceProduct:
-    """Produto normalizado a partir do EFOS (tb_produto).
+    """Produto normalizado a partir do EFOS (tb_itens).
 
     Campos obrigatórios: tenant_id, external_id, nome, snapshot_checksum.
     """
@@ -31,9 +31,10 @@ class CommerceProduct:
 
 @dataclass
 class CommerceAccountB2B:
-    """Conta B2B normalizada a partir do EFOS (tb_cliente).
+    """Conta B2B normalizada a partir do EFOS (tb_clientes).
 
     situacao_cliente: 1=ativo, 2=inativo, conforme enum EFOS.
+    cidade armazenada em UPPERCASE (gotcha EFOS).
     """
 
     tenant_id: str
@@ -53,6 +54,7 @@ class CommerceOrder:
     """Pedido B2B normalizado a partir do EFOS (tb_pedido).
 
     mes e ano são extraídos de data_pedido para facilitar queries agregadas.
+    vendedor_nome é denormalizado (JOIN tb_vendedor feito no normalize.py).
     """
 
     tenant_id: str
@@ -61,6 +63,7 @@ class CommerceOrder:
     cliente_codigo: str | None
     cliente_nome: str | None
     vendedor_codigo: str | None
+    vendedor_nome: str | None
     data_pedido: date | None
     total: Decimal | None
     status: str | None
@@ -71,7 +74,7 @@ class CommerceOrder:
 
 @dataclass
 class CommerceOrderItem:
-    """Item de pedido B2B normalizado a partir do EFOS (tb_itens)."""
+    """Item de pedido B2B normalizado a partir do EFOS (tb_itenspedido)."""
 
     tenant_id: str
     external_id: str
@@ -86,7 +89,7 @@ class CommerceOrderItem:
 
 @dataclass
 class CommerceInventory:
-    """Saldo de estoque normalizado a partir do EFOS (tb_saldo)."""
+    """Saldo de estoque normalizado a partir do EFOS (tb_estoque)."""
 
     tenant_id: str
     external_id: str
@@ -99,15 +102,17 @@ class CommerceInventory:
 
 @dataclass
 class CommerceSalesHistory:
-    """Histórico de vendas normalizado a partir do EFOS (tb_venda).
+    """Histórico de vendas normalizado a partir do EFOS (tb_vendas).
 
     mes e ano facilitam queries de relatório sem EXTRACT().
+    vendedor_codigo capturado de tv_vendedor.
     """
 
     tenant_id: str
     external_id: str
     cliente_codigo: str | None
     produto_codigo: str | None
+    vendedor_codigo: str | None
     quantidade: Decimal | None
     total: Decimal | None
     data_venda: date | None

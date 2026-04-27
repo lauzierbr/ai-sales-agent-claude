@@ -1,35 +1,45 @@
 """Módulo de aquisição de backup EFOS via SSH/SFTP.
 
 Baixa o dump mais recente do servidor Windows via paramiko.
-Usa PKey.from_private_key_file() para suportar RSA e Ed25519 automaticamente.
+Suporta autenticação por senha (preferencial) ou chave privada.
+Formato de arquivo EFOS: backup_em_DD_MM_YYYY_HH.MM.SS.backup
 """
 
 from __future__ import annotations
 
 import hashlib
 import ntpath
-import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
 
 log = structlog.get_logger(__name__)
 
-# Hora mínima (UTC) em que o backup do dia está disponível
-# EFOS gera backup às 16:30 BRT = 19:30 UTC; 12:30 BRT = 15:30 UTC
-_BACKUP_AVAILABLE_AFTER_UTC_HOUR = 16  # 13:00 BRT = 16:00 UTC
+# Fuso BRT = UTC-3
+_BRT = timezone(timedelta(hours=-3))
+
+# Hora mínima BRT em que o backup do dia está disponível (13:00 BRT)
+_BACKUP_AVAILABLE_AFTER_BRT_HOUR = 13
+
+# Padrão do nome do arquivo: backup_em_24_04_2026_12.30.00.backup
+_FILENAME_RE = re.compile(
+    r"backup_em_(\d{2})_(\d{2})_(\d{4})_(\d{2})\.(\d{2})\.(\d{2})\.backup",
+    re.IGNORECASE,
+)
+
+
+def _parse_file_datetime(filename: str) -> datetime | None:
+    """Extrai datetime do nome do arquivo EFOS."""
+    m = _FILENAME_RE.search(filename)
+    if not m:
+        return None
+    day, month, year, hour, minute, second = (int(x) for x in m.groups())
+    return datetime(year, month, day, hour, minute, second)
 
 
 def _compute_sha256(path: Path) -> str:
-    """Computa SHA-256 de um arquivo local.
-
-    Args:
-        path: caminho do arquivo.
-
-    Returns:
-        Hash SHA-256 em hex lowercase.
-    """
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -40,9 +50,10 @@ def _compute_sha256(path: Path) -> str:
 async def acquire(config: object) -> tuple[Path, str]:
     """Baixa o dump EFOS mais recente via SSH/SFTP.
 
-    Identifica o dump mais recente disponível:
-    - Se hora atual UTC >= 16:00, usa o dump de hoje.
-    - Caso contrário, usa o dump de ontem (D-1).
+    Lógica de seleção:
+    - Se hora BRT atual >= 13:00 → procura dumps de hoje
+    - Caso contrário → procura dumps de D-1
+    - Entre os candidatos do dia, pega o mais recente
 
     Args:
         config: EFOSBackupConfig com credenciais SSH e paths.
@@ -51,8 +62,7 @@ async def acquire(config: object) -> tuple[Path, str]:
         Tuple (caminho_local, sha256_hex).
 
     Raises:
-        FileNotFoundError: se nenhum dump for encontrado no servidor.
-        Exception: erros de conexão SSH/SFTP.
+        FileNotFoundError: se nenhum dump for encontrado para a data alvo.
     """
     import paramiko  # type: ignore[import-untyped]
 
@@ -60,68 +70,78 @@ async def acquire(config: object) -> tuple[Path, str]:
 
     cfg: EFOSBackupConfig = config  # type: ignore[assignment]
 
-    now_utc = datetime.now(timezone.utc)
-    if now_utc.hour >= _BACKUP_AVAILABLE_AFTER_UTC_HOUR:
-        target_date = now_utc.date()
+    now_brt = datetime.now(_BRT)
+    if now_brt.hour >= _BACKUP_AVAILABLE_AFTER_BRT_HOUR:
+        target_date = now_brt.date()
     else:
-        from datetime import timedelta
-        target_date = (now_utc - timedelta(days=1)).date()
+        target_date = (now_brt - timedelta(days=1)).date()
 
-    date_str = target_date.strftime("%Y%m%d")
-
-    # Conecta via SSH usando chave privada genérica (RSA ou Ed25519)
-    pkey = paramiko.PKey.from_private_key_file(cfg.ssh_key_path)
+    log.info("efos_acquire_conectando", host=cfg.ssh_host, target_date=str(target_date))
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(
-        hostname=cfg.ssh_host,
-        username=cfg.ssh_user,
-        pkey=pkey,
-        timeout=30,
-    )
+
+    # Preferência: senha; fallback: chave privada
+    connect_kwargs: dict = {
+        "hostname": cfg.ssh_host,
+        "username": cfg.ssh_user,
+        "timeout": 30,
+    }
+    if cfg.ssh_password:
+        connect_kwargs["password"] = cfg.ssh_password
+    elif cfg.ssh_key_path:
+        connect_kwargs["pkey"] = paramiko.PKey.from_private_key_file(cfg.ssh_key_path)
+
+    ssh.connect(**connect_kwargs)
 
     try:
         sftp = ssh.open_sftp()
         try:
-            # Converte path remoto Windows: usa ntpath para separador \\
-            remote_dir = cfg.backup_remote_path.replace("/", "\\")
-            # Lista arquivos no diretório remoto
+            # Lista arquivos no diretório remoto (tenta separador Windows e Unix)
+            remote_dir = cfg.backup_remote_path
             try:
-                files = sftp.listdir(cfg.backup_remote_path)
+                files = sftp.listdir(remote_dir)
             except Exception:
-                # Tenta com separador Windows
+                remote_dir = cfg.backup_remote_path.replace("/", "\\")
                 files = sftp.listdir(remote_dir)
 
-            # Filtra arquivos do dia alvo (formato esperado: backup_YYYYMMDD*.dump)
-            candidates = [
-                f for f in files
-                if date_str in f and f.endswith(".dump")
-            ]
+            # Filtra arquivos .backup e extrai datetime do nome
+            candidates: list[tuple[datetime, str]] = []
+            for fname in files:
+                if not fname.lower().endswith(".backup"):
+                    continue
+                file_dt = _parse_file_datetime(fname)
+                if file_dt is None:
+                    continue
+                if file_dt.date() == target_date:
+                    candidates.append((file_dt, fname))
+
+            # Fallback: D-1 se não houver dumps do dia
+            if not candidates:
+                fallback_date = target_date - timedelta(days=1)
+                for fname in files:
+                    if not fname.lower().endswith(".backup"):
+                        continue
+                    file_dt = _parse_file_datetime(fname)
+                    if file_dt and file_dt.date() == fallback_date:
+                        candidates.append((file_dt, fname))
 
             if not candidates:
                 raise FileNotFoundError(
-                    f"Nenhum dump EFOS encontrado para {date_str} em {cfg.backup_remote_path}"
+                    f"Nenhum dump EFOS encontrado para {target_date} em {cfg.backup_remote_path}. "
+                    f"Arquivos disponíveis: {[f for f in files if f.endswith('.backup')][:5]}"
                 )
 
-            # Pega o mais recente (sort lexicográfico funciona com timestamp no nome)
+            # Mais recente primeiro
             candidates.sort(reverse=True)
-            remote_filename = candidates[0]
+            remote_filename = candidates[0][1]
+            remote_path = ntpath.join(remote_dir, remote_filename)
 
-            # Monta path remoto compatível com Windows
-            remote_path = ntpath.join(cfg.backup_remote_path, remote_filename)
-
-            # Garante diretório local de artifacts
             artifact_dir = Path(cfg.artifact_dir)
             artifact_dir.mkdir(parents=True, exist_ok=True)
-
             local_path = artifact_dir / remote_filename
 
-            log.info(
-                "efos_acquire_baixando",
-                remote_path=remote_path,
-                local_path=str(local_path),
-            )
+            log.info("efos_acquire_baixando", remote=remote_path, local=str(local_path))
             sftp.get(remote_path, str(local_path))
 
         finally:

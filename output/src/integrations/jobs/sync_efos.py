@@ -135,23 +135,23 @@ async def run_sync(
         # 6. Normaliza
         log.info("sync_efos_normalizando", tenant_id=tenant_id)
         products = normalize_products(
-            rows_dict["tb_produto"], tenant_id=tenant_id, checksum=checksum
+            rows_dict["tb_itens"], tenant_id=tenant_id, checksum=checksum
         )
         accounts = normalize_accounts_b2b(
-            rows_dict["tb_cliente"], tenant_id=tenant_id, checksum=checksum
+            rows_dict["tb_clientes"], tenant_id=tenant_id, checksum=checksum
         )
         orders, order_items = normalize_orders(
             rows_dict["tb_pedido"],
-            rows_dict["tb_itens"],
+            rows_dict["tb_itenspedido"],
             rows_dict["tb_vendedor"],
             tenant_id=tenant_id,
             checksum=checksum,
         )
         inv = normalize_inventory(
-            rows_dict["tb_saldo"], tenant_id=tenant_id, checksum=checksum
+            rows_dict["tb_estoque"], tenant_id=tenant_id, checksum=checksum
         )
         sales = normalize_sales_history(
-            rows_dict.get("tb_venda", []), tenant_id=tenant_id, checksum=checksum
+            rows_dict.get("tb_vendas", []), tenant_id=tenant_id, checksum=checksum
         )
         vendedores = normalize_vendedores(
             rows_dict["tb_vendedor"], tenant_id=tenant_id, checksum=checksum
@@ -265,7 +265,7 @@ def _limpar_artifacts_antigos(artifact_dir: str) -> None:
         if not dir_path.exists():
             return
         removidos = 0
-        for f in dir_path.glob("*.dump"):
+        for f in dir_path.glob("*.backup"):
             mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
             if mtime < cutoff:
                 f.unlink()
@@ -291,18 +291,18 @@ async def _ler_staging(staging_db_url: str) -> dict[str, list[dict]]:
     try:
         result: dict[str, list[dict]] = {}
         tabelas = [
-            "tb_produto", "tb_cliente", "tb_pedido",
-            "tb_itens", "tb_vendedor", "tb_saldo",
+            "tb_itens", "tb_clientes", "tb_pedido",
+            "tb_itenspedido", "tb_vendedor", "tb_estoque",
         ]
-        # tb_venda é opcional
+        # tb_vendas é opcional (pode não existir em todos os dumps)
         for tabela in tabelas:
             rows = await conn.fetch(f"SELECT * FROM {tabela}")  # noqa: S608
             result[tabela] = [dict(r) for r in rows]
         try:
-            rows = await conn.fetch("SELECT * FROM tb_venda")  # noqa: S608
-            result["tb_venda"] = [dict(r) for r in rows]
+            rows = await conn.fetch("SELECT * FROM tb_vendas")  # noqa: S608
+            result["tb_vendas"] = [dict(r) for r in rows]
         except Exception:
-            result["tb_venda"] = []
+            result["tb_vendas"] = []
         return result
     finally:
         await conn.close()

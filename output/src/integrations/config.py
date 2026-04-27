@@ -7,7 +7,7 @@ Secrets lidos via os.getenv() — nunca hardcoded.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -20,10 +20,11 @@ class EFOSBackupConfig:
 
     ssh_host: str
     ssh_user: str
-    ssh_key_path: str
     backup_remote_path: str
     artifact_dir: str
     staging_db_url: str
+    ssh_password: str | None = field(default=None)
+    ssh_key_path: str | None = field(default=None)
 
     @classmethod
     def for_tenant(cls, tenant_id: str) -> "EFOSBackupConfig":
@@ -46,10 +47,14 @@ class EFOSBackupConfig:
                 raise ValueError(f"Variável de ambiente obrigatória não definida: {name}")
             return val
 
+        def _optional(name: str) -> str | None:
+            return os.getenv(name) or None
+
         return cls(
             ssh_host=_require(f"{prefix}_EFOS_SSH_HOST"),
             ssh_user=_require(f"{prefix}_EFOS_SSH_USER"),
-            ssh_key_path=_require(f"{prefix}_EFOS_SSH_KEY_PATH"),
+            ssh_password=_optional(f"{prefix}_EFOS_SSH_PASSWORD"),
+            ssh_key_path=_optional(f"{prefix}_EFOS_SSH_KEY_PATH"),
             backup_remote_path=_require(f"{prefix}_EFOS_BACKUP_REMOTE_PATH"),
             artifact_dir=_require(f"{prefix}_EFOS_ARTIFACT_DIR"),
             staging_db_url=_require(f"{prefix}_EFOS_STAGING_DB_URL"),

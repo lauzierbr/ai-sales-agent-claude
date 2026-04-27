@@ -73,10 +73,12 @@ def _mes_ano(d: date | None) -> tuple[int | None, int | None]:
 
 
 def normalize_products(rows: list[dict], *, tenant_id: str, checksum: str) -> list[CommerceProduct]:
-    """Normaliza rows de tb_produto para CommerceProduct.
+    """Normaliza rows de tb_itens para CommerceProduct.
+
+    Campos EFOS: it_codigo (SKU), it_nome, it_codigobarra (EAN), it_precovenda.
 
     Args:
-        rows: rows brutas do banco EFOS (tb_produto).
+        rows: rows brutas do banco EFOS (tb_itens).
         tenant_id: ID do tenant para isolamento.
         checksum: checksum do arquivo de backup (snapshot_checksum).
 
@@ -85,18 +87,19 @@ def normalize_products(rows: list[dict], *, tenant_id: str, checksum: str) -> li
     """
     result = []
     for row in rows:
-        external_id = str(row.get("pr_codigo") or row.get("id") or "")
+        # it_codigo é o SKU primário; fallbacks para esquemas alternativos
+        external_id = str(row.get("it_codigo") or row.get("pr_codigo") or row.get("id") or "")
         if not external_id:
             continue
         result.append(CommerceProduct(
             tenant_id=tenant_id,
             external_id=external_id,
-            codigo=str(row.get("pr_codigo") or "") or None,
-            nome=str(row.get("pr_nome") or row.get("nome") or "").strip() or "Sem nome",
-            descricao=str(row.get("pr_descricao") or "") or None,
-            unidade=str(row.get("pr_unidade") or row.get("unidade") or "") or None,
-            preco_padrao=_to_decimal(row.get("pr_preco") or row.get("preco_padrao")),
-            ativo=bool(row.get("pr_ativo", True)),
+            codigo=external_id,
+            nome=str(row.get("it_nome") or row.get("pr_nome") or row.get("nome") or "").strip() or "Sem nome",
+            descricao=str(row.get("it_descricao") or row.get("pr_descricao") or "") or None,
+            unidade=str(row.get("it_unidade") or row.get("pr_unidade") or row.get("unidade") or "") or None,
+            preco_padrao=_to_decimal(row.get("it_precovenda") or row.get("pr_preco") or row.get("preco_padrao")),
+            ativo=True,  # tb_itens não tem campo de inativação explícito
             snapshot_checksum=checksum,
         ))
     log.info("normalize_products_ok", tenant_id=tenant_id, count=len(result))
@@ -122,16 +125,20 @@ def normalize_accounts_b2b(rows: list[dict], *, tenant_id: str, checksum: str) -
         if not external_id:
             continue
         cidade_raw = row.get("cl_cidade") or row.get("cidade") or ""
+        # cl_situacaocliente: 1=ativo, 2=inativo
+        situacao = row.get("cl_situacaocliente") or row.get("cl_situacao") or row.get("situacao_cliente")
+        # cl_vendedori = vendedor principal; cl_vendedorp = vendedor secundário
+        vendedor = row.get("cl_vendedori") or row.get("cl_vendedor") or row.get("vendedor_codigo")
         result.append(CommerceAccountB2B(
             tenant_id=tenant_id,
             external_id=external_id,
-            codigo=str(row.get("cl_codigo") or "") or None,
+            codigo=external_id,
             nome=str(row.get("cl_nome") or row.get("nome") or "").strip() or "Sem nome",
-            cnpj=str(row.get("cl_cgc") or row.get("cnpj") or "") or None,
+            cnpj=str(row.get("cl_cnpjcpfrg") or row.get("cl_cgc") or row.get("cnpj") or "") or None,
             cidade=str(cidade_raw).upper() if cidade_raw else None,
             uf=str(row.get("cl_uf") or row.get("uf") or "") or None,
-            situacao_cliente=int(row.get("cl_situacao") or row.get("situacao_cliente") or 0) or None,
-            vendedor_codigo=str(row.get("cl_vendedor") or row.get("vendedor_codigo") or "") or None,
+            situacao_cliente=int(situacao) if situacao is not None else None,
+            vendedor_codigo=str(vendedor) if vendedor else None,
             snapshot_checksum=checksum,
         ))
     log.info("normalize_accounts_b2b_ok", tenant_id=tenant_id, count=len(result))
@@ -170,21 +177,27 @@ def normalize_orders(
 
     orders: list[CommerceOrder] = []
     for row in pedido_rows:
-        external_id = str(row.get("pe_numero") or row.get("id") or "")
+        # pe_numeropedido é o campo real; fallback pe_numero para compatibilidade
+        external_id = str(row.get("pe_numeropedido") or row.get("pe_numero") or row.get("id") or "")
         if not external_id:
             continue
-        data_ped = _to_date(row.get("pe_data") or row.get("data_pedido"))
+        data_ped = _to_date(row.get("pe_dataemissao") or row.get("pe_data") or row.get("data_pedido"))
         mes, ano = _mes_ano(data_ped)
-        vend_cod = str(row.get("pe_vendedor") or row.get("vendedor_codigo") or "") or None
+        vend_cod = str(row.get("pe_codigovendedor") or row.get("pe_vendedor") or row.get("vendedor_codigo") or "") or None
+        # pe_totalliquido é o valor líquido final; pe_totalvendido é bruto
+        total = _to_decimal(
+            row.get("pe_totalliquido") or row.get("pe_totalvendido") or row.get("pe_total") or row.get("total")
+        )
         orders.append(CommerceOrder(
             tenant_id=tenant_id,
             external_id=external_id,
-            numero_pedido=str(row.get("pe_numero") or "") or None,
-            cliente_codigo=str(row.get("pe_cliente") or row.get("cliente_codigo") or "") or None,
-            cliente_nome=str(row.get("pe_cli_nome") or row.get("cliente_nome") or "") or None,
+            numero_pedido=external_id,
+            cliente_codigo=str(row.get("pe_codigocliente") or row.get("pe_cliente") or row.get("cliente_codigo") or "") or None,
+            cliente_nome=str(row.get("pe_nomecliente") or row.get("pe_cli_nome") or row.get("cliente_nome") or "") or None,
             vendedor_codigo=vend_cod,
+            vendedor_nome=vendedor_map.get(vend_cod, "") if vend_cod else None,
             data_pedido=data_ped,
-            total=_to_decimal(row.get("pe_total") or row.get("total")),
+            total=total,
             status=str(row.get("pe_status") or row.get("status") or "") or None,
             mes=mes,
             ano=ano,
@@ -192,19 +205,20 @@ def normalize_orders(
         ))
 
     items: list[CommerceOrderItem] = []
-    for row in itens_rows:
-        external_id = str(row.get("it_id") or row.get("id") or "")
-        if not external_id:
-            continue
+    for idx, row in enumerate(itens_rows):
+        # tb_itenspedido não tem PK própria — compõe external_id a partir de pedido+item
+        pedido_num = str(row.get("ipe_numeropedido") or row.get("it_pedido") or "")
+        item_cod = str(row.get("ipe_codigoitem") or row.get("it_produto") or "")
+        external_id = f"{pedido_num}_{item_cod}_{idx}" if pedido_num else str(idx)
         items.append(CommerceOrderItem(
             tenant_id=tenant_id,
             external_id=external_id,
-            order_external_id=str(row.get("it_pedido") or row.get("order_external_id") or ""),
-            produto_codigo=str(row.get("it_produto") or row.get("produto_codigo") or "") or None,
-            produto_nome=str(row.get("it_nome") or row.get("produto_nome") or "") or None,
-            quantidade=_to_decimal(row.get("it_qtde") or row.get("quantidade")),
-            preco_unitario=_to_decimal(row.get("it_preco") or row.get("preco_unitario")),
-            total=_to_decimal(row.get("it_total") or row.get("total")),
+            order_external_id=pedido_num or str(row.get("order_external_id") or ""),
+            produto_codigo=item_cod or None,
+            produto_nome=str(row.get("ipe_nomeproduto") or row.get("it_nome") or row.get("produto_nome") or "") or None,
+            quantidade=_to_decimal(row.get("ipe_quantidade") or row.get("it_qtde") or row.get("quantidade")),
+            preco_unitario=_to_decimal(row.get("ipe_precounitario") or row.get("it_preco") or row.get("preco_unitario")),
+            total=_to_decimal(row.get("ipe_precototal") or row.get("it_total") or row.get("total")),
             snapshot_checksum=checksum,
         ))
 
@@ -229,17 +243,17 @@ def normalize_inventory(rows: list[dict], *, tenant_id: str, checksum: str) -> l
         Lista de CommerceInventory normalizada.
     """
     result = []
-    for row in rows:
-        external_id = str(row.get("sa_id") or row.get("id") or "")
-        if not external_id:
-            continue
+    for idx, row in enumerate(rows):
+        # tb_estoque: es_codigoitem é o SKU; não há PK própria
+        produto_cod = str(row.get("es_codigoitem") or row.get("sa_produto") or row.get("produto_codigo") or "")
+        external_id = produto_cod or str(idx)
         result.append(CommerceInventory(
             tenant_id=tenant_id,
             external_id=external_id,
-            produto_codigo=str(row.get("sa_produto") or row.get("produto_codigo") or "") or None,
-            produto_nome=str(row.get("sa_nome") or row.get("produto_nome") or "") or None,
-            saldo=_to_decimal(row.get("sa_saldo") or row.get("saldo")),
-            deposito=str(row.get("sa_deposito") or row.get("deposito") or "") or None,
+            produto_codigo=produto_cod or None,
+            produto_nome=str(row.get("es_nomeproduto") or row.get("sa_nome") or row.get("produto_nome") or "") or None,
+            saldo=_to_decimal(row.get("es_saldo") or row.get("sa_saldo") or row.get("saldo")),
+            deposito=str(row.get("es_deposito") or row.get("sa_deposito") or row.get("deposito") or "") or None,
             snapshot_checksum=checksum,
         ))
     log.info("normalize_inventory_ok", tenant_id=tenant_id, count=len(result))
@@ -258,19 +272,21 @@ def normalize_sales_history(rows: list[dict], *, tenant_id: str, checksum: str) 
         Lista de CommerceSalesHistory normalizada.
     """
     result = []
-    for row in rows:
-        external_id = str(row.get("vd_id") or row.get("id") or "")
-        if not external_id:
-            continue
-        data_venda = _to_date(row.get("vd_data") or row.get("data_venda"))
+    for idx, row in enumerate(rows):
+        # tb_vendas: tv_codigoitem + tv_cliente + tv_dataemissao compõem a linha
+        produto_cod = str(row.get("tv_codigoitem") or row.get("vd_produto") or row.get("produto_codigo") or "")
+        cliente_cod = str(row.get("tv_cliente") or row.get("vd_cliente") or row.get("cliente_codigo") or "")
+        external_id = f"{produto_cod}_{cliente_cod}_{idx}" if produto_cod else str(idx)
+        data_venda = _to_date(row.get("tv_dataemissao") or row.get("vd_data") or row.get("data_venda"))
         mes, ano = _mes_ano(data_venda)
         result.append(CommerceSalesHistory(
             tenant_id=tenant_id,
             external_id=external_id,
-            cliente_codigo=str(row.get("vd_cliente") or row.get("cliente_codigo") or "") or None,
-            produto_codigo=str(row.get("vd_produto") or row.get("produto_codigo") or "") or None,
-            quantidade=_to_decimal(row.get("vd_qtde") or row.get("quantidade")),
-            total=_to_decimal(row.get("vd_total") or row.get("total")),
+            cliente_codigo=cliente_cod or None,
+            produto_codigo=produto_cod or None,
+            vendedor_codigo=str(row.get("tv_vendedor") or row.get("vendedor_codigo") or "") or None,
+            quantidade=_to_decimal(row.get("tv_qtde") or row.get("vd_qtde") or row.get("quantidade")),
+            total=_to_decimal(row.get("tv_valor") or row.get("vd_total") or row.get("total")),
             data_venda=data_venda,
             mes=mes,
             ano=ano,
