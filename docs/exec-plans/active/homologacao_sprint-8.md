@@ -1,8 +1,12 @@
 # Homologação Sprint 8 — Hotfixes Piloto + Integração EFOS
 
-**Status:** PRONTO PARA HOMOLOGAÇÃO — smoke gate passou em 2026-04-27 17:20 (checks não-EFOS: ALL OK)
-**Data prevista:** 2026-04-30
+**Status:** HOMOLOGAÇÃO UNIFICADA COM SPRINT 9 (decisão 2026-04-27)
+**Data prevista:** junto com Sprint 9
 **Executado por:** Lauzier
+
+> Decisão: homologação do Sprint 8 será feita em conjunto com Sprint 9 para maior
+> produtividade. Os cenários H1–H11 abaixo devem ser executados durante a homologação
+> do Sprint 9, que incluirá checklist unificado (Sprint 8 + Sprint 9).
 
 ---
 
