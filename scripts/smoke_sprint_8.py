@@ -66,7 +66,11 @@ def main() -> int:
     """Executa smoke tests e retorna exit code."""
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.join(repo_dir, "output")
-    python = os.path.join(repo_dir, ".venv", "bin", "python3.14")
+    # Detecta automaticamente o interpretador Python do venv
+    import glob as _glob
+    _candidates = sorted(_glob.glob(os.path.join(repo_dir, ".venv", "bin", "python3*")))
+    _candidates = [c for c in _candidates if not c.endswith("-config") and os.path.isfile(c)]
+    python = _candidates[-1] if _candidates else os.path.join(repo_dir, ".venv", "bin", "python3")
 
     print("=== Smoke Gate Sprint 8 ===")
 
