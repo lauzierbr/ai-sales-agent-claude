@@ -85,12 +85,17 @@ def normalize_products(rows: list[dict], *, tenant_id: str, checksum: str) -> li
     Returns:
         Lista de CommerceProduct normalizada.
     """
+    seen_ids: set[str] = set()
     result = []
     for row in rows:
         # it_codigo é o SKU primário; fallbacks para esquemas alternativos
         external_id = str(row.get("it_codigo") or row.get("pr_codigo") or row.get("id") or "")
         if not external_id:
             continue
+        # tb_itens pode ter linhas duplicadas por it_codigo — mantém só a primeira
+        if external_id in seen_ids:
+            continue
+        seen_ids.add(external_id)
         result.append(CommerceProduct(
             tenant_id=tenant_id,
             external_id=external_id,
@@ -119,11 +124,15 @@ def normalize_accounts_b2b(rows: list[dict], *, tenant_id: str, checksum: str) -
     Returns:
         Lista de CommerceAccountB2B normalizada.
     """
+    seen_ids: set[str] = set()
     result = []
     for row in rows:
         external_id = str(row.get("cl_codigo") or row.get("id") or "")
         if not external_id:
             continue
+        if external_id in seen_ids:
+            continue
+        seen_ids.add(external_id)
         cidade_raw = row.get("cl_cidade") or row.get("cidade") or ""
         # cl_situacaocliente: 1=ativo, 2=inativo
         situacao = row.get("cl_situacaocliente") or row.get("cl_situacao") or row.get("situacao_cliente")
