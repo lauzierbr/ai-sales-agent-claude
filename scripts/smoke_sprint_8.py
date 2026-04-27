@@ -38,13 +38,22 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         print(f" FAIL {name}" + (f" — {detail}" if detail else ""))
 
 
-def run_cmd(args: list[str], *, cwd: str | None = None) -> tuple[int, str, str]:
+def run_cmd(
+    args: list[str],
+    *,
+    cwd: str | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     """Executa comando e retorna (exit_code, stdout, stderr)."""
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
     proc = subprocess.run(
         args,
         capture_output=True,
         text=True,
         cwd=cwd or os.getcwd(),
+        env=env,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -116,6 +125,7 @@ def main() -> int:
     code, out, err = run_cmd(
         [python, "-m", "integrations.jobs.sync_efos", "--tenant", "jmb", "--dry-run"],
         cwd=output_dir,
+        extra_env={"PYTHONPATH": "."},
     )
     check("sync_efos_dry_run", code == 0, f"exit={code}" if code != 0 else "")
 

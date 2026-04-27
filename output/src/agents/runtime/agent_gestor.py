@@ -30,6 +30,17 @@ import structlog
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# _DummyLfCtx sempre exportado — usado em testes e como fallback quando Langfuse inativo
+class _DummyLfCtx:
+    @staticmethod
+    def update_current_trace(**kwargs: Any) -> None:
+        pass
+
+    @staticmethod
+    def update_current_observation(**kwargs: Any) -> None:
+        pass
+
+
 # Langfuse — instrumentação LLM (condicional: desativado em testes com LANGFUSE_ENABLED=false)
 _LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "true").lower() != "false"
 if _LANGFUSE_ENABLED:
@@ -44,15 +55,6 @@ if not _LANGFUSE_ENABLED:
         if len(args) == 1 and callable(args[0]):
             return args[0]
         return lambda f: f
-
-    class _DummyLfCtx:
-        @staticmethod
-        def update_current_trace(**kwargs: Any) -> None:
-            pass
-
-        @staticmethod
-        def update_current_observation(**kwargs: Any) -> None:
-            pass
 
     _lf_ctx = _DummyLfCtx()
 
