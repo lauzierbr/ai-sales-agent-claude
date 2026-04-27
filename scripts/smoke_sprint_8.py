@@ -121,11 +121,12 @@ def main() -> int:
         exists = code == 0 and "1" in out
         check(f"tabela_{table}", exists, "não encontrada" if not exists else "")
 
-    # 4. dry-run sync_efos
+    # 4. dry-run sync_efos (módulo em output/src/, portanto PYTHONPATH=./src)
+    src_dir = os.path.join(output_dir, "src")
     code, out, err = run_cmd(
         [python, "-m", "integrations.jobs.sync_efos", "--tenant", "jmb", "--dry-run"],
         cwd=output_dir,
-        extra_env={"PYTHONPATH": "."},
+        extra_env={"PYTHONPATH": src_dir},
     )
     check("sync_efos_dry_run", code == 0, f"exit={code}" if code != 0 else "")
 
