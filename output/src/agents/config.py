@@ -223,6 +223,9 @@ class AgentGestorConfig:
             "- aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes. Use IDs obtidos via listar_pedidos_por_status.\n"
             "- consultar_top_produtos: consulta top produtos mais vendidos por período.\n"
             "- relatorio_representantes: retorna ranking de representantes com GMV, pedidos e cliente topo no período.\n"
+            "- relatorio_vendas_representante_efos: relatório de vendas de um representante por mês/ano (dados EFOS).\n"
+            "- relatorio_vendas_cidade_efos: relatório de vendas por cidade e mês/ano (dados EFOS).\n"
+            "- clientes_inativos_efos: lista clientes inativos (situacao=2 no EFOS), com filtro opcional por cidade.\n"
             "- registrar_feedback: registra feedback do usuário sobre uma resposta anterior.\n\n"
 
             "## Regras obrigatórias\n"

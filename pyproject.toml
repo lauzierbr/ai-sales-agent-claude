@@ -134,6 +134,35 @@ forbidden_modules = ["src.*.ui"]
 # Não deve depender de endpoints FastAPI.
 # Se precisar de dados do request, receba via parâmetro de função.
 
+[[tool.importlinter.contracts]]
+name = "integrations: não importa domínios de negócio"
+type = "forbidden"
+source_modules = ["src.integrations.types", "src.integrations.config", "src.integrations.repo"]
+forbidden_modules = [
+    "src.agents",
+    "src.catalog",
+    "src.orders",
+    "src.tenants",
+    "src.dashboard",
+]
+# REMEDIAÇÃO: src.integrations é um domínio técnico independente.
+# Não deve depender de domínios de negócio.
+
+[[tool.importlinter.contracts]]
+name = "commerce: não importa outros domínios de negócio"
+type = "forbidden"
+source_modules = ["src.commerce.types", "src.commerce.repo"]
+forbidden_modules = [
+    "src.agents",
+    "src.catalog",
+    "src.orders",
+    "src.tenants",
+    "src.dashboard",
+    "src.integrations",
+]
+# REMEDIAÇÃO: src.commerce é um domínio de dados EFOS.
+# Não deve depender de agentes, catálogo ou pedidos.
+
 # ─────────────────────────────────────────────
 # PYTEST
 # ─────────────────────────────────────────────
@@ -154,6 +183,7 @@ markers = [
     "integration: testes de integração (requerem serviços rodando)",
     "slow: testes lentos (crawler, enriquecimento)",
     "staging: testes de staging (requerem Postgres+Redis reais, sem WhatsApp)",
+    "regression: testes de regressão (verificam que bugs corrigidos não regridam)",
 ]
 
 # ─────────────────────────────────────────────

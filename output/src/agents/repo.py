@@ -106,7 +106,7 @@ class ClienteB2BRepo:
         """
         result = await session.execute(
             text("""
-                SELECT id, tenant_id, nome, cnpj, telefone, ativo, criado_em
+                SELECT id, tenant_id, nome, cnpj, telefone, ativo, criado_em, representante_id
                 FROM clientes_b2b
                 WHERE tenant_id = :tenant_id AND telefone = :telefone AND ativo = true
             """),
@@ -123,6 +123,7 @@ class ClienteB2BRepo:
             telefone=row["telefone"],
             ativo=row["ativo"],
             criado_em=row["criado_em"],
+            representante_id=row["representante_id"],
         )
 
     async def listar_por_representante(

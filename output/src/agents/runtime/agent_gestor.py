@@ -50,6 +50,10 @@ if not _LANGFUSE_ENABLED:
         def update_current_trace(**kwargs: Any) -> None:
             pass
 
+        @staticmethod
+        def update_current_observation(**kwargs: Any) -> None:
+            pass
+
     _lf_ctx = _DummyLfCtx()
 
 from src.agents.config import AgentGestorConfig
@@ -57,6 +61,7 @@ from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
 from src.agents.runtime._retry import call_with_overload_retry
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import Gestor, Mensagem, Persona
+from src.commerce.repo import CommerceRepo
 from src.orders.repo import OrderRepo
 from src.orders.service import OrderService
 from src.orders.types import CriarPedidoInput, ItemPedidoInput
@@ -280,6 +285,77 @@ _TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "relatorio_vendas_representante_efos",
+        "description": (
+            "Relatório de vendas de um representante por mês/ano usando dados EFOS. "
+            "Use quando o gestor perguntar sobre vendas de um representante específico. "
+            "Aceita variações do nome (ex: 'Rondinele', 'rondinele ritter', 'RONDINELE'). "
+            "Retorna total vendido, quantidade de pedidos e lista de clientes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nome_rep": {
+                    "type": "string",
+                    "description": "Nome (ou parte do nome) do representante. Aceita variações.",
+                },
+                "mes": {
+                    "type": "integer",
+                    "description": "Mês (1–12) ou string como 'abril', 'mes 4'. Obrigatório.",
+                },
+                "ano": {
+                    "type": "integer",
+                    "description": "Ano (ex: 2026). Padrão: ano atual.",
+                },
+            },
+            "required": ["nome_rep", "mes"],
+        },
+    },
+    {
+        "name": "relatorio_vendas_cidade_efos",
+        "description": (
+            "Relatório de vendas por cidade em um mês/ano usando dados EFOS. "
+            "Use quando o gestor perguntar sobre vendas em uma cidade específica. "
+            "Normaliza cidade para UPPERCASE automaticamente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cidade": {
+                    "type": "string",
+                    "description": "Nome da cidade (case-insensitive).",
+                },
+                "mes": {
+                    "type": "integer",
+                    "description": "Mês (1–12). Obrigatório.",
+                },
+                "ano": {
+                    "type": "integer",
+                    "description": "Ano (ex: 2026). Padrão: ano atual.",
+                },
+            },
+            "required": ["cidade", "mes"],
+        },
+    },
+    {
+        "name": "clientes_inativos_efos",
+        "description": (
+            "Lista clientes inativos (situacao=2 no EFOS) usando dados sincronizados. "
+            "Use quando o gestor perguntar sobre clientes inativos, clientes parados "
+            "ou clientes para reativar. "
+            "Opcionalmente filtra por cidade."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cidade": {
+                    "type": "string",
+                    "description": "Filtrar por cidade (opcional; case-insensitive). Omita para todas.",
+                },
+            },
+        },
+    },
+    {
         "name": "registrar_feedback",
         "description": (
             "Registra feedback do gestor sobre uma resposta do assistente. "
@@ -324,6 +400,7 @@ class AgentGestor:
         cliente_b2b_repo: ClienteB2BRepo | None = None,
         relatorio_repo: RelatorioRepo | None = None,
         order_repo: OrderRepo | None = None,
+        commerce_repo: CommerceRepo | None = None,
     ) -> None:
         """Inicializa AgentGestor com dependências injetadas.
 
@@ -338,6 +415,8 @@ class AgentGestor:
             redis_client: cliente Redis assíncrono (opcional).
             cliente_b2b_repo: repositório de clientes B2B (opcional).
             relatorio_repo: repositório de relatórios (opcional).
+            order_repo: repositório de pedidos (opcional).
+            commerce_repo: repositório de dados EFOS (opcional — para tools EFOS).
         """
         self._order_service = order_service
         self._conversa_repo = conversa_repo
@@ -350,6 +429,7 @@ class AgentGestor:
         self._cliente_b2b_repo = cliente_b2b_repo or ClienteB2BRepo()
         self._relatorio_repo = relatorio_repo or RelatorioRepo()
         self._order_repo = order_repo or OrderRepo()
+        self._commerce_repo = commerce_repo or CommerceRepo()
 
     @_lf_observe(name="processar_mensagem_gestor")  # type: ignore[untyped-decorator]
     async def responder(
@@ -399,7 +479,7 @@ class AgentGestor:
             )
 
             resposta_final: str | None = None
-            client = self._get_anthropic_client()
+            client = self._get_anthropic_client(session_id=str(conversa.id))
 
             for iteration in range(self._config.max_iterations):
                 try:
@@ -498,6 +578,8 @@ class AgentGestor:
             messages.append({"role": "assistant", "content": resposta_final})
             await self._salvar_historico_redis(tenant.id, numero, messages)
 
+            _lf_ctx.update_current_observation(output=resposta_final)
+
             await send_whatsapp_message(mensagem.instancia_id, numero, resposta_final)
 
     async def _executar_ferramenta(
@@ -589,6 +671,31 @@ class AgentGestor:
         if tool_name == "relatorio_representantes":
             return await self._relatorio_representantes(
                 dias=int(tool_input.get("dias", 30)),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "relatorio_vendas_representante_efos":
+            return await self._relatorio_vendas_representante_efos(
+                nome_rep=tool_input.get("nome_rep", ""),
+                mes=tool_input.get("mes", 0),
+                ano=tool_input.get("ano", 0),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "relatorio_vendas_cidade_efos":
+            return await self._relatorio_vendas_cidade_efos(
+                cidade=tool_input.get("cidade", ""),
+                mes=tool_input.get("mes", 0),
+                ano=tool_input.get("ano", 0),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
+        if tool_name == "clientes_inativos_efos":
+            return await self._clientes_inativos_efos(
+                cidade=tool_input.get("cidade"),
                 tenant_id=tenant.id,
                 session=session,
             )
@@ -913,10 +1020,237 @@ class AgentGestor:
         )
         return {"feedback_id": feedback_id, "status": "registrado"}
 
-    def _get_anthropic_client(self) -> Any:
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tools EFOS — relatórios via commerce_*
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalizar_mes(mes: object) -> int:
+        """Normaliza mes: 'abril' → 4, 'mes 4' → 4, '4' → 4, 4 → 4.
+
+        Args:
+            mes: mês em qualquer formato aceito.
+
+        Returns:
+            Inteiro de 1 a 12.
+
+        Raises:
+            ValueError: se não conseguir normalizar.
+        """
+        _MESES = {
+            "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3,
+            "abril": 4, "maio": 5, "junho": 6, "julho": 7,
+            "agosto": 8, "setembro": 9, "outubro": 10,
+            "novembro": 11, "dezembro": 12,
+        }
+        if isinstance(mes, int):
+            return mes
+        s = str(mes).strip().lower()
+        # Remove prefixo "mes " ou "mês "
+        s = s.replace("mês", "").replace("mes", "").strip()
+        if s in _MESES:
+            return _MESES[s]
+        try:
+            return int(s)
+        except ValueError:
+            raise ValueError(f"Não foi possível normalizar mês: {mes!r}")
+
+    async def _fuzzy_match_vendedor(
+        self,
+        nome_rep: str,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> str | None:
+        """Busca ve_codigo do representante mais próximo via fuzzy match.
+
+        Usa difflib.SequenceMatcher para encontrar o representante cujo ve_nome
+        tem similaridade >= 80% com nome_rep.
+
+        Args:
+            nome_rep: nome (ou parte do nome) digitado pelo gestor.
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            ve_codigo do melhor match, ou None se nenhum atingir threshold 80%.
+        """
+        import difflib
+        from sqlalchemy import text as _text
+
+        result = await session.execute(
+            _text("""
+                SELECT ve_codigo, ve_nome
+                FROM commerce_vendedores
+                WHERE tenant_id = :tenant_id
+            """),
+            {"tenant_id": tenant_id},
+        )
+        rows = result.mappings().all()
+
+        best_ratio = 0.0
+        best_codigo: str | None = None
+        nome_lower = nome_rep.lower()
+
+        for row in rows:
+            ve_nome = str(row["ve_nome"] or "").lower()
+            ratio = difflib.SequenceMatcher(None, nome_lower, ve_nome).ratio()
+            # Também testa se nome_rep é substring do ve_nome
+            if nome_lower in ve_nome:
+                ratio = max(ratio, 0.85)
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_codigo = str(row["ve_codigo"])
+
+        _FUZZY_THRESHOLD = 0.80
+        if best_ratio >= _FUZZY_THRESHOLD:
+            log.info(
+                "fuzzy_match_vendedor",
+                tenant_id=tenant_id,
+                nome_rep=nome_rep,
+                best_codigo=best_codigo,
+                ratio=round(best_ratio, 3),
+            )
+            return best_codigo
+
+        log.warning(
+            "fuzzy_match_vendedor_sem_resultado",
+            tenant_id=tenant_id,
+            nome_rep=nome_rep,
+            best_ratio=round(best_ratio, 3),
+        )
+        return None
+
+    async def _relatorio_vendas_representante_efos(
+        self,
+        nome_rep: str,
+        mes: object,
+        ano: object,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        """Relatório de vendas de representante via commerce_* (dados EFOS).
+
+        Args:
+            nome_rep: nome (fuzzy) do representante.
+            mes: mês (string ou int).
+            ano: ano (int ou 0 = ano atual).
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com resultado ou mensagem de erro.
+        """
+        try:
+            mes_int = self._normalizar_mes(mes)
+        except ValueError as exc:
+            return {"erro": str(exc)}
+
+        ano_int = int(ano) if ano else datetime.now(timezone.utc).year
+
+        vendedor_id = await self._fuzzy_match_vendedor(nome_rep, tenant_id, session)
+        if vendedor_id is None:
+            return {
+                "erro": f"Representante '{nome_rep}' não encontrado. Verifique o nome.",
+                "dica": "Use o nome completo ou parte do nome como aparece no EFOS.",
+            }
+
+        dados = await self._commerce_repo.relatorio_vendas_representante(
+            tenant_id=tenant_id,
+            vendedor_id=vendedor_id,
+            mes=mes_int,
+            ano=ano_int,
+            session=session,
+        )
+        return {
+            "representante": nome_rep,
+            "vendedor_id": vendedor_id,
+            "mes": mes_int,
+            "ano": ano_int,
+            "total_vendido": str(dados["total_vendido"]),
+            "qtde_pedidos": dados["qtde_pedidos"],
+            "clientes": dados["clientes"][:10],  # máximo 10 clientes na resposta
+        }
+
+    async def _relatorio_vendas_cidade_efos(
+        self,
+        cidade: str,
+        mes: object,
+        ano: object,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> list[dict] | dict:
+        """Relatório de vendas por cidade via commerce_* (dados EFOS).
+
+        Args:
+            cidade: nome da cidade (normalizado para UPPERCASE).
+            mes: mês.
+            ano: ano.
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de {cliente, total} ou dict de erro.
+        """
+        try:
+            mes_int = self._normalizar_mes(mes)
+        except ValueError as exc:
+            return {"erro": str(exc)}
+
+        ano_int = int(ano) if ano else datetime.now(timezone.utc).year
+        cidade_upper = cidade.upper()
+
+        dados = await self._commerce_repo.relatorio_vendas_cidade(
+            tenant_id=tenant_id,
+            cidade=cidade_upper,
+            mes=mes_int,
+            ano=ano_int,
+            session=session,
+        )
+        return [
+            {"cliente": d["cliente"], "total": str(d["total"])}
+            for d in dados
+        ]
+
+    async def _clientes_inativos_efos(
+        self,
+        cidade: str | None,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Lista clientes inativos EFOS (situacao=2).
+
+        Args:
+            cidade: filtrar por cidade (UPPERCASE); None = todas.
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de clientes inativos.
+        """
+        cidade_upper = cidade.upper() if cidade else None
+        return await self._commerce_repo.listar_clientes_inativos(
+            tenant_id=tenant_id,
+            cidade=cidade_upper,
+            session=session,
+        )
+
+    def _get_anthropic_client(self, session_id: str = "") -> Any:
+        """Retorna cliente Anthropic com wrapper Langfuse e session_id.
+
+        Args:
+            session_id: ID da conversa para rastreamento no Langfuse.
+
+        Returns:
+            AsyncAnthropic com wrapper Langfuse ou injetado em testes.
+        """
         if self._anthropic is not None:
             return self._anthropic
         import anthropic
+        if _LANGFUSE_ENABLED and session_id:
+            try:
+                _lf_ctx.update_current_trace(session_id=session_id)
+            except Exception:
+                pass
         return anthropic.AsyncAnthropic()
 
     async def _carregar_historico_redis(

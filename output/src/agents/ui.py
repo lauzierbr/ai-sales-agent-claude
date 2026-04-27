@@ -30,6 +30,36 @@ _WEBHOOK_RATE_LIMIT_MAX = 30
 _WEBHOOK_RATE_LIMIT_WINDOW = 60  # segundos
 
 
+async def _invalidar_redis_conversa(
+    redis: Any,
+    tenant_id: str,
+    numero: str,
+) -> None:
+    """Invalida todas as chaves Redis da conversa de um número ao trocar de persona.
+
+    B-11: ao detectar troca de persona, apaga todo o histórico do padrão
+    conv:{tenant_id}:{numero}* para evitar que a nova persona herde o
+    histórico de outra persona.
+
+    Args:
+        redis: cliente Redis assíncrono.
+        tenant_id: ID do tenant.
+        numero: número de telefone normalizado (sem @s.whatsapp.net).
+    """
+    pattern = f"conv:{tenant_id}:{numero}*"
+    try:
+        keys = await redis.keys(pattern)
+        if keys:
+            await redis.delete(*keys)
+            log.info(
+                "redis_conversa_invalidada",
+                tenant_id=tenant_id,
+                n_keys=len(keys),
+            )
+    except Exception as exc:
+        log.warning("redis_invalidar_conversa_erro", tenant_id=tenant_id, error=str(exc))
+
+
 async def _check_webhook_rate_limit(instance_id: str, remote_jid: str) -> bool:
     """Retorna True se o limite foi atingido (deve rejeitar com 429)."""
     try:
@@ -214,6 +244,25 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
         identity_router = IdentityRouter()
         persona = await identity_router.resolve(mensagem, tenant_id, session)
 
+        # B-11: detecta troca de persona — invalida histórico Redis para evitar
+        # que nova persona herde mensagens de outra persona (ex: cliente→gestor).
+        numero_norm = mensagem.de.split("@")[0]
+        if _redis is not None:
+            persona_key = f"persona:{tenant_id}:{numero_norm}"
+            try:
+                persona_anterior = await _redis.get(persona_key)
+                if persona_anterior is not None and persona_anterior.decode() != persona.value:
+                    log.info(
+                        "identity_router_troca_persona",
+                        tenant_id=tenant_id,
+                        persona_anterior=persona_anterior.decode(),
+                        persona_nova=persona.value,
+                    )
+                    await _invalidar_redis_conversa(_redis, tenant_id, numero_norm)
+                await _redis.set(persona_key, persona.value, ex=86400)
+            except Exception as exc:
+                log.warning("persona_key_redis_erro", tenant_id=tenant_id, error=str(exc))
+
         # Log com número hasheado (LGPD)
         from_hash = hashlib.sha256(mensagem.de.encode()).hexdigest()
         log.info(
@@ -250,6 +299,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         )
                         return
 
+                    from src.commerce.repo import CommerceRepo as _CommerceRepo
                     agent_gestor = AgentGestor(
                         order_service=_order_service,
                         conversa_repo=ConversaRepo(),
@@ -260,6 +310,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         redis_client=_redis,
                         cliente_b2b_repo=_cliente_b2b_repo,
                         relatorio_repo=_relatorio_repo,
+                        commerce_repo=_CommerceRepo(),
                     )
                     await agent_gestor.responder(
                         mensagem=mensagem,
@@ -275,9 +326,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     cliente = await ClienteB2BRepo().get_by_telefone(
                         tenant_id, telefone_norm, session
                     )
+                    representante_id_b2b: str | None = None
                     if cliente is not None:
                         cliente_b2b_id = cliente.id
                         cliente_nome = cliente.nome
+                        representante_id_b2b = cliente.representante_id
 
                     # Instancia AgentCliente com dependências injetadas
                     agent_cliente = AgentCliente(
@@ -294,7 +347,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         tenant=tenant,
                         session=session,
                         cliente_b2b_id=cliente_b2b_id,
-                        representante_id=None,
+                        representante_id=representante_id_b2b,
                         cliente_nome=cliente_nome,
                     )
 

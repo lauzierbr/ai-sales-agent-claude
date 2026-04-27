@@ -6,20 +6,55 @@ O sistema é dividido em domínios independentes. Cada domínio segue a
 mesma estrutura de camadas. Cross-cutting concerns entram via Providers.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    DOMÍNIOS                             │
-├──────────────┬──────────────┬──────────────┬───────────┤
+┌──────────────┬──────────────┬──────────────┬───────────┐
 │   Catalog    │    Orders    │    Agents    │  Tenants  │
 │  (catálogo   │  (pedidos,   │  (runtime    │  (gestão  │
 │  produtos,   │  carrinho,   │   Claude,    │   multi-  │
 │  crawler,    │  histórico)  │   personas,  │  tenant)  │
 │  embeddings) │              │   evaluator) │           │
-└──────────────┴──────────────┴──────────────┴───────────┘
+├──────────────┴──────────────┴──────────────┴───────────┤
+│              Domínio 5: integrations/                   │
+│  (pipeline SSH/SFTP + pg_restore EFOS; sync_runs;       │
+│   sync_artifacts; isolado de domínios de negócio)       │
+├────────────────────────────────────────────────────────┤
+│              Domínio 6: commerce/                       │
+│  (tabelas commerce_*; dados EFOS normalizados;          │
+│   CommerceRepo; relatórios para AgentGestor)            │
+└────────────────────────────────────────────────────────┘
                         │
               Cross-cutting Providers
          (auth, telemetria, feature flags,
           tenant context, Infisical)
 ```
+
+### Domínio 5 — integrations/
+
+Pipeline de integração com sistemas externos (EFOS/Webrun via backup SSH).
+
+- `types.py`: `SyncStatus`, `ConnectorCapability`, `SyncRun`, `SyncArtifact`
+- `config.py`: `EFOSBackupConfig.for_tenant()` — lê secrets via `os.getenv()`
+- `repo.py`: `SyncRunRepo`, `SyncArtifactRepo` — persiste metadados de sync
+- `connectors/efos_backup/`: `acquire.py`, `stage.py`, `normalize.py`, `publish.py`
+- `jobs/sync_efos.py`: CLI com `--tenant`, `--dry-run`, `--force`
+
+**Regras de isolamento:**
+- Não importa `agents/`, `catalog/`, `orders/`, `tenants/` ou `dashboard/`
+- Normaliza dados para `commerce/types.py` como camada de saída
+- Enforçado por import-linter (contrato D026)
+
+### Domínio 6 — commerce/
+
+Camada de dados normalizados do ERP EFOS, usada pelo AgentGestor para relatórios.
+
+- `types.py`: 8 dataclasses — `CommerceProduct`, `CommerceAccountB2B`, `CommerceOrder`,
+  `CommerceOrderItem`, `CommerceInventory`, `CommerceSalesHistory`, `CommerceVendedor`
+- `repo.py`: `CommerceRepo` com 3 métodos: `relatorio_vendas_representante`,
+  `relatorio_vendas_cidade`, `listar_clientes_inativos`
+
+**Regras de isolamento:**
+- Não importa nenhum outro domínio (agentes, catálogo, pedidos, tenants, integrations)
+- Enforçado por import-linter (contrato D027)
+- Alimentado exclusivamente pelo pipeline `integrations/` via tabelas `commerce_*`
 
 ## Camadas fixas por domínio
 
@@ -110,6 +145,23 @@ output/src/
 │   │   └── onboarding_agent.py
 │   └── ui.py             # endpoints /tenants, painel gestor
 │
+├── integrations/         # Domínio 5: pipeline EFOS
+│   ├── types.py          # SyncStatus, ConnectorCapability, SyncRun, SyncArtifact
+│   ├── config.py         # EFOSBackupConfig.for_tenant()
+│   ├── repo.py           # SyncRunRepo, SyncArtifactRepo
+│   ├── connectors/
+│   │   └── efos_backup/
+│   │       ├── acquire.py   # SSH/SFTP + SHA-256
+│   │       ├── stage.py     # pg_restore + validação
+│   │       ├── normalize.py # EFOS → commerce types
+│   │       └── publish.py   # DELETE+INSERT em commerce_*
+│   └── jobs/
+│       └── sync_efos.py  # CLI --tenant, --dry-run, --force
+│
+├── commerce/             # Domínio 6: dados EFOS normalizados
+│   ├── types.py          # CommerceProduct, CommerceAccountB2B, etc.
+│   └── repo.py           # CommerceRepo (3 métodos de relatório)
+│
 └── providers/
     ├── telemetry.py      # OpenTelemetry setup
     ├── tenant_context.py # TenantProvider (middleware FastAPI)
@@ -120,27 +172,20 @@ output/src/
 ## Enforcement mecânico
 
 ### import-linter (pyproject.toml)
+
+7 contratos ativos — 0 violações:
+
 ```toml
-[tool.importlinter]
-root_packages = ["src"]
+# Contratos de camada (todos os domínios)
+"Types: não importa nenhuma camada interna"
+"Config: importa apenas Types"
+"Repo: não importa Service, Runtime ou UI"
+"Service: não importa Runtime ou UI"
+"Runtime: não importa UI"
 
-[[tool.importlinter.contracts]]
-name = "Repo não importa Service ou Runtime"
-type = "forbidden"
-source_modules = ["src.*.repo"]
-forbidden_modules = ["src.*.service", "src.*.runtime", "src.*.ui"]
-
-[[tool.importlinter.contracts]]
-name = "Service não importa Runtime ou UI"
-type = "forbidden"
-source_modules = ["src.*.service"]
-forbidden_modules = ["src.*.runtime", "src.*.ui"]
-
-[[tool.importlinter.contracts]]
-name = "Runtime não importa UI"
-type = "forbidden"
-source_modules = ["src.*.runtime"]
-forbidden_modules = ["src.*.ui"]
+# Contratos de isolamento entre domínios (Sprint 8)
+"integrations: não importa domínios de negócio"
+"commerce: não importa outros domínios de negócio"
 ```
 
 ### Mensagens de erro (injetadas no contexto do agente)

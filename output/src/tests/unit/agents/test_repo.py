@@ -39,6 +39,7 @@ async def test_cliente_b2b_repo_retorna_cliente_quando_encontrado() -> None:
         "telefone": "5519999999999",
         "ativo": True,
         "criado_em": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "representante_id": None,  # B-10: campo agora incluso no SELECT
     }
     result = MagicMock()
     result.mappings.return_value.first.return_value = _make_row(row_data)

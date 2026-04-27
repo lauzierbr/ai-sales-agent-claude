@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd plist para sincronização diária EFOS — JMB Distribuidora.
+  Agendado para 16:00 UTC (13:00 BRT) — após geração do backup EFOS.
+
+  Instalação:
+    cp com.jmb.efos-sync.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.jmb.efos-sync.plist
+
+  Para recarregar após edição:
+    launchctl unload ~/Library/LaunchAgents/com.jmb.efos-sync.plist
+    launchctl load ~/Library/LaunchAgents/com.jmb.efos-sync.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jmb.efos-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/lauzier/MyRepos/ai-sales-agent-claude/.venv/bin/python</string>
+        <string>-m</string>
+        <string>integrations.jobs.sync_efos</string>
+        <string>--tenant</string>
+        <string>jmb</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/lauzier/MyRepos/ai-sales-agent-claude/output</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>16</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/efos-sync.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/efos-sync-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Infisical injeta as variáveis reais antes de invocar o processo -->
+        <key>PYTHONPATH</key>
+        <string>/Users/lauzier/MyRepos/ai-sales-agent-claude/output</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

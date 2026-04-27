@@ -48,6 +48,10 @@ if not _LANGFUSE_ENABLED:
         def update_current_trace(**kwargs: Any) -> None:
             pass
 
+        @staticmethod
+        def update_current_observation(**kwargs: Any) -> None:
+            pass
+
     _lf_ctx = _DummyLfCtx()
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -326,7 +330,7 @@ class AgentRep:
 
             # 6. Loop de tool use (máx max_iterations)
             resposta_final: str | None = None
-            client = self._get_anthropic_client()
+            client = self._get_anthropic_client(session_id=str(conversa.id))
 
             for iteration in range(self._config.max_iterations):
                 try:
@@ -423,6 +427,8 @@ class AgentRep:
             messages.append({"role": "assistant", "content": resposta_final})
             await self._salvar_historico_redis(tenant.id, numero, messages)
 
+            _lf_ctx.update_current_observation(output=resposta_final)
+
             # 10. Envia resposta via WhatsApp para o representante
             await send_whatsapp_message(mensagem.instancia_id, numero, resposta_final)
 
@@ -450,16 +456,25 @@ class AgentRep:
             )
         return self._system_prompt_cache
 
-    def _get_anthropic_client(self) -> Any:
-        """Retorna cliente Anthropic (injetado ou criado internamente).
+    def _get_anthropic_client(self, session_id: str = "") -> Any:
+        """Retorna cliente Anthropic com wrapper Langfuse e session_id.
+
+        Args:
+            session_id: ID da conversa para rastreamento no Langfuse.
 
         Returns:
-            Cliente anthropic.AsyncAnthropic.
+            AsyncAnthropic com wrapper Langfuse ou injetado em testes.
         """
         if self._anthropic is not None:
             return self._anthropic
 
         import anthropic
+
+        if _LANGFUSE_ENABLED and session_id:
+            try:
+                _lf_ctx.update_current_trace(session_id=session_id)
+            except Exception:
+                pass
 
         return anthropic.AsyncAnthropic()
 

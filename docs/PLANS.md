@@ -18,6 +18,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 6 | ✅ | Hardening | Pre-pilot hardening — rate limit, startup validation, CORS, health Anthropic — v0.6.1 APROVADO |
 | **Piloto JMB** | 🚀 | Piloto | Teste com usuários reais iniciado 2026-04-22 — banco limpo, staging em v0.6.1 |
 | Sprint 7 | 🏁 | Produto | Notificação gestor (TD-08) — todos gestores ativos recebem PDF ao confirmar pedido — aguardando homologação |
+| Sprint 8 | 🏁 | Produto | Hotfixes piloto (B-10/B-11/B-12) + integração EFOS via backup diário SSH/pg_restore + 3 tools relatório AgentGestor — aguardando homologação |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 

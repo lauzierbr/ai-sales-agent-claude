@@ -30,6 +30,11 @@ Log de decisões técnicas. Atualizar sempre que uma nova decisão for tomada.
 | D022 | Auth scope: TenantProvider via X-Tenant-ID; JWT apenas para ações privilegiadas; webhook via HMAC-SHA256 | Sprint 1 | ok |
 | D023 | Dashboard web: Jinja2+htmx+CSS puro, auth via DASHBOARD_SECRET + cookie HttpOnly JWT | Sprint 4 | ok |
 | D024 | Langfuse v2 self-hosted Docker para observabilidade LLM | Sprint 5 | ok |
+| D025 | Integração EFOS via backup diário SSH/SFTP (sem crawler Playwright) | Sprint 8 | ok |
+| D026 | Domínio integrations/ isolado de domínios de negócio por import-linter | Sprint 8 | ok |
+| D027 | Domínio commerce/ como camada de dados EFOS normalizada | Sprint 8 | ok |
+| D028 | Langfuse session_id + update_current_observation em todos os agentes | Sprint 8 | ok |
+| D029 | Staging DB efos_staging destruído em bloco finally após cada sync | Sprint 8 | ok |
 
 ---
 
@@ -172,3 +177,41 @@ Lauzier), é aceitável.
 ---
 
 (Decisões D001-D011 em docs/design-docs/decisoes-planejamento.md)
+
+## D025 — Integração EFOS via backup diário SSH/SFTP
+
+**Contexto:** Sprint 8 precisa expor dados reais de vendas/clientes do ERP EFOS (Webrun) para o AgentGestor. O crawler Playwright era frágil (dependente de sessão web), lento e difícil de manter.
+
+**Decisão:** Substituir crawler por pipeline SSH/SFTP + pg_restore diário. O servidor Windows do cliente gera um dump PostgreSQL às ~16:30 BRT. O pipeline baixa o arquivo via paramiko, restaura em banco efos_staging, normaliza e publica nas tabelas commerce_*.
+
+**Rationale:** Dump PostgreSQL é determinístico, versionável por checksum SHA-256, e pg_restore é ordens de magnitude mais rápido que scraping. SSH não requer credenciais web. O arquivo existe independente de sessão/CSRF.
+
+**Trade-off:** Depende de acesso SSH ao servidor Windows do cliente. Dados têm latência de ~24h. Mitigado pelo fato de que relatórios do gestor não exigem dados em tempo real.
+
+## D026 — Domínio integrations/ isolado de domínios de negócio
+
+**Decisão:** `src.integrations.*` é um domínio técnico que não importa `agents/`, `catalog/`, `orders/`, `tenants/` ou `dashboard/`. Enforçado por import-linter (contrato adicionado em pyproject.toml). O conector normaliza dados para `commerce/types.py` como camada intermediária.
+
+**Rationale:** Evita acoplamento entre pipeline de dados e lógica de negócio. O conector pode ser substituído (ex: por API REST EFOS futura) sem tocar em agentes.
+
+## D027 — Domínio commerce/ como camada de dados EFOS normalizada
+
+**Decisão:** `src.commerce.types` define dataclasses puras (`CommerceProduct`, `CommerceAccountB2B`, etc.) e `src.commerce.repo` expõe queries agregadas sobre `commerce_*`. Sem `service.py` nem `runtime/`. Isolado de todos os outros domínios por import-linter.
+
+**Rationale:** Separação limpa entre dados de origem EFOS (commerce/) e dados transacionais do agente (orders/, agents/). Futuro: migrar leituras de catálogo de `catalog/` para `commerce_products`.
+
+## D028 — Langfuse session_id + update_current_observation em todos os agentes
+
+**Contexto:** Bug B-12 no piloto JMB: traces Langfuse não tinham session_id nem output, impossibilitando análise por conversa.
+
+**Decisão:** Todos os 3 agentes (`agent_cliente`, `agent_rep`, `agent_gestor`) agora:
+1. Chamam `_get_anthropic_client(session_id=str(conversa.id))` — seta `session_id` no trace Langfuse.
+2. Chamam `_lf_ctx.update_current_observation(output=resposta_final)` antes de retornar — popula o campo output do span.
+
+**Impacto:** Traces Langfuse agora navegáveis por conversa; custo por mensagem visível.
+
+## D029 — Staging DB efos_staging destruído em bloco finally após cada sync
+
+**Decisão:** O banco temporário `efos_staging` é criado no início do sync e dropado em bloco `finally` — executado mesmo em caso de erro. Isso garante que o banco não acumule schema corrompido em runs consecutivos (gotcha: segunda restauração falha se schema anterior persiste).
+
+**Rationale:** pg_restore em banco existente pode conflitar com constraints e índices. DROP/CREATE é atômico e idempotente. O bloco `finally` garante limpeza mesmo quando `stage()` ou `normalize()` lançam exceções.
