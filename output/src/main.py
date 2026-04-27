@@ -79,7 +79,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Sales Agent",
         description="Agente de vendas B2B via WhatsApp para distribuidoras brasileiras",
-        version="0.6.1",
+        version="0.7.0",
         lifespan=lifespan,
     )
 
@@ -145,7 +145,7 @@ def create_app() -> FastAPI:
         overall = "ok" if anthropic_state == "ok" else "degraded"
         return {
             "status": overall,
-            "version": "0.6.1",
+            "version": "0.7.0",
             "components": {
                 "anthropic": anthropic_state,
             },
