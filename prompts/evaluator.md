@@ -527,6 +527,72 @@ lê o JSON e sabe exatamente o que já foi verificado.
 
 ---
 
+## Lição aprendida — Sprint 8
+
+A preparação de homologação do Sprint 8 revelou 5 classes de bugs que o Evaluator não capturou:
+
+1. **Nomes de campos/tabelas inventados no código de integração externa.**
+   O Generator usou nomes genéricos (`pr_codigo`, `pe_numero`, `tb_produto`) em vez dos
+   confirmados no spec (`it_codigo`, `pe_numeropedido`, `tb_itens`). Análise estática do
+   código não detectou — os nomes "pareciam plausíveis".
+   **Obrigação nova:** para sprints com integração de banco externo, o Evaluator
+   deve fazer grep dos nomes de campo confirmados no spec dentro do código gerado.
+   Se `it_codigo` está no spec como campo de `tb_itens` e o código usa `pr_codigo`,
+   é FAIL de Alta.
+
+2. **Infraestrutura de execução não verificada.**
+   `psql` e `pg_restore` não existem no host do macmini — Postgres roda em Docker.
+   O Generator assumiu binários no PATH sem verificar.
+   **Obrigação nova:** para sprints que rodam CLI fora do FastAPI, o Evaluator
+   verifica se o spec tem seção `## Ambiente de execução`. Se ausente e o sprint
+   usa subprocess com binários externos, é FAIL de Alta.
+
+3. **Duplicatas em dados externos não verificadas.**
+   `tb_itens` e `tb_estoque` têm chaves duplicadas por filial/depósito.
+   O code review não detecta — só execução real contra os dados reais detecta.
+   **Obrigação nova:** para sprints de integração com ERP externo, o contrato
+   deve incluir critério `A_DEDUP`: cada normalize_*() tem seen_ids set e
+   o Evaluator faz grep de `seen_ids` no código gerado.
+
+4. **Versão do app não verificada.**
+   O Generator bumpeou para 0.7.0 (Sprint 7) em vez de 0.8.0 (Sprint 8).
+   **Obrigação nova:** `A_VERSION` é critério Alta obrigatório em todo sprint.
+   Teste: `GET /health` retorna `"version": "0.N.0"` onde N = número do sprint.
+   Convenção: versão staging = `0.N.0`; versão produção = `N.0.0`.
+
+5. **Homologação "preparada" mas não executada.**
+   O Generator escreveu os scripts mas não rodou o deploy nem o smoke gate.
+   O ciclo foi declarado encerrado sem evidência real de execução.
+   **Obrigação nova:** o Evaluator só emite APROVADO se `artifacts/qa_sprint_N.md`
+   contém evidência de saída real do smoke gate (não apenas "script criado").
+   Se o smoke gate não foi executado, é FAIL de A_SMOKE.
+
+**Checks adicionais obrigatórios a partir do Sprint 8:**
+
+Para sprints com integração de banco externo (ERP, backup SSH, pg_restore):
+
+```bash
+# Verificar que campos reais do ERP estão no código (não nomes inventados)
+# Exemplo Sprint 8 — adaptar ao sprint atual:
+grep -n "it_codigo\|pe_numeropedido\|cl_cnpjcpfrg\|es_codigoitem" \
+  output/src/integrations/connectors/*/normalize.py
+# Esperado: cada campo confirmado no spec deve aparecer no código
+
+# Verificar deduplicação em normalize_*
+grep -n "seen_ids" output/src/integrations/connectors/*/normalize.py
+# Esperado: pelo menos uma ocorrência por tabela sem PK única confirmada
+
+# Verificar que asyncpg não recebe URL com +asyncpg://
+grep -rn "asyncpg.connect" output/src/integrations/
+# Inspecionar manualmente se a URL tem o replace() antes de connect()
+
+# Verificar versão correta
+grep -n '"version"' output/src/main.py
+# Esperado: "0.N.0" onde N = número do sprint atual
+```
+
+---
+
 ## Lição aprendida — Sprint 2
 
 A homologação do Sprint 2 encontrou 8 bugs que passaram pelo Evaluator porque:

@@ -144,6 +144,23 @@ passa com cobertura ≥ 80% das funções de Service" é critério.
 um critério de smoke staging executável no macmini-lablz com infra real. Não é
 opcional — sem smoke gate, o Evaluator não pode aprovar o sprint.
 
+**Versão obrigatória:** Todo spec deve especificar a versão alvo. Convenção:
+`0.N.0` para staging onde N = número do sprint. Produção usa `N.0.0`.
+O spec deve incluir critério `A_VERSION`: `GET /health` retorna `"version": "0.N.0"`.
+
+**Ambiente de execução para CLIs externas:** Se o sprint introduz um CLI que roda
+fora do FastAPI (jobs, scripts de sync), o spec DEVE ter uma seção
+`## Ambiente de execução` descrevendo onde os binários externos estão disponíveis.
+No macmini-lablz, Postgres roda em Docker — psql/pg_restore estão no container,
+não no host. O Generator não pode assumir.
+
+**Mapeamento de campos para integração com banco externo:** Se o sprint lê de um
+banco externo (ERP, backup SSH), o spec DEVE ter uma seção
+`## Mapeamento de campos confirmados` com os nomes exatos das colunas verificados
+contra os dados reais. O Generator não pode adivinhar nomes de campos.
+Antes de fechar o spec, o Planner verifica unicidade das PKs:
+`SELECT col, COUNT(*) FROM tb GROUP BY col HAVING COUNT(*) > 1`.
+
 ---
 
 ## Formato obrigatório de artifacts/spec.md
@@ -194,6 +211,28 @@ o Generator DEVE tratar explicitamente. Vazio se nenhum identificado.]
 
 ### [Nome da entrega 2]
 ...
+
+## Versão alvo
+
+`0.N.0` onde N = número do sprint (ex: Sprint 8 = v0.8.0).
+Produção usa `N.0.0`. Critério `A_VERSION` obrigatório no contrato.
+
+## Ambiente de execução (obrigatório se sprint roda CLI fora do FastAPI)
+
+| Componente | Localização no macmini-lablz |
+|------------|------------------------------|
+| psql / pg_restore | Dentro do Docker container `ai-sales-postgres` |
+| Python / venv | `~/ai-sales-agent-claude/.venv/bin/python` |
+| Infisical | `/usr/local/bin/infisical` |
+| PYTHONPATH | `./src` (a partir de `output/`) |
+
+Variável de ambiente: `EFOS_DOCKER_CONTAINER=ai-sales-postgres` (Infisical staging)
+
+## Mapeamento de campos confirmados (obrigatório para integração com banco externo)
+
+[Tabela com nome_tabela → campo_real → tipo — verificado contra dados reais]
+[Incluir resultado de SELECT col, COUNT(*) GROUP BY col HAVING COUNT(*) > 1
+ para identificar tabelas com PKs duplicadas antes de implementar]
 
 ## Critério de smoke staging (obrigatório se sprint toca Runtime ou UI)
 

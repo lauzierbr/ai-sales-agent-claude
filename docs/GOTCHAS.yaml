@@ -191,3 +191,82 @@
     e passar como parâmetro para o SQL.
   category: sql
   sprint: 4
+
+# ─────────────────────────────────────────────
+# Integração com banco externo (EFOS / ERP)
+# ─────────────────────────────────────────────
+
+- id: efos_psql_not_on_host
+  pattern: 'subprocess\.run\(\s*\[.*(psql|pg_restore)'
+  description: >
+    macmini-lablz não tem psql/pg_restore como binários de host — Postgres
+    roda em Docker (container ai-sales-postgres). Chamar psql/pg_restore
+    diretamente levanta FileNotFoundError em runtime.
+  fix: >
+    Usar docker exec: `_cmd("psql") = ["docker", "exec", EFOS_DOCKER_CONTAINER, "psql"]`
+    onde EFOS_DOCKER_CONTAINER = os.getenv("EFOS_DOCKER_CONTAINER", "ai-sales-postgres").
+    Nunca assumir que ferramentas Postgres estão no PATH do host.
+  category: deploy
+  sprint: 8
+
+- id: efos_backup_filename_format
+  pattern: "date_str.*in.*f\s|YYYYMMDD"
+  description: >
+    Dumps EFOS têm formato backup_em_DD_MM_YYYY_HH.MM.SS.backup — não
+    YYYYMMDD.dump nem qualquer outro padrão. Hardcodar YYYYMMDD ou .dump
+    resulta em FileNotFoundError silencioso (nenhum candidato encontrado).
+  fix: >
+    Parsear com regex: r"backup_em_(\d{2})_(\d{2})_(\d{4})_\d{2}\.\d{2}\.\d{2}\.backup"
+    Extensão é .backup (custom pg_dump), nunca .dump (plain).
+    Lógica D-1 baseada em hora BRT (UTC-3), não UTC.
+  category: deploy
+  sprint: 8
+
+- id: efos_duplicate_pks
+  pattern: 'ESTE_GOTCHA_NAO_TEM_LINT_AUTOMATICO_VER_DESCRICAO'
+  description: >
+    Tabelas EFOS contêm linhas duplicadas por filial ou depósito:
+    tb_itens: it_codigo duplica por filial (1189 rows → 743 únicos)
+    tb_clientes: cl_codigo duplica por filial (1039 rows → 614 únicos)
+    tb_estoque: es_codigoitem duplica por depósito (1490 rows → 745 únicos)
+    tb_vendedor: ve_codigo duplica por filial (34 rows → 24 únicos)
+    INSERT sem deduplicação levanta UniqueViolationError no publish.
+  fix: >
+    Toda função normalize_*() deve ter seen_ids: set[str] antes do loop.
+    Manter apenas a primeira ocorrência de cada external_id.
+    Verificar unicidade antes de implementar: SELECT col, COUNT(*) GROUP BY col HAVING COUNT(*) > 1
+  category: sql
+  sprint: 8
+
+- id: asyncpg_url_prefix
+  pattern: 'asyncpg\.connect\([^)]*postgresql\+asyncpg'
+  description: >
+    asyncpg.connect() não aceita prefixo postgresql+asyncpg:// — aceita
+    apenas postgresql:// ou postgres://. Passar URL do SQLAlchemy com
+    +asyncpg causa InvalidDSNError em runtime.
+  fix: >
+    url.replace("postgresql+asyncpg://", "postgresql://") antes de
+    asyncpg.connect(). SQLAlchemy usa o prefixo, asyncpg direto não.
+  category: runtime
+  sprint: 8
+
+- id: efos_schema_field_names
+  pattern: 'ESTE_GOTCHA_NAO_TEM_LINT_AUTOMATICO_VER_DESCRICAO'
+  description: >
+    Nomes de campos EFOS confirmados (não adivinhar):
+    tb_itens: it_codigo (SKU), it_nome, it_precovenda, it_codigobarra (EAN)
+    tb_clientes: cl_codigo, cl_nome, cl_cnpjcpfrg, cl_cidade (UPPERCASE),
+                 cl_situacaocliente (1=ativo/2=inativo), cl_vendedori
+    tb_pedido: pe_numeropedido, pe_codigocliente, pe_codigovendedor,
+               pe_dataemissao, pe_totalliquido
+    tb_itenspedido: ipe_numeropedido, ipe_codigoitem, ipe_quantidade,
+                    ipe_precounitario, ipe_precototal
+    tb_estoque: es_codigoitem, es_saldo
+    tb_vendas: tv_codigoitem, tv_valor, tv_qtde, tv_cliente, tv_vendedor, tv_dataemissao
+    tb_vendedor: ve_codigo, ve_nome, ve_situacaovendedor
+  fix: >
+    Usar os nomes reais como lookup primário, nunca inventar genéricos.
+    Fallbacks aceitáveis apenas para compatibilidade futura.
+    O Evaluator verifica grep dos nomes reais no código gerado.
+  category: runtime
+  sprint: 8

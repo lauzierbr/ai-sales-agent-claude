@@ -561,6 +561,24 @@ Homologação
     do handoff ao usuário (cada cenário H1..Hk tem dados seed válidos)
 [ ] Para cada bug descoberto em homologação: teste novo em
     output/src/tests/regression/test_sprint_N_bugs.py (escreve antes do hotfix)
+[ ] CICLO SÓ ENCERRA COM EVIDÊNCIA REAL: deploy.sh executado, smoke ALL OK
+    confirmados no log real. "Script criado" não é suficiente — executar.
+
+Versão
+[ ] GET /health retorna "version": "0.N.0" onde N = número do sprint
+    Convenção: staging = 0.N.0 | produção = N.0.0
+    Verificar: grep -n '"version"' output/src/main.py
+
+Integração com banco externo (quando aplicável)
+[ ] Nomes de campos do ERP/banco externo são os confirmados no spec —
+    nunca inventar nomes "plausíveis". Usar os da seção de mapeamento do spec.
+[ ] Toda tabela sem PK única confirmada tem seen_ids: set[str] no normalize_*()
+    Verificar: SELECT col, COUNT(*) FROM tb_X GROUP BY col HAVING COUNT(*) > 1
+    antes de implementar (rodar contra dados reais)
+[ ] subprocess com psql/pg_restore/binários externos: verificar se estão no
+    PATH do host de staging. Se Postgres roda em Docker, usar docker exec.
+[ ] asyncpg.connect() recebe postgresql:// (não postgresql+asyncpg://)
+    Sempre: url.replace("postgresql+asyncpg://", "postgresql://") antes de connect()
 
 Contrato
 [ ] Cada critério de Alta do contrato tem teste correspondente
@@ -730,3 +748,42 @@ Aguardo instrução antes de qualquer nova modificação.
 ```
 
 Não faça mais nenhuma alteração no código até receber resposta do usuário.
+
+---
+
+## Lição aprendida — Sprint 8
+
+Cinco classes de erros que você não deve repetir:
+
+**1. Nomes de campos de banco externo inventados.**
+O Generator usou `pr_codigo`, `pe_numero`, `tb_produto` — nomes que "pareciam certos"
+mas eram errados. Os campos reais (`it_codigo`, `pe_numeropedido`, `tb_itens`) estavam
+no spec. Custo: 5 rodadas de debug em produção.
+**Regra:** quando o spec tem uma seção de mapeamento de campos (ex: `tb_itens: it_codigo`),
+esses nomes são o contrato. Não substitua por generics. O Evaluator vai fazer grep.
+
+**2. Infraestrutura de host assumida sem verificar.**
+O Generator assumiu que `psql` e `pg_restore` estavam no PATH do macmini.
+Não estavam — Postgres roda em Docker.
+**Regra:** para qualquer CLI que chama binário externo, verificar no spec se há seção
+`## Ambiente de execução`. Se o staging usa Docker, os binários estão dentro do container.
+Usar `docker exec <container> <binário>` ou documentar o gotcha antes de implementar.
+
+**3. Duplicatas de PK em dados externos ignoradas.**
+`tb_itens` e `tb_estoque` têm múltiplas linhas por código. INSERT sem dedup
+levantou UniqueViolationError que só apareceu ao rodar contra dados reais.
+**Regra:** antes de implementar normalize_*() para qualquer tabela externa, rodar
+`SELECT col, COUNT(*) GROUP BY col HAVING COUNT(*) > 1` contra os dados reais.
+Se houver duplicatas, adicionar seen_ids: set[str] ao normalize. Sempre.
+
+**4. Versão do app esquecida.**
+Sprint 8 ficou em 0.7.0 em vez de 0.8.0. Convenção: `0.N.0` onde N = sprint.
+**Regra:** versão está no checklist de auto-avaliação. Sempre verificar antes
+de chamar o Evaluator: `grep -n '"version"' output/src/main.py`.
+
+**5. "Preparei a homologação" ≠ "executei a homologação".**
+O Generator criou os scripts mas não rodou o deploy nem o smoke gate.
+Declarou o ciclo encerrado. O usuário teve que pedir para executar.
+**Regra:** o ciclo de sprint só encerra quando `GET /health` responde com a
+versão correta E `python scripts/smoke_sprint_N.py` retorna `ALL OK` — ambos
+confirmados com saída real, não apenas com "script criado".
