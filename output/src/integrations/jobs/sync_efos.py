@@ -240,8 +240,8 @@ def _destruir_staging_db(staging_db_url: str) -> None:
         if password:
             env["PGPASSWORD"] = password
 
-        cmd = [
-            "psql",
+        from src.integrations.connectors.efos_backup.stage import _cmd
+        cmd = _cmd("psql") + [
             f"--host={host}",
             f"--port={port}",
             f"--username={user}",
@@ -286,8 +286,15 @@ async def _ler_staging(staging_db_url: str) -> dict[str, list[dict]]:
         Dict table_name → list[dict] com todas as rows.
     """
     import asyncpg  # type: ignore[import-untyped]
+    import urllib.parse
 
-    conn = await asyncpg.connect(staging_db_url)
+    # asyncpg não aceita postgresql+asyncpg:// — normaliza
+    parsed = urllib.parse.urlparse(staging_db_url)
+    # Banco de staging é sempre efos_staging
+    staging_url = parsed._replace(path="/efos_staging").geturl()
+    staging_url = staging_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    conn = await asyncpg.connect(staging_url)
     try:
         result: dict[str, list[dict]] = {}
         tabelas = [
