@@ -184,10 +184,14 @@ def normalize_orders(
         if ve_codigo:
             vendedor_map[ve_codigo] = ve_nome
 
+    seen_order_ids: set[str] = set()
     orders: list[CommerceOrder] = []
     for row in pedido_rows:
         # pe_numeropedido é o campo real; fallback pe_numero para compatibilidade
         external_id = str(row.get("pe_numeropedido") or row.get("pe_numero") or row.get("id") or "")
+        if not external_id or external_id in seen_order_ids:
+            continue
+        seen_order_ids.add(external_id)
         if not external_id:
             continue
         data_ped = _to_date(row.get("pe_dataemissao") or row.get("pe_data") or row.get("data_pedido"))
@@ -251,11 +255,15 @@ def normalize_inventory(rows: list[dict], *, tenant_id: str, checksum: str) -> l
     Returns:
         Lista de CommerceInventory normalizada.
     """
+    seen_ids: set[str] = set()
     result = []
     for idx, row in enumerate(rows):
-        # tb_estoque: es_codigoitem é o SKU; não há PK própria
+        # tb_estoque: es_codigoitem é o SKU; pode ter múltiplas linhas por deposito
         produto_cod = str(row.get("es_codigoitem") or row.get("sa_produto") or row.get("produto_codigo") or "")
         external_id = produto_cod or str(idx)
+        if external_id in seen_ids:
+            continue
+        seen_ids.add(external_id)
         result.append(CommerceInventory(
             tenant_id=tenant_id,
             external_id=external_id,
