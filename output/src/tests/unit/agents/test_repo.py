@@ -298,3 +298,131 @@ def test_conversa_repo_normalize_phone() -> None:
     repo = ConversaRepo()
     assert repo._normalize_phone("5519999999999@s.whatsapp.net") == "5519999999999"
     assert repo._normalize_phone("5519999999999") == "5519999999999"
+
+
+# ─────────────────────────────────────────────
+# RelatorioRepo — filtro ficticio
+# ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_relatorio_repo_totais_periodo_exclui_ficticio() -> None:
+    """RelatorioRepo.totais_periodo deve incluir AND ficticio = FALSE na query SQL."""
+    from src.agents.repo import RelatorioRepo
+
+    session = AsyncMock()
+    row_data = {"n_pedidos": 0, "total_gmv": 0}
+    result = MagicMock()
+    result.mappings.return_value.first.return_value = _make_row(row_data)
+    session.execute = AsyncMock(return_value=result)
+
+    repo = RelatorioRepo()
+    await repo.totais_periodo(
+        tenant_id="jmb",
+        data_inicio=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        data_fim=datetime(2026, 4, 30, tzinfo=timezone.utc),
+        session=session,
+    )
+
+    session.execute.assert_called_once()
+    sql = str(session.execute.call_args[0][0]).lower()
+    assert "ficticio" in sql, "totais_periodo deve filtrar por ficticio"
+    assert "false" in sql, "totais_periodo deve excluir ficticio = FALSE"
+
+
+@pytest.mark.unit
+async def test_relatorio_repo_totais_por_rep_exclui_ficticio() -> None:
+    """RelatorioRepo.totais_por_rep deve incluir AND p.ficticio = FALSE na query SQL."""
+    from src.agents.repo import RelatorioRepo
+
+    session = AsyncMock()
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+
+    repo = RelatorioRepo()
+    await repo.totais_por_rep(
+        tenant_id="jmb",
+        data_inicio=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        data_fim=datetime(2026, 4, 30, tzinfo=timezone.utc),
+        session=session,
+    )
+
+    session.execute.assert_called_once()
+    sql = str(session.execute.call_args[0][0]).lower()
+    assert "ficticio" in sql, "totais_por_rep deve filtrar por ficticio"
+    assert "false" in sql, "totais_por_rep deve excluir ficticio = FALSE"
+
+
+@pytest.mark.unit
+async def test_relatorio_repo_totais_por_cliente_exclui_ficticio() -> None:
+    """RelatorioRepo.totais_por_cliente deve incluir AND p.ficticio = FALSE na query SQL."""
+    from src.agents.repo import RelatorioRepo
+
+    session = AsyncMock()
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+
+    repo = RelatorioRepo()
+    await repo.totais_por_cliente(
+        tenant_id="jmb",
+        data_inicio=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        data_fim=datetime(2026, 4, 30, tzinfo=timezone.utc),
+        session=session,
+    )
+
+    session.execute.assert_called_once()
+    sql = str(session.execute.call_args[0][0]).lower()
+    assert "ficticio" in sql, "totais_por_cliente deve filtrar por ficticio"
+    assert "false" in sql, "totais_por_cliente deve excluir ficticio = FALSE"
+
+
+@pytest.mark.unit
+async def test_orders_repo_listar_por_tenant_status_exclui_ficticio() -> None:
+    """OrderRepo.listar_por_tenant_status deve incluir AND p.ficticio = FALSE na query SQL."""
+    from src.orders.repo import OrderRepo
+
+    session = AsyncMock()
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+
+    repo = OrderRepo()
+    # Testa branch sem status (todos)
+    await repo.listar_por_tenant_status(
+        tenant_id="jmb",
+        status=None,
+        limit=10,
+        session=session,
+    )
+
+    session.execute.assert_called_once()
+    sql = str(session.execute.call_args[0][0]).lower()
+    assert "ficticio" in sql, "listar_por_tenant_status deve filtrar por ficticio"
+    assert "false" in sql, "listar_por_tenant_status deve excluir ficticio = FALSE"
+
+
+@pytest.mark.unit
+async def test_orders_repo_listar_por_tenant_status_com_status_exclui_ficticio() -> None:
+    """OrderRepo.listar_por_tenant_status(status='confirmado') deve incluir AND p.ficticio = FALSE."""
+    from src.orders.repo import OrderRepo
+
+    session = AsyncMock()
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+
+    repo = OrderRepo()
+    # Testa branch com status específico
+    await repo.listar_por_tenant_status(
+        tenant_id="jmb",
+        status="confirmado",
+        limit=10,
+        session=session,
+    )
+
+    session.execute.assert_called_once()
+    sql = str(session.execute.call_args[0][0]).lower()
+    assert "ficticio" in sql, "listar_por_tenant_status(status=...) deve filtrar por ficticio"
+    assert "false" in sql, "listar_por_tenant_status(status=...) deve excluir ficticio = FALSE"

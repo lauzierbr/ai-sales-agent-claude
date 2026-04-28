@@ -159,6 +159,22 @@ def parse_mensagem(payload: WebhookPayload) -> Mensagem | None:
     if remote_jid.endswith("@g.us"):
         return None
 
+    message_type = data.get("messageType", "")
+
+    # E3: audioMessage — retorna Mensagem com texto vazio e tipo="audioMessage"
+    # A transcrição é feita em agents/ui.py (_transcrever_audio via asyncio.to_thread)
+    if message_type == "audioMessage":
+        timestamp_raw = data.get("messageTimestamp", 0)
+        return Mensagem(
+            id=key.get("id", ""),
+            de=remote_jid,
+            para=payload.instance,
+            texto="",  # preenchido em ui.py após transcrição Whisper
+            tipo="audioMessage",
+            instancia_id=payload.instance,
+            timestamp=datetime.fromtimestamp(float(timestamp_raw), tz=timezone.utc),
+        )
+
     # Texto pode vir em vários campos dependendo do tipo
     texto = (
         msg.get("conversation")

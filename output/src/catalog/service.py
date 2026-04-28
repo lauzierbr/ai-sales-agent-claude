@@ -29,6 +29,8 @@ from src.catalog.types import (
     ResultadoBusca,
     StatusEnriquecimento,
 )
+# commerce importado localmente para evitar dependência circular em runtime
+# (import-linter: catalog/service pode importar commerce — ambos são camada Service/Repo)
 
 log = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -47,18 +49,24 @@ class CatalogService:
         repo: CatalogRepo,
         enricher: EnricherProtocol,
         embedding_client: Any,  # AsyncOpenAI — tipado como Any para evitar import externo
+        commerce_repo: Any | None = None,  # CommerceRepo — opcional, injetado em runtime
     ) -> None:
         """Inicializa o serviço com dependências injetadas.
 
         Args:
-            repo: repositório de catálogo.
+            repo: repositório de catálogo (legado — tabela produtos).
             enricher: agente de enriquecimento (implementa EnricherProtocol).
             embedding_client: cliente OpenAI assíncrono para geração de embeddings.
+            commerce_repo: CommerceRepo para busca em commerce_products (E1a, opcional).
+                Quando fornecido e commerce_products tem dados, busca por código/nome
+                é redirecionada para commerce_products. Busca semântica pgvector
+                permanece em catalog.produtos independentemente.
         """
         self._repo = repo
         self._enricher = enricher
         self._embedding_client: Any = embedding_client
         self._embedding_model = "text-embedding-3-small"
+        self._commerce_repo: Any | None = commerce_repo
 
     # ─────────────────────────────────────────────
     # Persistência de produto bruto
@@ -207,17 +215,107 @@ class CatalogService:
     ) -> ResultadoBusca | None:
         """Busca produto por código externo (lookup exato).
 
+        B-13: quando codigo_externo.isdigit() e len > 6 (ex: EAN de 13 dígitos),
+        tenta primeiro o código completo; se não encontrar, tenta os últimos 6 dígitos
+        (sufixo [-6:]) — padrão comum no EFOS onde o codigo_externo é o sufixo do EAN.
+
         Args:
             tenant_id: identificador do tenant.
-            codigo_externo: código do produto no ERP.
+            codigo_externo: código do produto no ERP (pode ser EAN completo de 13 dígitos).
 
         Returns:
             ResultadoBusca com distancia=0.0 ou None se não encontrado.
         """
         produto = await self._repo.get_produto_por_codigo(tenant_id, codigo_externo)
+        if produto is None and codigo_externo.isdigit() and len(codigo_externo) > 6:
+            # B-13: tenta sufixo dos últimos 6 dígitos (padrão EFOS)
+            sufixo = codigo_externo[-6:]
+            produto = await self._repo.get_produto_por_codigo(tenant_id, sufixo)
         if produto is None:
             return None
         return ResultadoBusca(produto, distancia=0.0)
+
+    async def _usar_commerce_products(
+        self, tenant_id: str, session: Any | None
+    ) -> bool:
+        """Retorna True se commerce_products tem >= 1 produto para o tenant.
+
+        Decisão de fallback E1a: se True, busca por código/nome usa commerce_products;
+        caso contrário, usa catalog.produtos (legado).
+
+        Args:
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy assíncrona (necessária para a query).
+
+        Returns:
+            True se commerce_products tem dados para o tenant.
+        """
+        if self._commerce_repo is None or session is None:
+            return False
+        try:
+            count = await self._commerce_repo.count_produtos(
+                tenant_id=tenant_id,
+                session=session,
+            )
+            return count >= 1
+        except Exception as exc:
+            log.warning(
+                "catalog_service_commerce_count_erro",
+                tenant_id=tenant_id,
+                error=str(exc),
+            )
+            return False
+
+    async def buscar_por_nome_commerce(
+        self,
+        tenant_id: str,
+        query: str,
+        limit: int = 10,
+        session: Any | None = None,
+    ) -> list[ResultadoBusca]:
+        """Busca produtos em commerce_products por código ou nome.
+
+        E1a: fonte primária quando commerce_products tem dados para o tenant.
+        Retorna list[ResultadoBusca] normalizado com distancia=0.0 (busca exata/parcial).
+
+        Args:
+            tenant_id: identificador do tenant.
+            query: texto de busca — código ou nome.
+            limit: número máximo de resultados.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de ResultadoBusca com produtos de commerce_products.
+        """
+        if self._commerce_repo is None:
+            return []
+        rows = await self._commerce_repo.buscar_produtos_commerce(
+            tenant_id=tenant_id,
+            query=query,
+            limit=limit,
+            session=session,
+        )
+        resultados = []
+        import uuid as _uuid
+        from decimal import Decimal as _Decimal
+        from datetime import datetime as _dt, timezone as _tz
+
+        for row in rows:
+            # Gera UUID determinístico a partir do external_id (namespace DNS)
+            produto_uuid = _uuid.uuid5(_uuid.NAMESPACE_DNS, f"{tenant_id}:{row['external_id']}")
+            produto = Produto(
+                id=produto_uuid,
+                tenant_id=tenant_id,
+                codigo_externo=row.get("codigo") or row["external_id"],
+                nome_bruto=row["nome"],
+                nome=row["nome"],
+                preco_padrao=_Decimal(str(row["preco_padrao"])) if row.get("preco_padrao") else None,
+                status_enriquecimento=StatusEnriquecimento.ATIVO,
+                criado_em=_dt.now(_tz.utc),
+                atualizado_em=_dt.now(_tz.utc),
+            )
+            resultados.append(ResultadoBusca(produto, distancia=0.0))
+        return resultados
 
     # ─────────────────────────────────────────────
     # Busca semântica

@@ -711,6 +711,7 @@ class AgentCliente:
             cliente_b2b_id=cliente_b2b_id,
             representante_id=representante_id,
             itens=itens,
+            observacao=tool_input.get("observacao"),
         )
 
         # 1. Cria pedido no banco
@@ -731,11 +732,13 @@ class AgentCliente:
             gestores = await self._gestor_repo.listar_ativos_por_tenant(tenant.id, session)
             if gestores:
                 total_br = f"{pedido.total_estimado:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                caption = (
+                caption_base = (
                     f"Novo pedido PED-{pedido.id[:8].upper()} | "
                     f"{len(pedido.itens)} iten(s) | "
                     f"R$ {total_br}"
                 )
+                # E0-A: prefixo ⚠️ TESTE quando pedido é fictício (staging)
+                caption = f"⚠️ TESTE | {caption_base}" if pedido.ficticio else caption_base
                 for gestor in gestores:
                     try:
                         await send_whatsapp_media(

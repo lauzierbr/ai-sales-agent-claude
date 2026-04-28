@@ -1,0 +1,33 @@
+{% if sync_info %}
+  {% set status = sync_info.status %}
+  {% if status == "success" or status == "concluido" %}
+    {% set badge_color = "#198754" %}
+    {% set badge_label = "OK" %}
+  {% elif status == "running" %}
+    {% set badge_color = "#0d6efd" %}
+    {% set badge_label = "Em andamento" %}
+  {% else %}
+    {% set badge_color = "#dc3545" %}
+    {% set badge_label = "Erro" %}
+  {% endif %}
+  <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+    <span class="badge" style="background:{{ badge_color }};color:#fff;padding:3px 8px;border-radius:4px;font-size:0.8em;">
+      {{ badge_label }}
+    </span>
+    <span class="text-muted" style="font-size:0.9em;">
+      {{ sync_info.finished_at_brt if sync_info.finished_at_brt else "Em progresso" }}
+    </span>
+    {% if sync_info.rows_published is not none %}
+      <span class="text-muted" style="font-size:0.85em;">
+        &bull; {{ sync_info.rows_published }} registros
+      </span>
+    {% endif %}
+    {% if sync_info.error %}
+      <span style="color:#dc3545;font-size:0.8em;" title="{{ sync_info.error }}">
+        &bull; {{ sync_info.error[:80] }}{% if sync_info.error|length > 80 %}…{% endif %}
+      </span>
+    {% endif %}
+  </div>
+{% else %}
+  <span class="text-muted" style="font-size:0.9em;">Nunca sincronizado</span>
+{% endif %}

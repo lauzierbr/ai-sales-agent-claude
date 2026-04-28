@@ -8,6 +8,15 @@
 | B-10 | Pedido criado sem representante mesmo quando cliente tem rep. vinculado | Alta | Piloto | 2026-04-24 |
 | B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |
 | B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
+| B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
+
+> **B-13 detalhe:** EAN JMB segue padrão: últimos 6 dígitos = `codigo_externo` interno
+> (ex: EAN 7898923148571 → codigo_externo "148571"). A busca atual faz match exato em
+> `codigo_externo` — se o usuário digitar o EAN completo, retorna vazio. Confirmado no DB:
+> produtos 148571 (Escova Quadrada 571) e 148755 (Escova Redonda 755) existem mas não são
+> encontrados pelo EAN. Corrigir: em `_buscar_produtos()` (agent_cliente.py:633), se query
+> numérica tiver mais de 6 dígitos, tentar também `query[-6:]` como `codigo_externo`.
+> Mesmo padrão deve ser aplicado em AgentRep e AgentGestor.
 
 > **B-12 detalhe:** Três gaps na instrumentação Langfuse dos três agentes:
 > 1. `output=null`: `resposta_final` nunca repassada via `_lf_ctx.update_current_observation(output=...)`.

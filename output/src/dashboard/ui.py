@@ -932,6 +932,66 @@ async def feedbacks(request: Request) -> Any:
     )
 
 
+# ─────────────────────────────────────────────
+# Sincronização EFOS — bloco de status com htmx polling
+# ─────────────────────────────────────────────
+
+
+@router.get("/sync-status", response_class=HTMLResponse)
+async def sync_status(request: Request) -> Any:
+    """Partial htmx com status da última sincronização EFOS.
+
+    E2: chamado pelo dashboard home a cada 60s via hx-trigger="every 60s".
+    Retorna HTML com badge de status, finished_at em BRT e rows_published.
+
+    Returns:
+        HTML com bloco de sincronização ou fallback "Nunca sincronizado".
+    """
+    session_data = _require_session(request)
+    if session_data is None:
+        return HTMLResponse(
+            "<div>Sessão expirada. <a href='/dashboard/login'>Login</a></div>",
+            status_code=401,
+        )
+
+    tenant_id = session_data["tenant_id"]
+    sync_info: dict | None = None
+
+    try:
+        from src.integrations.repo import SyncRunRepo
+        from src.providers.db import get_session_factory
+        from datetime import timedelta as _timedelta
+
+        factory = get_session_factory()
+        repo = SyncRunRepo()
+        async with factory() as session:
+            sync_info = await repo.get_last_sync_run(
+                tenant_id=tenant_id,
+                session=session,
+            )
+
+        # Converte finished_at para BRT (UTC-3) se disponível
+        if sync_info and sync_info.get("finished_at"):
+            finished_utc = sync_info["finished_at"]
+            # Aplica offset BRT (UTC-3)
+            if hasattr(finished_utc, "utcoffset") and finished_utc.tzinfo is not None:
+                from datetime import timezone as _tz
+                finished_brt = finished_utc.astimezone(_tz(offset=_timedelta(hours=-3)))
+                sync_info["finished_at_brt"] = finished_brt.strftime("%d/%m/%Y %H:%M")
+            else:
+                sync_info["finished_at_brt"] = str(finished_utc)[:16]
+
+    except Exception as exc:
+        log.error("dashboard_sync_status_erro", tenant_id=tenant_id, error=str(exc))
+        sync_info = None
+
+    return templates.TemplateResponse(
+        request,
+        "_partials/sync_status.html",
+        {"sync_info": sync_info},
+    )
+
+
 async def _get_todos_contatos(tenant_id: str) -> list[dict[str, Any]]:
     try:
         from sqlalchemy import text

@@ -96,6 +96,46 @@ class SyncRunRepo:
         log.info("sync_run_atualizado", run_id=str(run_id), status=status.value)
 
 
+    async def get_last_sync_run(
+        self,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict | None:
+        """Retorna metadados da última execução de sync para o tenant.
+
+        E2: usado pelo endpoint /dashboard/sync-status para exibir bloco
+        "Última sincronização EFOS" com polling htmx a cada 60s.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com {status, finished_at, rows_published, error} da última run,
+            ou None se não houver registros.
+        """
+        result = await session.execute(
+            text("""
+                SELECT status, finished_at, rows_published, error, started_at
+                FROM sync_runs
+                WHERE tenant_id = :tenant_id
+                ORDER BY started_at DESC
+                LIMIT 1
+            """),
+            {"tenant_id": tenant_id},
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return {
+            "status": row["status"],
+            "finished_at": row["finished_at"],
+            "rows_published": row["rows_published"],
+            "error": row["error"],
+            "started_at": row["started_at"],
+        }
+
+
 class SyncArtifactRepo:
     """Repositório de artefatos de sync — persiste e consulta SyncArtifact."""
 

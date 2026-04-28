@@ -688,20 +688,25 @@ async def test_agent_gestor_g08_clientes_inativos(
     mensagem_gestor: Mensagem,
     conversa_gestor: Conversa,
 ) -> None:
-    """G08: clientes_inativos chama RelatorioRepo.clientes_inativos com dias=30."""
+    """G08 (E0-B): clientes_inativos usa CommerceRepo.listar_clientes_inativos (dados EFOS).
+
+    Sprint 9: clientes_inativos agora usa CommerceRepo (situacao=2 no EFOS),
+    não mais RelatorioRepo (que consultava tabela pedidos).
+    """
     mock_session = AsyncMock()
     mock_conversa_repo = AsyncMock(spec=ConversaRepo)
     mock_conversa_repo.get_or_create_conversa = AsyncMock(return_value=conversa_gestor)
     mock_conversa_repo.add_mensagem = AsyncMock()
 
-    mock_relatorio_repo = AsyncMock(spec=RelatorioRepo)
-    mock_relatorio_repo.clientes_inativos = AsyncMock(return_value=[])
+    from src.commerce.repo import CommerceRepo
+    mock_commerce_repo = AsyncMock(spec=CommerceRepo)
+    mock_commerce_repo.listar_clientes_inativos = AsyncMock(return_value=[])
 
     tool_block = MagicMock()
     tool_block.type = "tool_use"
     tool_block.name = "clientes_inativos"
     tool_block.id = "tool-008"
-    tool_block.input = {"dias": 30}
+    tool_block.input = {}  # E0-B: sem campo "dias" — filtra por cidade (opcional)
 
     resp_tool = MagicMock()
     resp_tool.stop_reason = "tool_use"
@@ -722,14 +727,17 @@ async def test_agent_gestor_g08_clientes_inativos(
         tenant=tenant_jmb, gestor=gestor_jmb,
         mock_session=mock_session, mock_conversa_repo=mock_conversa_repo,
         mock_order_service=AsyncMock(), mock_pdf=MagicMock(),
-        mock_anthropic=mock_anthropic, mock_relatorio_repo=mock_relatorio_repo,
+        mock_anthropic=mock_anthropic,
     )
+    # Injeta commerce_repo no agente
+    agent._commerce_repo = mock_commerce_repo
 
     with patch("src.agents.runtime.agent_gestor.send_whatsapp_message", new=AsyncMock()):
         await agent.responder(mensagem=mensagem_gestor, tenant=tenant_jmb, session=mock_session)
 
-    mock_relatorio_repo.clientes_inativos.assert_called_once_with(
-        tenant_id="jmb", dias=30, session=mock_session
+    # E0-B: deve chamar CommerceRepo.listar_clientes_inativos
+    mock_commerce_repo.listar_clientes_inativos.assert_called_once_with(
+        tenant_id="jmb", cidade=None, session=mock_session
     )
 
 
@@ -1188,4 +1196,25 @@ def test_a_tool_coverage_inclui_aprovar_pedidos() -> None:
     assert "aprovar_pedidos" in tool_names, (
         "Gestor precisa poder aprovar pedidos — ausência causou incoerência de UX: "
         "bot pedia confirmação e depois dizia não ter a ferramenta"
+    )
+
+
+@pytest.mark.unit
+def test_e0b_tools_antigas_removidas() -> None:
+    """E0-B: tools antigas baseadas em pedidos foram removidas do AgentGestor.
+
+    relatorio_representantes: usava RelatorioRepo (tabela pedidos) — removida.
+    clientes_inativos_efos: renomeada para clientes_inativos (sem sufixo).
+    """
+    tool_names = {t["name"] for t in _TOOLS}
+
+    assert "relatorio_representantes" not in tool_names, (
+        "E0-B: tool 'relatorio_representantes' deve ter sido removida de _TOOLS. "
+        "Use relatorio_vendas_representante_efos para dados EFOS."
+    )
+    assert "clientes_inativos_efos" not in tool_names, (
+        "E0-B: tool 'clientes_inativos_efos' deve ter sido renomeada para 'clientes_inativos'."
+    )
+    assert "clientes_inativos" in tool_names, (
+        "E0-B: tool 'clientes_inativos' deve existir (renomeada de clientes_inativos_efos)."
     )

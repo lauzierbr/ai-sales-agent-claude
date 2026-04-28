@@ -191,8 +191,13 @@ def test_tools_efos_em_tools_list() -> None:
     assert "relatorio_vendas_cidade_efos" in tool_names, (
         "Tool 'relatorio_vendas_cidade_efos' ausente em _TOOLS"
     )
-    assert "clientes_inativos_efos" in tool_names, (
-        "Tool 'clientes_inativos_efos' ausente em _TOOLS"
+    # E0-B Sprint 9: clientes_inativos_efos foi renomeada para clientes_inativos (sem sufixo)
+    assert "clientes_inativos" in tool_names, (
+        "Tool 'clientes_inativos' (renomeada de clientes_inativos_efos) ausente em _TOOLS"
+    )
+    # clientes_inativos_efos com sufixo NÃO deve mais existir
+    assert "clientes_inativos_efos" not in tool_names, (
+        "E0-B: tool 'clientes_inativos_efos' foi renomeada — não deve mais existir em _TOOLS."
     )
 
 

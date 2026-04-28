@@ -52,6 +52,7 @@ class CriarPedidoInput(BaseModel):
     cliente_b2b_id: str | None
     representante_id: str | None
     itens: list[ItemPedidoInput]
+    observacao: str | None = None
 
 
 class Pedido(BaseModel):
@@ -67,4 +68,6 @@ class Pedido(BaseModel):
     total_estimado: Decimal
     pdf_path: str | None
     criado_em: datetime
+    ficticio: bool = False
+    observacao: str | None = None
     itens: list[ItemPedido] = []

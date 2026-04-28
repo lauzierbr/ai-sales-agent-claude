@@ -11,7 +11,12 @@
     <tbody>
     {% for p in pedidos %}
     <tr>
-      <td>{{ p.numero_pedido or p.id[:8] }}</td>
+      <td>
+        {{ p.numero_pedido or p.id[:8] }}
+        {% if p.get("ficticio") or p.ficticio is defined and p.ficticio %}
+          <span class="badge" style="background:#dc3545;color:#fff;font-size:0.7em;padding:2px 6px;border-radius:4px;">TESTE</span>
+        {% endif %}
+      </td>
       <td>{{ p.cliente_nome or "—" }}</td>
       <td>R$ {{ "%.2f"|format(p.total_estimado|float) }}</td>
       <td><span class="badge badge-ok">{{ p.status }}</span></td>

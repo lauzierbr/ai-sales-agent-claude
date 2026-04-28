@@ -3,11 +3,15 @@
 Camada UI: importa tudo.
 POST /webhook/whatsapp excluído do TenantProvider (resolução via instancia_id).
 Decisão D022: validação HMAC-SHA256 + resposta 200 imediata + BackgroundTask.
+E3 (Sprint 9): audioMessage detectado aqui — transcrição via Whisper API com
+  asyncio.to_thread (API síncrona), nome "audio.ogg" obrigatório, fallback amigável.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import io
 import os
 from typing import Any
 
@@ -28,6 +32,45 @@ router = APIRouter(tags=["agents"])
 
 _WEBHOOK_RATE_LIMIT_MAX = 30
 _WEBHOOK_RATE_LIMIT_WINDOW = 60  # segundos
+
+
+async def _transcrever_audio(audio_bytes: bytes) -> str:
+    """Transcreve áudio OGG/Opus via API Whisper da OpenAI.
+
+    E3: usa asyncio.to_thread porque o SDK da OpenAI é síncrono — bloqueia
+    o event loop sem o wrapper. Nome "audio.ogg" é obrigatório no tuple
+    passado ao Whisper API (gotcha da Evolution API: sem nome, API rejeita).
+
+    Args:
+        audio_bytes: conteúdo do arquivo de áudio em bytes (OGG/Opus).
+
+    Returns:
+        Texto transcrito ou string vazia em caso de falha.
+    """
+    import openai as _openai
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        log.warning("transcrever_audio_openai_key_ausente")
+        return ""
+
+    def _whisper_sync() -> str:
+        """Chamada síncrona ao Whisper — executada em thread separada."""
+        try:
+            client = _openai.OpenAI(api_key=openai_api_key)
+            audio_file = io.BytesIO(audio_bytes)
+            # Nome "audio.ogg" obrigatório: Whisper API infere codec pelo nome do arquivo
+            transcricao = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=("audio.ogg", audio_file, "audio/ogg"),
+                language="pt",
+            )
+            return transcricao.text
+        except Exception as exc:
+            log.error("whisper_transcricao_erro", error=str(exc))
+            return ""
+
+    return await asyncio.to_thread(_whisper_sync)
 
 
 async def _invalidar_redis_conversa(
@@ -233,7 +276,65 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             log.debug("webhook_mensagem_ignorada", tenant_id=tenant_id, instance=payload.instance)
             return
 
-        # 3b. Feedback visual: marca como lido (✓✓ azul) imediatamente
+        # 3b-E3. Transcrição de áudio quando tipo="audioMessage"
+        if mensagem.tipo == "audioMessage":
+            audio_bytes: bytes | None = None
+            data = payload.data
+
+            # Tenta download via URL (campo url na mensagem de áudio)
+            audio_url = (
+                data.get("message", {}).get("audioMessage", {}).get("url")
+                or data.get("message", {}).get("pttMessage", {}).get("url")
+                or ""
+            )
+            if audio_url:
+                try:
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient(timeout=15.0) as _client:
+                        resp = await _client.get(audio_url)
+                        if resp.status_code == 200:
+                            audio_bytes = resp.content
+                except Exception as exc:
+                    log.warning("audio_download_url_falhou", tenant_id=tenant_id, error=str(exc))
+
+            # Fallback: base64 embutido no payload (Evolution API frequentemente não envia URL)
+            if not audio_bytes:
+                b64_data = (
+                    data.get("message", {}).get("audioMessage", {}).get("base64")
+                    or data.get("message", {}).get("pttMessage", {}).get("base64")
+                    or ""
+                )
+                if b64_data:
+                    try:
+                        import base64 as _b64
+                        audio_bytes = _b64.b64decode(b64_data)
+                    except Exception as exc:
+                        log.warning("audio_base64_decode_falhou", tenant_id=tenant_id, error=str(exc))
+
+            if audio_bytes:
+                try:
+                    transcricao = await _transcrever_audio(audio_bytes)
+                    if transcricao:
+                        # Substitui o texto vazio pelo texto transcrito com prefixo
+                        mensagem = mensagem.model_copy(
+                            update={"texto": f"🎤 Ouvi: {transcricao}\n\n{transcricao}"}
+                        )
+                    else:
+                        mensagem = mensagem.model_copy(
+                            update={"texto": "Recebi seu áudio, mas não consegui transcrever. Por favor, envie como texto."}
+                        )
+                except Exception as exc:
+                    log.error("audio_transcricao_falhou", tenant_id=tenant_id, error=str(exc))
+                    mensagem = mensagem.model_copy(
+                        update={"texto": "Recebi seu áudio, mas houve uma falha na transcrição. Por favor, envie como texto."}
+                    )
+            else:
+                log.warning("audio_sem_conteudo", tenant_id=tenant_id)
+                mensagem = mensagem.model_copy(
+                    update={"texto": "Não consegui receber seu áudio. Por favor, envie como texto."}
+                )
+
+        # 3d. Feedback visual: marca como lido (✓✓ azul) imediatamente
         await mark_message_as_read(
             instancia_id=payload.instance,
             remote_jid=mensagem.de,

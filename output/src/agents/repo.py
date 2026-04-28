@@ -268,20 +268,23 @@ class ClienteB2BRepo:
         tenant_id: str,
         query: str,
         session: AsyncSession,
+        commerce_repo: object | None = None,
     ) -> list[dict]:
         """Busca clientes B2B com nome do representante via JOIN.
 
-        Variante de `buscar_todos_por_nome` que retorna dicts enriquecidos
-        com `representante_nome` (para o AgentGestor exibir ao usuário).
+        E1b: se clientes_b2b retornar 0 resultados, faz fallback para
+        commerce_accounts_b2b via CommerceRepo.buscar_clientes_commerce.
 
         Args:
             tenant_id: ID do tenant — filtro obrigatório.
             query: texto livre para busca no nome do cliente.
             session: sessão SQLAlchemy assíncrona.
+            commerce_repo: CommerceRepo opcional — injetado em runtime para fallback E1b.
 
         Returns:
             Lista de dicts: id, nome, cnpj, telefone, representante_id,
-            representante_nome.
+            representante_nome. Normalizado para formato compatível com
+            o código existente dos agentes.
         """
         result = await session.execute(
             text("""
@@ -298,7 +301,7 @@ class ClienteB2BRepo:
             {"tenant_id": tenant_id, "query": query},
         )
         rows = result.mappings().all()
-        return [
+        clientes = [
             {
                 "id": r["id"],
                 "nome": r["nome"],
@@ -309,6 +312,41 @@ class ClienteB2BRepo:
             }
             for r in rows
         ]
+
+        # E1b: fallback para commerce_accounts_b2b quando clientes_b2b retorna vazio
+        if not clientes and commerce_repo is not None:
+            log.info(
+                "clientes_b2b_vazio_fallback_commerce",
+                tenant_id=tenant_id,
+                query=query[:50],
+            )
+            try:
+                commerce_rows = await commerce_repo.buscar_clientes_commerce(  # type: ignore[attr-defined]
+                    tenant_id=tenant_id,
+                    query=query,
+                    limit=10,
+                    session=session,
+                )
+                clientes = [
+                    {
+                        "id": r["id"],
+                        "nome": r["nome"],
+                        "cnpj": r.get("cnpj", ""),
+                        "telefone": r.get("telefone"),
+                        "representante_id": r.get("representante_id"),
+                        "representante_nome": "Sem representante",
+                        "fonte": "commerce_accounts_b2b",
+                    }
+                    for r in commerce_rows
+                ]
+            except Exception as exc:
+                log.warning(
+                    "fallback_commerce_clientes_erro",
+                    tenant_id=tenant_id,
+                    error=str(exc),
+                )
+
+        return clientes
 
     async def get_by_id(
         self,
@@ -692,6 +730,7 @@ class RelatorioRepo:
                     COALESCE(SUM(total_estimado), 0) AS total_gmv
                 FROM pedidos
                 WHERE tenant_id = :tenant_id
+                  AND ficticio = FALSE
                   AND criado_em >= :data_inicio
                   AND criado_em <= :data_fim
             """),
@@ -732,6 +771,7 @@ class RelatorioRepo:
                 LEFT JOIN representantes r
                     ON r.id = p.representante_id AND r.tenant_id = p.tenant_id
                 WHERE p.tenant_id = :tenant_id
+                  AND p.ficticio = FALSE
                   AND p.criado_em >= :data_inicio
                   AND p.criado_em <= :data_fim
                 GROUP BY p.representante_id, r.nome
@@ -780,6 +820,7 @@ class RelatorioRepo:
                 LEFT JOIN clientes_b2b c
                     ON c.id = p.cliente_b2b_id AND c.tenant_id = p.tenant_id
                 WHERE p.tenant_id = :tenant_id
+                  AND p.ficticio = FALSE
                   AND p.criado_em >= :data_inicio
                   AND p.criado_em <= :data_fim
                 GROUP BY p.cliente_b2b_id, c.nome, c.cnpj

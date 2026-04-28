@@ -10,6 +10,18 @@
   {% include "_partials/kpis.html" %}
 </div>
 
+<div class="card" style="margin-top:1rem;padding:0.75rem 1rem;">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+    <strong style="font-size:0.95em;">Última sincronização EFOS</strong>
+    <div id="sync-status-section"
+         hx-get="/dashboard/sync-status"
+         hx-trigger="every 60s"
+         hx-swap="innerHTML">
+      {% include "_partials/sync_status.html" %}
+    </div>
+  </div>
+</div>
+
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.5rem;">
   <div class="card">
     <h2>Pedidos recentes</h2>

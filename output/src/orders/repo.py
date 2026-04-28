@@ -46,18 +46,26 @@ class OrderRepo:
         Raises:
             RuntimeError: se o INSERT não retornar dados.
         """
+        import os as _os
+        # ficticio=True em qualquer ambiente que não seja production
+        _is_ficticio = _os.getenv("ENVIRONMENT", "development") != "production"
+
         result = await session.execute(
             text("""
-                INSERT INTO pedidos (tenant_id, cliente_b2b_id, representante_id, total_estimado)
-                VALUES (:tenant_id, :cliente_b2b_id, :representante_id, :total_estimado)
+                INSERT INTO pedidos
+                    (tenant_id, cliente_b2b_id, representante_id, total_estimado, ficticio, observacao)
+                VALUES
+                    (:tenant_id, :cliente_b2b_id, :representante_id, :total_estimado, :ficticio, :observacao)
                 RETURNING id, tenant_id, cliente_b2b_id, representante_id,
-                          status, total_estimado, pdf_path, criado_em
+                          status, total_estimado, pdf_path, criado_em, ficticio, observacao
             """),
             {
                 "tenant_id": tenant_id,
                 "cliente_b2b_id": pedido_input.cliente_b2b_id,
                 "representante_id": pedido_input.representante_id,
                 "total_estimado": str(total_estimado),
+                "ficticio": _is_ficticio,
+                "observacao": pedido_input.observacao,
             },
         )
         row = result.mappings().first()
@@ -123,6 +131,8 @@ class OrderRepo:
             total_estimado=Decimal(str(row["total_estimado"])),
             pdf_path=row["pdf_path"],
             criado_em=row["criado_em"],
+            ficticio=bool(row["ficticio"]) if row["ficticio"] is not None else False,
+            observacao=row["observacao"],
             itens=itens,
         )
 
@@ -145,7 +155,8 @@ class OrderRepo:
         result = await session.execute(
             text("""
                 SELECT id, tenant_id, cliente_b2b_id, representante_id,
-                       status, total_estimado, pdf_path, criado_em
+                       status, total_estimado, pdf_path, criado_em,
+                       ficticio, observacao
                 FROM pedidos
                 WHERE tenant_id = :tenant_id AND id = :pedido_id
             """),
@@ -165,6 +176,8 @@ class OrderRepo:
             total_estimado=Decimal(str(row["total_estimado"])),
             pdf_path=row["pdf_path"],
             criado_em=row["criado_em"],
+            ficticio=bool(row["ficticio"]) if row.get("ficticio") is not None else False,
+            observacao=row.get("observacao"),
             itens=itens,
         )
 
@@ -185,7 +198,8 @@ class OrderRepo:
         result = await session.execute(
             text("""
                 SELECT id, tenant_id, cliente_b2b_id, representante_id,
-                       status, total_estimado, pdf_path, criado_em
+                       status, total_estimado, pdf_path, criado_em,
+                       ficticio, observacao
                 FROM pedidos
                 WHERE tenant_id = :tenant_id AND status = 'pendente'
                 ORDER BY criado_em DESC
@@ -206,6 +220,8 @@ class OrderRepo:
                     total_estimado=Decimal(str(row["total_estimado"])),
                     pdf_path=row["pdf_path"],
                     criado_em=row["criado_em"],
+                    ficticio=bool(row["ficticio"]) if row.get("ficticio") is not None else False,
+                    observacao=row.get("observacao"),
                     itens=itens,
                 )
             )
@@ -248,6 +264,7 @@ class OrderRepo:
             result = await session.execute(
                 text(base_select + """
                     WHERE p.tenant_id = :tenant_id AND p.status = :status
+                      AND p.ficticio = FALSE
                       AND p.criado_em >= :data_inicio
                     LIMIT :limit
                 """),
@@ -257,6 +274,7 @@ class OrderRepo:
             result = await session.execute(
                 text(base_select + """
                     WHERE p.tenant_id = :tenant_id
+                      AND p.ficticio = FALSE
                       AND p.criado_em >= :data_inicio
                     LIMIT :limit
                 """),

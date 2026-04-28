@@ -8,14 +8,21 @@ Ferramentas expostas ao modelo:
   - buscar_produtos: busca semântica no catálogo
   - confirmar_pedido_em_nome_de: cria pedido em nome de qualquer cliente (DP-03)
   - relatorio_vendas: relatório GMV por período (hoje/ontem/semana/mes/Nd)
-  - clientes_inativos: lista clientes sem pedido nos últimos N dias
+  - clientes_inativos: lista clientes inativos no EFOS (situacao=2, via CommerceRepo)
   - listar_pedidos_por_status: lista pedidos filtrando por status (pendente/confirmado/cancelado)
   - aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes em lote
+  - consultar_top_produtos: ranking de produtos mais vendidos por período
+  - relatorio_vendas_representante_efos: vendas de rep por mês/ano (dados EFOS)
+  - relatorio_vendas_cidade_efos: vendas por cidade por mês/ano (dados EFOS)
+  - registrar_feedback: registra feedback do gestor sobre respostas do assistente
 
 Segurança:
   - Acesso irrestrito — gestor vê todos os clientes do tenant
   - representante_id do pedido herdado do cliente (DP-03)
   - Sem validação de carteira em confirmar_pedido_em_nome_de
+
+Sprint 9 (E0-B): tools antigas clientes_inativos (pedidos) e relatorio_representantes removidas.
+  clientes_inativos agora usa CommerceRepo (dados EFOS sincronizados).
 """
 
 from __future__ import annotations
@@ -182,16 +189,17 @@ _TOOLS: list[dict[str, Any]] = [
     {
         "name": "clientes_inativos",
         "description": (
-            "Lista clientes sem pedido nos últimos N dias. "
-            "Use para identificar clientes que precisam de follow-up."
+            "Lista clientes inativos (situacao=2 no EFOS) usando dados sincronizados. "
+            "Use quando o gestor perguntar sobre clientes inativos, clientes parados "
+            "ou clientes para reativar. "
+            "Opcionalmente filtra por cidade."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "dias": {
-                    "type": "integer",
-                    "description": "Número de dias sem pedido para considerar inativo. Padrão: 30.",
-                    "default": 30,
+                "cidade": {
+                    "type": "string",
+                    "description": "Filtrar por cidade (opcional; case-insensitive). Omita para todas.",
                 },
             },
         },
@@ -235,24 +243,6 @@ _TOOLS: list[dict[str, Any]] = [
                     "type": "integer",
                     "description": "Número máximo de produtos a retornar. Padrão: 5.",
                     "default": 5,
-                },
-            },
-        },
-    },
-    {
-        "name": "relatorio_representantes",
-        "description": (
-            "Ranking de representantes com GMV, número de pedidos e cliente topo no período. "
-            "Use quando o gestor perguntar sobre performance de reps, quem vendeu mais, "
-            "ranking de representantes ou resultados por rep em qualquer janela de dias."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "dias": {
-                    "type": "integer",
-                    "description": "Período em dias para análise. Ex: 7, 30, 60, 90. Padrão: 30.",
-                    "default": 30,
                 },
             },
         },
@@ -337,24 +327,6 @@ _TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["cidade", "mes"],
-        },
-    },
-    {
-        "name": "clientes_inativos_efos",
-        "description": (
-            "Lista clientes inativos (situacao=2 no EFOS) usando dados sincronizados. "
-            "Use quando o gestor perguntar sobre clientes inativos, clientes parados "
-            "ou clientes para reativar. "
-            "Opcionalmente filtra por cidade."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cidade": {
-                    "type": "string",
-                    "description": "Filtrar por cidade (opcional; case-insensitive). Omita para todas.",
-                },
-            },
         },
     },
     {
@@ -640,8 +612,9 @@ class AgentGestor:
             )
 
         if tool_name == "clientes_inativos":
-            return await self._clientes_inativos(
-                dias=tool_input.get("dias", 30),
+            # E0-B: clientes_inativos agora usa CommerceRepo (dados EFOS)
+            return await self._clientes_inativos_efos(
+                cidade=tool_input.get("cidade"),
                 tenant_id=tenant.id,
                 session=session,
             )
@@ -670,13 +643,6 @@ class AgentGestor:
                 session=session,
             )
 
-        if tool_name == "relatorio_representantes":
-            return await self._relatorio_representantes(
-                dias=int(tool_input.get("dias", 30)),
-                tenant_id=tenant.id,
-                session=session,
-            )
-
         if tool_name == "relatorio_vendas_representante_efos":
             return await self._relatorio_vendas_representante_efos(
                 nome_rep=tool_input.get("nome_rep", ""),
@@ -691,13 +657,6 @@ class AgentGestor:
                 cidade=tool_input.get("cidade", ""),
                 mes=tool_input.get("mes", 0),
                 ano=tool_input.get("ano", 0),
-                tenant_id=tenant.id,
-                session=session,
-            )
-
-        if tool_name == "clientes_inativos_efos":
-            return await self._clientes_inativos_efos(
-                cidade=tool_input.get("cidade"),
                 tenant_id=tenant.id,
                 session=session,
             )
@@ -717,11 +676,12 @@ class AgentGestor:
     async def _buscar_clientes(
         self, query: str, tenant_id: str, session: AsyncSession
     ) -> list[dict]:
-        # buscar_todos_com_representante retorna dicts com representante_nome via JOIN
+        # E1b: passa commerce_repo para fallback quando clientes_b2b retorna vazio
         return await self._cliente_b2b_repo.buscar_todos_com_representante(
             tenant_id=tenant_id,
             query=query,
             session=session,
+            commerce_repo=self._commerce_repo,
         )
 
     async def _buscar_produtos(
@@ -915,11 +875,25 @@ class AgentGestor:
         return {"periodo": periodo, "tipo": tipo, "dados": dados}
 
     async def _clientes_inativos(
-        self, dias: int, tenant_id: str, session: AsyncSession
+        self, cidade: str | None, tenant_id: str, session: AsyncSession
     ) -> list[dict]:
-        return await self._relatorio_repo.clientes_inativos(
+        """Lista clientes inativos via CommerceRepo (dados EFOS, situacao=2).
+
+        E0-B Sprint 9: substituída implementação baseada em RelatorioRepo/pedidos
+        pela versão EFOS que usa commerce_accounts_b2b (situacao_cliente=2).
+
+        Args:
+            cidade: filtrar por cidade (UPPERCASE); None = todas.
+            tenant_id: ID do tenant — filtro obrigatório.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de clientes inativos no EFOS.
+        """
+        cidade_upper = cidade.upper() if cidade else None
+        return await self._commerce_repo.listar_clientes_inativos(
             tenant_id=tenant_id,
-            dias=dias,
+            cidade=cidade_upper,
             session=session,
         )
 

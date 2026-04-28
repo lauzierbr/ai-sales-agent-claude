@@ -59,6 +59,8 @@ class PDFGenerator:
         pdf.set_auto_page_break(auto=True, margin=15)
 
         self._header(pdf, tenant)
+        if pedido.ficticio:
+            self._watermark_teste(pdf)
         self._bloco_info(pdf, pedido, cliente_nome=cliente_nome, representante_nome=representante_nome)
         self._tabela_itens(pdf, pedido)
         self._total(pdf, pedido)
@@ -69,9 +71,35 @@ class PDFGenerator:
             pedido_id=pedido.id,
             tenant_id=pedido.tenant_id,
             n_itens=len(pedido.itens),
+            ficticio=pedido.ficticio,
         )
         # fpdf2 2.x retorna bytearray — encapsular em bytes()
         return bytes(pdf.output())
+
+    def _watermark_teste(self, pdf: FPDF) -> None:
+        """Renderiza marca d'água diagonal 'PEDIDO DE TESTE — NÃO PROCESSAR'.
+
+        Usada quando pedido.ficticio=True (ambientes de staging/desenvolvimento).
+
+        Args:
+            pdf: instancia FPDF com página já adicionada.
+        """
+        # Salva estado para restaurar depois
+        pdf.set_font("Helvetica", style="B", size=36)
+        pdf.set_text_color(220, 50, 50)
+
+        # Posiciona no centro diagonal da página
+        with pdf.rotation(angle=45, x=105, y=148):
+            pdf.set_xy(20, 120)
+            pdf.cell(
+                170,
+                20,
+                "PEDIDO DE TESTE - NAO PROCESSAR",
+                align="C",
+            )
+
+        # Restaura cor de texto padrão
+        pdf.set_text_color(*_COR_PRETO)
 
     def _header(self, pdf: FPDF, tenant: Tenant) -> None:
         """Renderiza cabecalho com nome do tenant.

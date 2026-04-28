@@ -19,6 +19,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | **Piloto JMB** | 🚀 | Piloto | Teste com usuários reais iniciado 2026-04-22 — banco limpo, staging em v0.6.1 |
 | Sprint 7 | 🏁 | Produto | Notificação gestor (TD-08) — todos gestores ativos recebem PDF ao confirmar pedido — aguardando homologação |
 | Sprint 8 | ⏩ | Produto | Hotfixes piloto (B-10/B-11/B-12) + integração EFOS via backup diário SSH/pg_restore + 3 tools relatório AgentGestor — homologação unificada com Sprint 9 |
+| Sprint 9 | 🔄 | Produto | Hotfix B-13 (EAN completo) + leituras para commerce_* + dashboard sync EFOS + áudio WhatsApp Whisper — homologação unificada com Sprint 8 |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 

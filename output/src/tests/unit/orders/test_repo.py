@@ -110,6 +110,8 @@ async def test_criar_pedido_retorna_pedido_com_id() -> None:
         "total_estimado": "299.00",
         "pdf_path": None,
         "criado_em": datetime(2026, 4, 15, tzinfo=timezone.utc),
+        "ficticio": False,
+        "observacao": None,
     }
     item_row = {
         "id": "item-001",
