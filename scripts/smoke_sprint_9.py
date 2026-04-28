@@ -28,6 +28,20 @@ import httpx
 BASE_URL = os.getenv("APP_BASE_URL", "http://100.113.28.85:8000")
 TENANT_ID = "jmb"
 
+# Paths absolutos independentes do CWD
+_REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_OUTPUT_DIR = os.path.join(_REPO_DIR, "output")
+_SRC_DIR = os.path.join(_OUTPUT_DIR, "src")
+_TESTS_DIR = os.path.join(_SRC_DIR, "tests", "unit")
+_MAIN_PY = os.path.join(_SRC_DIR, "main.py")
+
+# Python do venv
+_venv_candidates = sorted(
+    [c for c in __import__("glob").glob(os.path.join(_REPO_DIR, ".venv", "bin", "python3*"))
+     if not c.endswith("-config") and os.path.isfile(c)]
+)
+_PYTHON = _venv_candidates[-1] if _venv_candidates else sys.executable
+
 _FAILURES: list[str] = []
 _OK_COUNT = 0
 
@@ -153,16 +167,18 @@ def check_unit_tests() -> None:
     """CHECK 9: pytest -m unit → 0 falhas."""
     result = subprocess.run(
         [
-            sys.executable, "-m", "pytest",
-            "output/src/tests/unit/",
+            _PYTHON, "-m", "pytest",
+            _TESTS_DIR,
             "-m", "unit",
             "-q",
             "--tb=short",
             # test_editar_telefone: falha pré-existente não relacionada ao sprint (B-pre)
-            "--ignore=output/src/tests/unit/agents/test_editar_telefone.py",
+            f"--ignore={os.path.join(_TESTS_DIR, 'agents', 'test_editar_telefone.py')}",
         ],
         capture_output=True,
         text=True,
+        cwd=_REPO_DIR,
+        env={**os.environ, "PYTHONPATH": _SRC_DIR},
     )
     if result.returncode == 0:
         # Extrai sumário
@@ -177,7 +193,7 @@ def check_unit_tests() -> None:
 def check_version_in_code() -> None:
     """CHECK extra: version 0.9.0 em main.py."""
     try:
-        with open("output/src/main.py") as f:
+        with open(_MAIN_PY) as f:
             content = f.read()
         if '"0.9.0"' in content or "'0.9.0'" in content:
             ok("main.py contém versão 0.9.0")
