@@ -912,15 +912,15 @@ class RelatorioRepo:
         result = await session.execute(
             text("""
                 SELECT
-                    ip.produto_nome                       AS produto_nome,
+                    ip.nome_produto                       AS produto_nome,
                     SUM(ip.quantidade)                    AS quantidade_total,
-                    COALESCE(SUM(ip.preco_unitario * ip.quantidade), 0) AS valor_total
+                    COALESCE(SUM(ip.subtotal), 0)         AS valor_total
                 FROM itens_pedido ip
                 JOIN pedidos p ON p.id = ip.pedido_id
                 WHERE p.tenant_id = :tenant_id
                   AND p.status = 'confirmado'
                   AND p.criado_em >= :data_inicio
-                GROUP BY ip.produto_nome
+                GROUP BY ip.nome_produto
                 ORDER BY quantidade_total DESC
                 LIMIT :limite
             """),
