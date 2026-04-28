@@ -13,6 +13,40 @@
 | B-15 | commerce_vendedores ignorada pelo agente — clientes sem rep e impossível listar representantes | Alta | Piloto | 2026-04-28 |
 | B-16 | Dashboard /clientes exibe "Nenhum cliente encontrado" — consulta clientes_b2b (vazia) em vez de commerce_accounts_b2b | Alta | Piloto | 2026-04-28 |
 | B-17 | Dashboard /pedidos exibe "Nenhum pedido encontrado" — consulta pedidos (vazia) em vez de commerce_orders | Alta | Piloto | 2026-04-28 |
+| B-18 | Home — bloco "Última sincronização EFOS" mostra "Nunca sincronizado" apesar de 4 sync_runs (1 success, 61891 rows) | Alta | Revisão | 2026-04-28 |
+| B-19 | Home — KPIs (GMV HOJE, Pedidos HOJE, Ticket Médio) sempre R$ 0/0 — consultam pedidos vazio em vez de commerce_orders | Alta | Revisão | 2026-04-28 |
+| B-20 | Dashboard /top-produtos exibe "Nenhum produto no período" — depende de itens_pedido vazio | Alta | Revisão | 2026-04-28 |
+| B-21 | Dashboard /representantes (rota oculta, fora da navegação) exibe vazio — query em pedidos | Média | Revisão | 2026-04-28 |
+| B-22 | Bot continua usando emojis apesar de feedback explícito do gestor "Não usar emojis" (20/04) | Média | Piloto | 2026-04-28 |
+
+> **B-22 detalhe:** Feedback registrado em 20/04 instruiu "Não usar emojis nas respostas". 
+> O bot continua usando 😊, 👇, 🏆, 👋 nas respostas (visto em conversa do gestor 27/04).
+> O system prompt dos 3 agentes precisa explicitamente proibir emojis. Pode estar
+> em `output/src/agents/config.py` (system_prompt_template). Considerar também: usar
+> feedbacks da tabela `feedbacks` como instruções vivas dos agentes (system prompt
+> dinâmico) — escopo maior, talvez Sprint futuro.
+
+> **B-21 detalhe:** Rota `/dashboard/representantes` existe mas não está na navegação
+> principal. Mesma raiz dos B-14/B-17/B-19 — query em `pedidos` vazio. Resolver junto
+> ao hotfix de migração exaustiva.
+
+> **B-20 detalhe:** `/dashboard/top-produtos` agrega vendas de `itens_pedido` (vazio
+> após reset). Migrar para `commerce_sales_history` (27740 rows) ou
+> `commerce_order_items`. Lookup de nome do produto pode usar `commerce_products`.
+
+> **B-19 detalhe:** KPIs do home (GMV hoje, Pedidos hoje, Ticket médio) consultam
+> `pedidos` filtrando por DATE(criado_em) = hoje. Tabela vazia → todos zerados.
+> Decisão: KPIs devem refletir pedidos do bot (que estarão vazios em staging com
+> ENVIRONMENT=staging filtrado por ficticio=FALSE) OU agregar `commerce_orders`?
+> Provavelmente o segundo, com label "Histórico EFOS — hoje" para deixar claro que
+> não são pedidos do bot.
+
+> **B-18 detalhe:** Bloco "Última sincronização EFOS" no home mostra "Nunca sincronizado"
+> apesar do banco ter 4 sync_runs (1 success em 27/04 17:42 com 61891 rows publicadas).
+> Endpoint `/dashboard/sync-status` (criado no Sprint 9 E2) provavelmente tem bug:
+> não filtra por status='success', ou não considera o registro mais recente, ou
+> está com bug de tenant_id no JWT vs DB. Investigar `dashboard/ui.py` rota
+> sync-status e `integrations/repo.py:SyncRunRepo.get_last_sync_run`.
 
 > **B-17 detalhe:** Mesma raiz de B-14/B-15/B-16. Rota `/dashboard/pedidos` consulta
 > tabela `pedidos` (0 linhas pós-reset). 2592 pedidos reais estão em `commerce_orders`.
