@@ -295,13 +295,16 @@ class CommerceRepo:
             result = await session.execute(
                 text("""
                     SELECT
-                        o.pe_numeropedido::text       AS id,
+                        o.numero_pedido               AS id,
                         o.cliente_nome                AS cliente_nome,
-                        o.vendedor_nome               AS representante_nome,
+                        v.ve_nome                     AS representante_nome,
                         o.total                       AS total_estimado,
                         :status_val                   AS status,
                         o.data_pedido                 AS criado_em
                     FROM commerce_orders o
+                    LEFT JOIN commerce_vendedores v
+                        ON v.tenant_id = o.tenant_id
+                       AND v.ve_codigo = o.vendedor_codigo
                     WHERE o.tenant_id = :tenant_id
                       AND o.data_pedido >= :data_inicio
                     ORDER BY o.data_pedido DESC
@@ -318,13 +321,16 @@ class CommerceRepo:
             result = await session.execute(
                 text("""
                     SELECT
-                        o.pe_numeropedido::text       AS id,
+                        o.numero_pedido               AS id,
                         o.cliente_nome                AS cliente_nome,
-                        o.vendedor_nome               AS representante_nome,
+                        v.ve_nome                     AS representante_nome,
                         o.total                       AS total_estimado,
                         'confirmado'                  AS status,
                         o.data_pedido                 AS criado_em
                     FROM commerce_orders o
+                    LEFT JOIN commerce_vendedores v
+                        ON v.tenant_id = o.tenant_id
+                       AND v.ve_codigo = o.vendedor_codigo
                     WHERE o.tenant_id = :tenant_id
                       AND o.data_pedido >= :data_inicio
                     ORDER BY o.data_pedido DESC

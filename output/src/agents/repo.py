@@ -945,7 +945,9 @@ class RelatorioRepo:
                     SUM(ci.quantidade)                          AS quantidade_total,
                     COALESCE(SUM(ci.total), 0)                  AS valor_total
                 FROM commerce_order_items ci
-                JOIN commerce_orders co ON co.external_id = ci.order_external_id
+                JOIN commerce_orders co
+                    ON co.external_id = ci.order_external_id
+                   AND co.tenant_id = ci.tenant_id
                 WHERE ci.tenant_id = :tenant_id
                   AND co.data_pedido >= :data_inicio
                 GROUP BY ci.produto_nome

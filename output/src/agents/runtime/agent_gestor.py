@@ -1039,7 +1039,7 @@ class AgentGestor:
             if nome:
                 result = await session.execute(
                     _text("""
-                        SELECT ve_codigo, ve_nome, ve_situacaovendedor
+                        SELECT ve_codigo, ve_nome
                         FROM commerce_vendedores
                         WHERE tenant_id = :tenant_id
                           AND LOWER(ve_nome) LIKE LOWER(:nome_like)
@@ -1050,10 +1050,10 @@ class AgentGestor:
             else:
                 result = await session.execute(
                     _text("""
-                        SELECT ve_codigo, ve_nome, ve_situacaovendedor
+                        SELECT ve_codigo, ve_nome
                         FROM commerce_vendedores
                         WHERE tenant_id = :tenant_id
-                          AND ve_situacaovendedor = 1
+                        -- TODO: filtrar ativos quando coluna ve_situacaovendedor existir
                         ORDER BY ve_nome ASC
                     """),
                     {"tenant_id": tenant_id},
@@ -1063,7 +1063,7 @@ class AgentGestor:
                 {
                     "codigo": str(r["ve_codigo"]),
                     "nome": r["ve_nome"] or "",
-                    "ativo": r["ve_situacaovendedor"] == 1,
+                    "ativo": True,
                 }
                 for r in rows
             ]

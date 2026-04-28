@@ -879,7 +879,7 @@ async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict[st
             fallback = await session.execute(
                 text("""
                     SELECT
-                        pe_numeropedido::text AS id,
+                        numero_pedido         AS id,
                         'confirmado'          AS status,
                         total                 AS total_estimado,
                         data_pedido           AS criado_em,
@@ -970,8 +970,8 @@ async def _get_clientes(tenant_id: str, q: str) -> list[dict[str, Any]]:
                 fallback = await session.execute(
                     text("""
                         SELECT
-                            external_id AS id, nome, cnpj, NULL AS telefone,
-                            (situacao_cliente = 1) AS ativo, NULL AS representante_id,
+                            a.external_id AS id, a.nome, a.cnpj, NULL AS telefone,
+                            (a.situacao_cliente = 1) AS ativo, NULL AS representante_id,
                             v.ve_nome AS representante_nome
                         FROM commerce_accounts_b2b a
                         LEFT JOIN commerce_vendedores v
@@ -986,8 +986,8 @@ async def _get_clientes(tenant_id: str, q: str) -> list[dict[str, Any]]:
                 fallback = await session.execute(
                     text("""
                         SELECT
-                            external_id AS id, nome, cnpj, NULL AS telefone,
-                            (situacao_cliente = 1) AS ativo, NULL AS representante_id,
+                            a.external_id AS id, a.nome, a.cnpj, NULL AS telefone,
+                            (a.situacao_cliente = 1) AS ativo, NULL AS representante_id,
                             v.ve_nome AS representante_nome
                         FROM commerce_accounts_b2b a
                         LEFT JOIN commerce_vendedores v
@@ -1057,7 +1057,7 @@ async def _get_representantes_com_gmv(tenant_id: str) -> list[dict[str, Any]]:
                        AND o.vendedor_codigo = v.ve_codigo
                        AND o.data_pedido >= :data_inicio
                     WHERE v.tenant_id = :tenant_id
-                      AND v.ve_situacaovendedor = 1
+                    -- TODO: filtrar somente ativos quando coluna ve_situacaovendedor existir
                     GROUP BY v.ve_codigo, v.ve_nome
                     ORDER BY total_gmv DESC
                 """),
