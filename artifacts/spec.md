@@ -1,291 +1,337 @@
-# Sprint 8 — Hotfixes Piloto + Integração EFOS via Backup Diário
+# Sprint 9 — Commerce Reads + Dashboard Sync + Áudio WhatsApp
 
 **Status:** Em planejamento
 **Data:** 2026-04-27
-**Pré-requisitos:** Sprint 7 APROVADO ✅; Piloto JMB ativo desde 2026-04-22
+**Pré-requisitos:** Sprint 8 APROVADO (homologação unificada com Sprint 9); banco em migration 0023; commerce_products com ≥ 100 produtos, commerce_accounts_b2b com ≥ 100 clientes
+
+---
 
 ## Objetivo
 
-Corrigir os 3 bugs críticos do piloto (B-10/B-11/B-12) e criar o pipeline diário
-SSH/pg_restore que popula um read model canônico (`commerce_*`), habilitando 3 novas
-consultas de relatório no AgentGestor.
+Ao final deste sprint, o sistema lê produtos de `commerce_products` e aceita fallback em `clientes_b2b`/`commerce_accounts_b2b`, exibe o status da última sincronização EFOS no dashboard, e processa mensagens de áudio WhatsApp via transcrição Whisper.
+
+---
 
 ## Contexto
 
-O piloto JMB expôs 3 bugs em produção durante a semana de 2026-04-24. Ao mesmo tempo,
-acesso SSH ao servidor EFOS foi confirmado (dumps diários em `C:\BACKUP EFOS\` às 08:30
-e 12:30, 153 MB, formato custom pg_dump). O crawler Playwright segue ativo neste sprint
-— a migração dos reads do agente para `commerce_*` é Sprint 9. Sprint 8 entrega:
-hotfixes + pipeline funcional + 3 tools de relatório para o AgentGestor baseados em
-dados reais do EFOS.
+Sprint 8 criou o pipeline EFOS e as tabelas `commerce_*`. Agora os agentes ainda lêem de `catalog.produtos` (dados do crawler, potencialmente desatualizados). A Fase 1 migra leituras de produto para `commerce_products` (743 produtos, dados do ERP real), mantendo fallback para o legado. A Fase 2 expõe o status de sync no dashboard do gestor. A Fase 3 implementa entrada por voz (F-02a do backlog), usando Whisper para transcrever áudio OGG/Opus do WhatsApp — o canal primário de uso do piloto JMB.
+
+O hotfix B-13 (busca por EAN completo) é bloqueante para o piloto: clientes digitam o EAN completo mas o banco armazena apenas os 6 últimos dígitos em `codigo_externo`, tornando qualquer busca numérica por produto ineficaz.
+
+---
 
 ## Domínios e camadas afetadas
 
 | Domínio | Camadas |
 |---------|---------|
-| agents | Repo, Runtime (hotfixes B-10/B-11/B-12) |
-| integrations (novo — 5º domínio) | Types, Config, Repo, Runtime (connectors/efos_backup), Jobs |
-| commerce (novo — 6º domínio) | Types, Repo |
-| alembic | Migrations 0018–0023 |
+| catalog | Repo, Service |
+| agents | Repo, Runtime |
+| commerce | Repo |
+| dashboard | UI (Jinja2 template, novo bloco htmx) |
+| agents/ui | Runtime (parse_mensagem), Repo |
+
+---
 
 ## Considerações multi-tenant
 
-- `sync_runs` e `sync_artifacts` têm `tenant_id` — isolamento por tenant desde o dia 1.
-- Todas as tabelas `commerce_*` têm `tenant_id UUID NOT NULL`.
-- `EFOSBackupConfig.for_tenant("jmb")` carrega credenciais SSH por tenant via Infisical.
-- Na Fase 2, todos os métodos `CommerceRepo` recebem `tenant_id` como primeiro argumento.
-- Sprint 8 suporta apenas o tenant `jmb`; o conector EFOS não é multi-tenant ainda (Sprint 9+).
+- **Fase 0 (B-13):** busca EAN é filtrada por `tenant_id` — sem impacto multi-tenant adicional; truncação de sufixo é local (Python), não altera queries.
+- **Fase 1 (catalog/repo.py):** fallback para `produtos` ativado quando `COUNT(commerce_products WHERE tenant_id=X) = 0`. Cada tenant tem seu próprio dado isolado por `tenant_id` nas duas tabelas.
+- **Fase 1 (agents/repo.py):** fallback `commerce_accounts_b2b` só consultado se `clientes_b2b` não retornou resultado — ambas as queries filtram por `tenant_id`.
+- **Fase 2 (dashboard sync):** `SELECT ... FROM sync_runs WHERE tenant_id = :tenant_id` — tenant resolvido via cookie de sessão (D023).
+- **Fase 3 (áudio):** processamento de áudio é por mensagem/jid, sem dado multi-tenant armazenado além do histórico normal de conversa.
+
+---
 
 ## Secrets necessários (Infisical)
 
 | Variável | Ambiente | Descrição |
 |----------|----------|-----------|
-| `JMB_EFOS_SSH_HOST` | development, staging | jmbdistribuidora.ddns.com.br |
-| `JMB_EFOS_SSH_USER` | development, staging | suporte |
-| `JMB_EFOS_SSH_KEY_PATH` | development, staging | ~/.ssh/oci-lablz-01 |
-| `JMB_EFOS_BACKUP_REMOTE_PATH` | development, staging | C:\BACKUP EFOS\ |
-| `JMB_EFOS_ARTIFACT_DIR` | development, staging | Caminho local absoluto para guardar .backup (ex: /var/efos-artifacts) |
-| `JMB_EFOS_STAGING_DB_URL` | development, staging | postgresql://... banco local isolado para pg_restore (ex: postgresql://localhost/efos_staging) |
+| `OPENAI_API_KEY` | development + staging | Já existe (Sprint 0). Usado para Whisper (`openai.audio.transcriptions`) além dos embeddings. |
+
+Nenhum novo secret necessário para este sprint.
+
+---
 
 ## Gotchas conhecidos
 
 | Área | Gotcha | Workaround obrigatório |
 |------|--------|------------------------|
+| WhatsApp / Evolution API | Áudio OGG Opus sem extensão `.ogg` no nome do arquivo | `openai.audio.transcriptions.create(file=("audio.ogg", content_bytes, "audio/ogg"))` — nome do arquivo deve ter extensão `.ogg` mesmo que o conteúdo venha como base64 |
+| WhatsApp / Evolution API | Webhook `audioMessage` pode trazer o conteúdo em `base64` (campo `data.message.audioMessage.jpegThumbnail` é thumbnail; áudio real está em `data.message.audioMessage.url` ou em `data.message.base64`) | Tentar primeiro `url` para download via `httpx`; fallback para decodificar `base64` se `url` ausente |
+| OpenAI Whisper | `openai.audio.transcriptions.create()` é API síncrona em `openai>=1.0` | Usar `asyncio.to_thread(client.audio.transcriptions.create, ...)` para não bloquear o event loop FastAPI |
 | asyncpg + pgvector | `ORDER BY` com expressão vetorial retorna 0 rows silenciosamente | Fetch all sem `ORDER BY`, sort em Python |
-| asyncpg + pgvector | `CAST(:param AS vector)` falha na inferência de tipo | Interpolar f-string `'{vec}'::vector` |
-| paramiko SFTP + Windows | Paths com backslash em servidor Windows | Usar separador `\\` ou `ntpath`; listar dir antes de compor path |
-| pg_restore custom format | Sem flag `--format=c` o restore falha silenciosamente | Sempre passar `--format=c` (ou `-Fc`) |
-| pg_restore schema conflict | Segundo restore falha se staging DB já tiver schema | Criar staging DB limpo antes de cada run; DROP ao finalizar |
-| paramiko SSH key type | `RSAKey` vs `Ed25519Key` — tipo errado lança exceção | Usar `paramiko.pkey.PKey.from_private_key_file()` genérico |
-| structlog event reserved | `event=` é kwarg reservado em structlog | Usar string posicional como primeiro argumento |
-| EFOS tb_vendedor duplica | Mesma `ve_codigo` aparece 2x (uma linha por filial) | `SELECT DISTINCT ON (ve_codigo)` ao normalizar |
-| EFOS cl_cidade uppercase | Cidades armazenadas UPPERCASE no banco EFOS (ex: "VINHEDO") | Normalizar input do gestor com `.upper()` antes de comparar |
+| asyncpg + pgvector | `CAST(:param AS vector)` falha em queries de busca | Interpolar f-string `'{vec}'::vector` |
 | fpdf2 2.x | `pdf.output()` retorna `bytearray` | `bytes(pdf.output())` |
+| SQLAlchemy AsyncSession | `async with factory() as session` não faz auto-commit | `await session.commit()` explícito após toda escrita |
+
+---
 
 ## Entregas
 
-### E0-A — Fix B-10: representante_id ausente no get_by_telefone
-**Camadas:** Repo
-**Arquivo(s):** `output/src/agents/repo.py`, `output/src/agents/ui.py`
-**Critérios de aceitação:**
-- [ ] `get_by_telefone()` inclui `representante_id` no SELECT (corrige linha 109 de `repo.py`)
-- [ ] `ClienteB2B` type tem campo `representante_id: UUID | None`
-- [ ] `ui.py` propaga `representante_id` do objeto `ClienteB2B` para o input do pedido (corrige linha 297)
-- [ ] Pedido criado via WhatsApp para cliente com rep vinculado tem `representante_id` não-nulo no banco
-- [ ] Teste unitário `test_get_by_telefone_retorna_representante_id` com mock de banco, marcado `@pytest.mark.unit`
+### Fase 0-A — Migration 0024: flag `ficticio` em pedidos
 
-### E0-B — Fix B-11: contexto Redis stale ao trocar persona
-**Camadas:** Runtime
-**Arquivo(s):** `output/src/agents/ui.py`, `output/src/agents/runtime/agent_cliente.py`, `output/src/agents/runtime/agent_rep.py`
-**Critérios de aceitação:**
-- [ ] Ao trocar persona de um número, todas as chaves Redis do padrão `conv:{tenant_id}:{numero}*` são invalidadas
-- [ ] A invalidação ocorre no `IdentityRouter` em `ui.py` antes de instanciar o novo agente
-- [ ] Teste unitário `test_troca_persona_invalida_redis` — verifica `redis.delete()` chamado com a chave correta, marcado `@pytest.mark.unit`
-- [ ] Teste unitário: segunda mensagem com nova persona não carrega histórico da persona anterior
-
-### E0-C — Fix B-12: instrumentação Langfuse incompleta
-**Camadas:** Runtime
-**Arquivo(s):** `output/src/agents/runtime/agent_gestor.py`, `output/src/agents/runtime/agent_rep.py`, `output/src/agents/runtime/agent_cliente.py`
-**Critérios de aceitação:**
-- [ ] `AsyncAnthropic()` instanciado com wrapper Langfuse em todos os 3 agentes dentro de `_get_anthropic_client()` (corrige linhas: agent_cliente.py:401, agent_rep.py:464, agent_gestor.py:920)
-- [ ] `session_id=str(conversa.id)` definido no trace Langfuse ao iniciar cada conversa (corrige agent_cliente.py:240, agent_rep.py:291, agent_gestor.py:368)
-- [ ] `_lf_ctx.update_current_observation(output=resposta_final)` chamado antes de retornar (corrige agent_cliente.py:384, agent_rep.py:429, agent_gestor.py:489)
-- [ ] Teste unitário: mock do Langfuse verifica que `update_current_observation` foi chamado com `output` não-nulo, marcado `@pytest.mark.unit`
-- [ ] Testes existentes que injetam `_anthropic` mock não quebram
-
-### E1 — Domínio integrations/ (estrutura + auditoria)
-**Camadas:** Types, Config, Repo
-**Arquivo(s):** `output/src/integrations/__init__.py`, `output/src/integrations/types.py`, `output/src/integrations/config.py`, `output/src/integrations/repo.py`
-**Critérios de aceitação:**
-- [ ] `SyncStatus` enum: `RUNNING`, `SUCCESS`, `ERROR`, `SKIPPED`
-- [ ] `ConnectorCapability` enum: `CATALOG`, `PRICING_B2B`, `CUSTOMERS_B2B`, `ORDERS_B2B`, `INVENTORY`, `SALES_HISTORY`
-- [ ] `SyncRun` dataclass: `id`, `tenant_id`, `connector_kind`, `capabilities`, `started_at`, `finished_at`, `status`, `rows_published`, `error`
-- [ ] `SyncArtifact` dataclass: `id`, `tenant_id`, `connector_kind`, `artifact_path`, `artifact_checksum`, `created_at`
-- [ ] `EFOSBackupConfig.for_tenant(tenant_id: str)` lê secrets via Infisical usando as variáveis `JMB_EFOS_*`
-- [ ] `SyncRunRepo.create(run: SyncRun, session)` e `SyncRunRepo.update_status(run_id, status, rows_published, error, session)` salvam no banco com `tenant_id`
-- [ ] `SyncArtifactRepo.find_by_checksum(tenant_id, checksum, session)` retorna `SyncArtifact | None`
-- [ ] `import-linter check` confirma: `integrations/` não importa `agents/`, `catalog/`, `orders/`, `tenants/`, `dashboard/`
-
-### E2 — Conector EFOS (acquire + stage + normalize + publish)
-**Camadas:** Runtime (connectors)
+**Camadas:** Alembic, Orders (Types, Repo), agents/Runtime, dashboard/UI
 **Arquivo(s):**
-- `output/src/integrations/connectors/efos_backup/__init__.py`
-- `output/src/integrations/connectors/efos_backup/acquire.py`
-- `output/src/integrations/connectors/efos_backup/stage.py`
-- `output/src/integrations/connectors/efos_backup/normalize.py`
-- `output/src/integrations/connectors/efos_backup/publish.py`
+- `output/alembic/versions/0024_pedidos_ficticio.py` (novo)
+- `output/src/orders/types.py` → campo `ficticio: bool = False` em `Pedido`
+- `output/src/orders/repo.py` → INSERT inclui `ficticio` baseado em `os.getenv("ENVIRONMENT") != "production"`
+- `output/src/orders/runtime/pdf_generator.py` → marca d'água "PEDIDO DE TESTE — NÃO PROCESSAR" quando `ficticio=True`
+- `output/src/agents/runtime/agent_cliente.py` → caption da notificação ao gestor inclui `⚠️ TESTE |` quando `ficticio=True`
+- `output/src/agents/runtime/agent_rep.py` → idem
+- `output/src/dashboard/templates/pedidos.html` → badge `TESTE` na listagem quando `ficticio=True`
 
 **Critérios de aceitação:**
-- [ ] `acquire.py`: conecta via SSH (paramiko), lista `C:\BACKUP EFOS\`, identifica dump mais recente ≥ 12:30 do dia atual (ou D-1 se hora atual < 13:00 BRT), calcula SHA-256 do arquivo remoto antes de baixar, baixa via SFTP para `artifact_dir` local
-- [ ] `stage.py`: cria DB `efos_staging` se não existir, executa `pg_restore --format=c --no-owner --no-privileges -d efos_staging <arquivo>`, valida presença das 6 tabelas mínimas (`tb_itens`, `tb_clientes`, `tb_pedido`, `tb_itenspedido`, `tb_estoque`, `tb_vendas`), lança `StagingValidationError` se alguma tabela faltar
-- [ ] `normalize.py`: mapeia `tb_itens` → `CommerceProduct` (sku=it_codigo, ean=it_codigobarra), `tb_clientes` → `CommerceAccountB2B` (com `cl_cidade`, `cl_situacaocliente`, `cl_vendedori` como `vendedor_principal_codigo`), `tb_pedido+tb_itenspedido` → `CommerceOrder+CommerceOrderItem` (com `vendedor_id` e `vendedor_nome` denormalizado via JOIN `tb_vendedor`), `tb_estoque` → `CommerceInventory` (es_saldo), `tb_vendas` → `CommerceSalesHistory`, `tb_vendedor` DISTINCT ON `ve_codigo` → `CommerceVendedor`
-- [ ] `publish.py`: transação única — DELETE WHERE tenant_id + INSERT em todas as tabelas `commerce_*` do tenant; rollback total se qualquer INSERT falhar; atualiza `synced_at` e `snapshot_checksum` em cada tabela
-- [ ] Testes unitários em `normalize.py` e `publish.py` com dados mockados (sem I/O real), marcados `@pytest.mark.unit`
-- [ ] `acquire.py` e `stage.py` testados em integração, marcados `@pytest.mark.integration` (sem rodar em `pytest -m unit`)
+- [ ] `alembic upgrade head` adiciona coluna `ficticio BOOLEAN NOT NULL DEFAULT FALSE` à tabela `pedidos`
+- [ ] Quando `ENVIRONMENT != production`, todo pedido criado via bot tem `ficticio=True`
+- [ ] PDF de pedido fictício contém texto "PEDIDO DE TESTE — NÃO PROCESSAR" visível (marca d'água ou rodapé)
+- [ ] Caption WhatsApp ao gestor: `"⚠️ TESTE | Novo pedido PED-XXXXXXXX | N iten(s) | R$ X,XX"`
+- [ ] Dashboard lista pedidos com badge vermelho "TESTE" quando `ficticio=True`
+- [ ] Pedidos com `ficticio=True` **não** são incluídos nos relatórios EFOS do gestor (tools `relatorio_vendas_*`)
+- [ ] `pytest -m unit` passa
 
-### E3 — Migrations 0018–0023
-**Camadas:** Alembic
+---
+
+### Fase 0-B — AgentGestor: substituir tools antigas pelas EFOS
+
+**Camadas:** Runtime (agents)
 **Arquivo(s):**
-- `output/alembic/versions/0018_integrations.py` — `sync_runs`, `sync_artifacts`
-- `output/alembic/versions/0019_commerce.py` — `commerce_products`, `commerce_product_channel`
-- `output/alembic/versions/0020_commerce_accounts.py` — `commerce_accounts_b2b`
-- `output/alembic/versions/0021_commerce_orders.py` — `commerce_orders`, `commerce_order_items`
-- `output/alembic/versions/0022_commerce_inventory.py` — `commerce_inventory`, `commerce_sales_history`
-- `output/alembic/versions/0023_commerce_vendedores.py` — `commerce_vendedores`
+- `output/src/agents/runtime/agent_gestor.py`
+- `output/src/agents/config.py` → system prompt atualizado
+
+**Contexto:** Sprint 8 adicionou tools EFOS (`clientes_inativos_efos`, `relatorio_vendas_representante_efos`) ao lado das antigas (`clientes_inativos`, `relatorio_representantes`). O Claude escolhe as antigas porque têm nomes mais genéricos. As antigas retornam dados de staging (fictícios); as novas retornam dados reais do EFOS.
 
 **Critérios de aceitação:**
-- [ ] `alembic upgrade head` aplica todas as 6 migrations em sequência sem erro em banco limpo
-- [ ] `alembic downgrade -1` reverte a migration mais recente sem deixar resíduos
-- [ ] Todas as tabelas `commerce_*` têm colunas: `tenant_id UUID NOT NULL`, `source_system VARCHAR(32)`, `external_id VARCHAR(64)`, `synced_at TIMESTAMPTZ`, `snapshot_checksum VARCHAR(64)`
-- [ ] `sync_runs` tem índice em `(tenant_id, connector_kind, started_at DESC)`
-- [ ] `sync_artifacts` tem índice UNIQUE em `(tenant_id, artifact_checksum)`
-- [ ] `commerce_vendedores` tem `ve_codigo VARCHAR(32)`, `ve_nome TEXT` e índice em `(tenant_id, ve_codigo)`
+- [ ] `clientes_inativos` (antiga, baseada em `clientes_b2b`) **removida** de `_TOOLS` e do system prompt
+- [ ] `relatorio_representantes` (antiga, baseada em `pedidos` últimos 30 dias) **removida** de `_TOOLS` e do system prompt
+- [ ] `clientes_inativos_efos` renomeada para `clientes_inativos` (sem sufixo) em `_TOOLS` e system prompt
+- [ ] `relatorio_vendas_representante_efos` permanece com nome atual (sufixo mantém clareza)
+- [ ] `relatorio_vendas_cidade_efos` permanece com nome atual
+- [ ] Gestor pergunta "lista de clientes inativos" → bot usa `clientes_inativos` (EFOS) → retorna clientes reais
+- [ ] Gestor pergunta "quais os representantes" → bot usa `relatorio_vendas_representante_efos` → retorna dados de `commerce_vendedores`
+- [ ] Testes unitários atualizados para refletir remoção das tools antigas
+- [ ] `pytest -m unit` passa
 
-### E4 — CLI sync_efos + launchd plist
-**Camadas:** Jobs
-**Arquivo(s):** `output/src/integrations/jobs/sync_efos.py`, `scripts/launchd/com.jmb.efos-sync.plist`
-**Critérios de aceitação:**
-- [ ] `python -m integrations.jobs.sync_efos --tenant jmb --dry-run` lista dump disponível sem baixar, exit 0
-- [ ] `python -m integrations.jobs.sync_efos --tenant jmb` executa pipeline completo (acquire→stage→normalize→publish), popula `commerce_*`, exit 0
-- [ ] Segunda execução com mesmo dump: loga "checksum já importado, skip", exit 0 (idempotente — sem modificar banco)
-- [ ] `--force` ignora checksum existente e reprocessa o dump
-- [ ] Em qualquer erro: `sync_runs.status = 'error'`, log via structlog com detalhes do erro, exit 1
-- [ ] Staging DB (`efos_staging`) é destruído ao final, mesmo em caso de erro (bloco `finally`)
-- [ ] launchd plist: `RunAtLoad=false`, `StartCalendarInterval` hora 16 minuto 0 (UTC = 13:00 BRT), stdout+stderr → `/var/log/jmb-efos-sync.log`
-- [ ] Retenção local de artifacts: arquivos `.backup` mais antigos que 7 dias são apagados após cada run com sucesso
+---
 
-### E5 — Domínio commerce/ (read model + CommerceRepo)
-**Camadas:** Types, Repo
-**Arquivo(s):** `output/src/commerce/__init__.py`, `output/src/commerce/types.py`, `output/src/commerce/repo.py`
-**Critérios de aceitação:**
-- [ ] Types: `CommerceProduct`, `CommerceProductChannel`, `CommerceAccountB2B`, `CommerceOrder`, `CommerceOrderItem`, `CommerceInventory`, `CommerceSalesHistory`, `CommerceVendedor`
-- [ ] `CommerceRepo.relatorio_vendas_representante(tenant_id, vendedor_id, mes, ano)` → `dict` com `total_vendido`, `qtde_pedidos`, `clientes`
-- [ ] `CommerceRepo.relatorio_vendas_cidade(tenant_id, cidade, mes, ano)` → lista de dicts com cliente e total (cidade recebida já normalizada UPPERCASE pelo caller)
-- [ ] `CommerceRepo.listar_clientes_inativos(tenant_id, cidade=None)` → lista de dicts com `nome`, `cnpj`, `telefone`, `cidade` (`situacao_cliente=2`; `cidade=None` retorna todas as cidades)
-- [ ] Todos os métodos filtram por `tenant_id`
-- [ ] `import-linter check` confirma: `commerce/` não importa `agents/`, `catalog/`, `orders/`, `tenants/`, `dashboard/`, `integrations/`
-- [ ] Não há `service.py` nem `runtime/` em `commerce/` — é read model puro
+### Fase 0-C — Hotfix B-13: busca por EAN completo
 
-### E6 — AgentGestor: 3 novos tools EFOS
-**Camadas:** Runtime
-**Arquivo(s):** `output/src/agents/runtime/agent_gestor.py`
-**Critérios de aceitação:**
-- [ ] Tool `relatorio_vendas_representante(nome_rep: str, mes: int, ano: int)`:
-  - Fuzzy match de `nome_rep` contra `commerce_vendedores.ve_nome` (case-insensitive, `thefuzz` ou `difflib`, threshold ≥ 80)
-  - Normaliza mês: `"abril"` → 4, `"mês 4"` → 4, `"4"` → 4
-  - Retorna total vendido (R$), qtde pedidos, top 10 clientes formatados para WhatsApp (bullets `•`, sem markdown)
-- [ ] Tool `relatorio_vendas_cidade(cidade: str, mes: int, ano: int)`:
-  - Normaliza cidade → UPPERCASE antes de passar para `CommerceRepo`
-  - Funciona para qualquer cidade da base (não hardcoded)
-  - Retorna lista de clientes com totais formatada para WhatsApp
-- [ ] Tool `listar_clientes_inativos(cidade: str | None = None)`:
-  - Normaliza cidade → UPPERCASE quando presente; `None` = todas as cidades
-  - Retorna nome, CNPJ, telefone, cidade formatados para WhatsApp
-- [ ] `AgentGestor.__init__` aceita `commerce_repo: CommerceRepo | None = None` (injetável para testes)
-- [ ] Testes unitários: mock de `CommerceRepo`, verifica fuzzy match para `"RONDINELE"`, `"Rondinele Ritter"`, `"rondinele"` → mesmo `ve_codigo`, marcados `@pytest.mark.unit`
-- [ ] Teste unitário: normalização de cidade `"Vinhedo"` → `"VINHEDO"`, `"campinas"` → `"CAMPINAS"`
-- [ ] Teste unitário: normalização de mês `"abril"` → 4, `"mês 4"` → 4
-
-### E7 — Testes unitários completos
-**Camadas:** Tests
+**Camadas:** Repo (catalog, agents)
 **Arquivo(s):**
-- `output/src/tests/unit/agents/test_hotfixes_sprint8.py`
-- `output/src/tests/unit/integrations/test_normalize.py`
-- `output/src/tests/unit/integrations/test_publish.py`
-- `output/src/tests/unit/commerce/test_commerce_repo.py`
-- `output/src/tests/unit/agents/test_agent_gestor_efos.py`
+- `catalog/repo.py` → `_buscar_produtos()`
+- `agents/runtime/agent_cliente.py` → linha ~633 `_buscar_produtos()`
+- `agents/runtime/agent_rep.py` → `_buscar_produtos()`
+- `agents/runtime/agent_gestor.py` → `_buscar_produtos()` (se existente)
+- `tests/regression/test_ean_busca.py` (novo)
 
 **Critérios de aceitação:**
-- [ ] `pytest -m unit` passa sem falhas (inclui os 279 testes anteriores + todos os novos)
-- [ ] Cobertura ≥ 80% das funções de Repo e normalize/publish novos (`integrations/`, `commerce/`)
-- [ ] Nenhum teste marcado `@pytest.mark.unit` usa I/O externo (DB real, Redis real, SSH real, Evolution API real)
-- [ ] `import-linter check` passa sem violações nas novas camadas
+- [ ] Se `query` é numérica e `len(query) > 6`, a função tenta match em `codigo_externo` com `query` completo E com `query[-6:]` (últimos 6 dígitos)
+- [ ] O match exato por `query[-6:]` só é realizado quando `query` é inteiramente dígitos (`query.isdigit()`)
+- [ ] Busca semântica não é afetada (comportamento atual preservado para queries textuais)
+- [ ] `tests/regression/test_ean_busca.py` cobre: EAN completo (13 dígitos) retorna produto, EAN curto (6 dígitos) retorna produto, busca textual não é afetada
+- [ ] `pytest -m unit` passa sem regressão
 
-### E8 — Documentação atualizada
-**Camadas:** Docs
-**Arquivo(s):** `ARCHITECTURE.md`, `docs/design-docs/index.md`
+---
+
+### Fase 1a — catalog/repo.py: leituras de produtos de commerce_products
+
+**Camadas:** Repo (catalog), Repo (commerce)
+**Arquivo(s):**
+- `catalog/repo.py` → método(s) de busca de produtos (busca semântica e por código)
+- `commerce/repo.py` → `buscar_produtos_commerce(tenant_id, query, limit)` (novo método)
+
 **Critérios de aceitação:**
-- [ ] `ARCHITECTURE.md` documenta domínios 5 (`integrations/`) e 6 (`commerce/`) com estrutura de pacotes, responsabilidades e invariantes de import-linter
-- [ ] `docs/design-docs/index.md` inclui ADRs D025–D029
+- [ ] `catalog/repo.py` verifica `COUNT(commerce_products WHERE tenant_id=X)` antes de decidir fonte
+- [ ] Se `commerce_products` tem ≥ 1 registro para o tenant → busca nessa tabela (lookup por `external_id`, `name`, campos textuais)
+- [ ] Se `commerce_products` está vazio para o tenant → fallback para tabela `produtos` (comportamento atual)
+- [ ] Busca semântica (pgvector) continua usando tabela `produtos` para embeddings (commerce_products não tem embedding neste sprint — fora do escopo)
+- [ ] Busca por código/nome usa `commerce_products` quando disponível
+- [ ] Tenant isolation: todas as queries filtram por `tenant_id`
+- [ ] Nenhuma violação de import-linter (catalog/repo.py pode importar commerce/repo.py via camada Repo → Repo mesmo domínio? **Não** — catalog e commerce são domínios separados; a lógica de decisão fica em `catalog/service.py` que chama ambos os repos)
+- [ ] `pytest -m unit` passa
+
+**Nota arquitetural:** Para não violar D027 (commerce/ não importa outros domínios), a lógica de fallback deve residir em `catalog/service.py`, que chama `CatalogRepo` e `CommerceRepo` independentemente. O `catalog/service.py` pode importar `commerce/repo.py` pois ambos são camada Repo — mas a camada Service de catalog pode importar Repo de outro domínio (catalog/service.py está na camada Service, commerce/repo.py na camada Repo, e Service pode importar Repo). Enforçar que commerce/repo.py não importa catalog/.
+
+---
+
+### Fase 1b — agents/repo.py: fallback de clientes para commerce_accounts_b2b
+
+**Camadas:** Repo (agents), Repo (commerce)
+**Arquivo(s):**
+- `agents/repo.py` → método de busca de clientes
+- `commerce/repo.py` → `buscar_clientes_commerce(tenant_id, query)` (novo método ou ampliação)
+
+**Critérios de aceitação:**
+- [ ] Busca de clientes em `agents/repo.py` primeiro consulta `clientes_b2b`
+- [ ] Se `clientes_b2b` retorna 0 resultados → tenta `commerce_accounts_b2b` com mesma query (fallback, não substituição)
+- [ ] Se `clientes_b2b` retorna resultados → não consulta `commerce_accounts_b2b`
+- [ ] Resultado retornado tem mesma estrutura independente da fonte (compat com código existente dos agentes)
+- [ ] Tenant isolation em ambas as queries
+- [ ] `pytest -m unit` passa
+
+---
+
+### Fase 2 — Dashboard: bloco "Última sincronização EFOS"
+
+**Camadas:** UI (dashboard), Repo (integrations/commerce)
+**Arquivo(s):**
+- `dashboard/ui.py` (ou `tenants/ui.py`) → novo endpoint `GET /dashboard/sync-status` (htmx partial)
+- `integrations/repo.py` → `get_last_sync_run(tenant_id)` (já pode existir — verificar)
+- `dashboard/templates/dashboard_home.html` (ou equivalente) → novo bloco htmx
+
+**Critérios de aceitação:**
+- [ ] Bloco "Última sincronização EFOS" aparece na página principal do dashboard
+- [ ] Exibe: status (`success` → badge verde / `error` → badge vermelho), `finished_at` formatado como DD/MM/YYYY HH:MM (fuso BRT), `rows_published` (produtos publicados)
+- [ ] Se não há nenhum registro em `sync_runs` para o tenant → exibe "Nunca sincronizado"
+- [ ] Dados carregados via htmx polling `hx-trigger="every 60s"` (consistente com padrão do dashboard)
+- [ ] Query: `SELECT status, finished_at, rows_published FROM sync_runs WHERE tenant_id = :tid ORDER BY started_at DESC LIMIT 1`
+- [ ] Tenant isolation: query filtra por `tenant_id` extraído do cookie de sessão
+- [ ] Sem violação de import-linter: dashboard/ui.py pode importar integrations/repo.py (UI → Repo é permitido na hierarquia de camadas)
+- [ ] `pytest -m unit` passa para o endpoint
+
+---
+
+### Fase 3 — Áudio WhatsApp via Whisper
+
+**Camadas:** Runtime (agents/ui.py — parse_mensagem)
+**Arquivo(s):**
+- `agents/ui.py` → `parse_mensagem()` + nova função `_transcrever_audio()`
+- `tests/unit/agents/test_audio_transcricao.py` (novo)
+
+**Critérios de aceitação:**
+- [ ] `parse_mensagem()` detecta `messageType == "audioMessage"` no payload Evolution API
+- [ ] Tenta baixar o arquivo via `url` em `data.message.audioMessage.url` com `httpx.AsyncClient`; se URL ausente ou falha HTTP, decodifica `data.message.base64`
+- [ ] Chama `_transcrever_audio(audio_bytes: bytes) -> str` que usa `asyncio.to_thread(openai_sync_client.audio.transcriptions.create, model="whisper-1", file=("audio.ogg", audio_bytes, "audio/ogg"))`
+- [ ] `OPENAI_API_KEY` carregado de Infisical via `os.getenv("OPENAI_API_KEY")`
+- [ ] Transcrição substitui o campo `text` da mensagem retornada por `parse_mensagem()`
+- [ ] Agente prefixa a resposta com `"🎤 Ouvi: {transcricao}\n\n"` antes de processar normalmente
+- [ ] Se transcrição falha (APIError, timeout) → agente responde com mensagem de fallback amigável: `"Desculpe, não consegui entender o áudio. Pode digitar sua mensagem?"`
+- [ ] Mensagens não-áudio (`messageType != "audioMessage"`) não são afetadas
+- [ ] `OPENAI_API_KEY` nunca hardcoded; variável carregada via `os.getenv`
+- [ ] `tests/unit/agents/test_audio_transcricao.py` cobre: mock `audioMessage` com URL → transcrição chamada com bytes corretos; mock `audioMessage` com base64 → decodificação + transcrição; falha de transcrição → mensagem de fallback; mensagem de texto → parse_mensagem não alterado
+- [ ] `pytest -m unit` passa
+
+---
+
+## Versão alvo
+
+`v0.9.0` (convenção: 0.N.0 onde N = número do sprint).
+Critério `A_VERSION` obrigatório no contrato: `GET /health` retorna `"version": "0.9.0"`.
+
+---
+
+## Ambiente de execução
+
+Este sprint não introduz novos CLIs fora do FastAPI. O pipeline EFOS (`sync_efos`) já existe desde Sprint 8.
+
+| Componente | Localização no macmini-lablz |
+|------------|------------------------------|
+| Python / venv | `~/ai-sales-agent-claude/.venv/bin/python` |
+| Infisical | `/usr/local/bin/infisical` |
+| PYTHONPATH | `./src` (a partir de `output/`) |
+| psql / pg_restore | Dentro do Docker container `ai-sales-postgres` |
+
+---
+
+## Mapeamento de campos confirmados
+
+### commerce_products (já populada pelo Sprint 8)
+
+| Campo | Tipo | Origem EFOS | Notas |
+|-------|------|-------------|-------|
+| `id` | UUID PK | gerado | |
+| `tenant_id` | TEXT | `jmb` | |
+| `external_id` | TEXT | `it_codigo` | últimos 6 dígitos do EAN |
+| `name` | TEXT | `it_nome` | |
+| `price` | NUMERIC | `it_precovenda` | |
+| `ean` | TEXT | `it_codigobarra` | EAN completo (13 dígitos) — **confirmar se coluna existe** |
+
+> Atenção: `it_codigobarra` foi mapeado no Sprint 8 para `ean` em `commerce_products`? Verificar migration 0018–0023. O hotfix B-13 pode usar `ean` se existir, ou derivar de `external_id` com padding.
+
+### commerce_accounts_b2b (já populada pelo Sprint 8)
+
+| Campo | Tipo | Origem EFOS | Notas |
+|-------|------|-------------|-------|
+| `id` | UUID PK | gerado | |
+| `tenant_id` | TEXT | `jmb` | |
+| `external_id` | TEXT | `cl_codigo` | |
+| `name` | TEXT | `cl_nome` | |
+| `cnpj` | TEXT | `cl_cnpjcpfrg` | |
+| `city` | TEXT | `cl_cidade` | UPPERCASE |
+| `status` | INT | `cl_situacaocliente` | 1=ativo / 2=inativo |
+| `vendedor_id` | TEXT | `cl_vendedori` | |
+
+### sync_runs
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `id` | UUID PK | |
+| `tenant_id` | TEXT | |
+| `status` | TEXT | `'success'` / `'error'` |
+| `started_at` | TIMESTAMPTZ | |
+| `finished_at` | TIMESTAMPTZ | |
+| `rows_published` | INT | |
+
+---
 
 ## Critério de smoke staging (obrigatório)
 
-Script: `scripts/smoke_sprint_8.py`
+Script: `scripts/smoke_sprint_9.py`
 
-O script deve verificar automaticamente, contra infra real (macmini-lablz):
-- [ ] `GET /health` → status 200, versão ≥ 0.7.0
-- [ ] `pytest -m unit` → 0 falhas
-- [ ] Tabelas `commerce_products`, `commerce_accounts_b2b`, `sync_runs` existem no banco (`alembic upgrade head` aplicado)
-- [ ] `python -m integrations.jobs.sync_efos --tenant jmb --dry-run` → exit 0, lista dump disponível sem erro
-- [ ] `SELECT COUNT(*) FROM commerce_products WHERE tenant_id = 'jmb'` → ≥ 100 (após run completo)
-- [ ] `SELECT COUNT(*) FROM sync_runs WHERE tenant_id = 'jmb' AND status = 'success'` → ≥ 1
-- [ ] `GET /health` retorna 200 após sync (sem regressão no app)
+O script verifica contra infra real (macmini-lablz, `http://100.113.28.85:8000`):
 
-Execução esperada: `python scripts/smoke_sprint_8.py` → saída `ALL OK`
+- [ ] `GET /health` → `{"version": "0.9.0", "status": "ok"}`
+- [ ] `pytest -m unit` no servidor de staging → 0 falhas
+- [ ] `commerce_products` tem ≥ 1 produto para tenant `jmb`
+- [ ] `catalog/service.py`: busca de produto via nome retorna resultado de `commerce_products` (não `produtos`) quando disponível
+- [ ] `agents/repo.py`: busca de cliente via nome retorna resultado (de `clientes_b2b` ou fallback `commerce_accounts_b2b`)
+- [ ] `GET /dashboard/sync-status?tenant_id=jmb` (ou equivalente htmx partial) → HTTP 200, contém `status` e `finished_at`
+- [ ] Smoke de áudio: POST mock `audioMessage` ao webhook local → agente responde com prefixo `"🎤 Ouvi:"` (usando mock do Whisper em staging)
+- [ ] B-13: busca por EAN completo (ex: `7898923148571`) → retorna produto (verifica que `query[-6:]` funciona)
+
+Execução: `python scripts/smoke_sprint_9.py` → saída `ALL OK`
+
+---
 
 ## Checklist de homologação humana
 
-| ID | Cenário | Como testar | Resultado esperado |
-|----|---------|-------------|-------------------|
-| H1 | B-10: pedido com representante | Cliente com rep vinculado faz pedido via WhatsApp | `SELECT representante_id FROM pedidos ORDER BY criado_em DESC LIMIT 1` → UUID não-nulo |
-| H2 | B-11: troca de persona sem histórico stale | Enviar msg como CLIENTE → cadastrar mesmo número como REP → enviar nova msg | Segunda sessão não menciona contexto da sessão anterior de cliente |
-| H3 | B-12: Langfuse traces completos | Trocar 3 msgs com agente; abrir Langfuse UI | Traces com output≠null, tokens>0, session_id preenchido |
-| H4 | sync_efos run completo | `python -m integrations.jobs.sync_efos --tenant jmb` | Exit 0; sync_runs com 1 success; commerce_products ≥ 100 linhas |
-| H5 | sync_efos idempotência | Executar sync_efos 2x com mesmo dump | Segunda execução loga "skip"; contagem em commerce_* não muda |
-| H6 | Tool: relatório por representante | Gestor: "Relatório de vendas do representante Rondinele mês 4" | Total em R$, qtde pedidos, lista de clientes formatada |
-| H7 | Tool: relatório por cidade | Gestor: "Relatório de vendas clientes de Vinhedo abril" | Lista de clientes de VINHEDO com totais do mês 4 |
-| H8 | Tool: clientes inativos com cidade | Gestor: "Lista de clientes inativos na cidade de Itupeva" | Lista nome, CNPJ, telefone com situacao=inativo e cidade=ITUPEVA |
-| H9 | Tool: clientes inativos sem cidade | Gestor: "Lista de clientes inativos" | Lista todos os inativos de todas as cidades |
-| H10 | Fuzzy match de representante | Gestor: "vendas do representante rondinele ritter mês 4" | Mesmo resultado que H6 (mesmo ve_codigo) |
-| H11 | Sem regressão: pedido normal | Cliente faz pedido completo via WhatsApp | Fluxo sem erros; PDF gerado; gestor recebe notificação |
+Ver `docs/exec-plans/active/homologacao_sprint-9.md` para checklist unificado Sprint 8 + Sprint 9.
 
-## Decisões pendentes (ADRs a aprovar antes da implementação)
+---
 
-**D025 — SSH/SFTP via paramiko para aquisição de backup**
-- Contexto: precisamos baixar arquivos `.backup` de um servidor Windows via SSH/SFTP sem agente remoto adicional
-- Alternativas: rsync (não disponível em Windows sem Cygwin), WinSCP API (requer cliente Windows), curl manual (sem suporte a SFTP nativo)
-- Recomendação: `paramiko` — SSH/SFTP em Python puro, sem dependência de binário externo, testável com mocks
+## Decisões pendentes
 
-**D026 — Staging DB efos_staging isolado do banco principal**
-- Contexto: `pg_restore --format=c` requer banco Postgres sem conflito de schema; não podemos usar o banco principal do app
-- Recomendação: banco local `efos_staging` criado/destruído por run; sem estado persistente fora de `commerce_*`
+Nenhuma. Todas as decisões arquiteturais estão cobertas por ADRs existentes (D025–D029).
 
-**D027 — CLI one-shot worker (não FastAPI lifespan) para sync EFOS**
-- Contexto: sync é operação batch diária; não precisa de servidor HTTP nem ciclo de vida de app
-- Recomendação: `python -m integrations.jobs.sync_efos` — simples, testável isoladamente, não acoplado ao FastAPI
+**Verificação pendente pelo Generator:** confirmar se coluna `ean` existe em `commerce_products` (migration 0018–0023). Se não existir, a busca por EAN completo no B-13 deve usar `external_id` com `query[-6:]` e não há coluna separada para EAN.
 
-**D028 — launchd (não APScheduler) para scheduling externo do sync**
-- Contexto: D019 adotou APScheduler 3.x para o crawler EFOS (dentro do app); sync EFOS é job de manutenção do macmini, não do app em si
-- Recomendação: launchd no macmini-lablz — sistema operacional gerencia restart, logs, timezone; o app não precisa saber do schedule
-
-**D029 — Read model separado commerce_* do write model do app**
-- Contexto: dados EFOS são externos e imutáveis do ponto de vista do app; o write model (`pedidos`, `itens_pedido`) deve permanecer independente
-- Recomendação: `commerce_*` como read model puro — agente e dashboard leem mas nunca escrevem; escrita exclusiva via `sync_efos`
+---
 
 ## Fora do escopo
 
-- Conector B2C (www.jmbdistribuidora.com.br) — Sprint 10+
-- Dashboard de sync status ("Última sincronização EFOS") — Sprint 9
-- Snapshot versionado com `snapshot_id` — decisão adiada
-- `product_identity_map` (cross-source SKU reconciliation entre B2B e B2C)
-- Migração dos reads do agente (`catalog/repo.py`, `agents/repo.py`) para `commerce_*` — Sprint 9
-- Aposentadoria do crawler Playwright — Sprint 10
-- Suporte a segundo tenant no conector EFOS
+- Geração de embeddings para `commerce_products` (busca semântica continua em `catalog.produtos`)
+- Migração de escrita de pedidos para tabelas commerce (pedidos continuam em `orders/`)
+- Suporte a vídeo ou imagem WhatsApp (apenas áudio OGG/Opus)
+- Respostas de voz (TTS) — apenas transcrição de entrada
+- Novo tenant além de JMB
+- Migração completa do catálogo de `produtos` para `commerce_products` (fallback mantido)
+- Langfuse traces para chamadas Whisper (OTEL é suficiente)
+
+---
 
 ## Riscos
 
 | Risco | Probabilidade | Impacto | Mitigação |
 |-------|--------------|---------|-----------|
-| Servidor EFOS offline no horário do dump | Média | Alto | sync_efos tenta dump D-1 se dump do dia não disponível; sync_run registra erro com contexto |
-| Mudança de schema EFOS sem aviso | Baixa | Alto | stage.py valida tabelas mínimas; falha explícita com StagingValidationError |
-| pg_restore demora > 5 min (dump de 153 MB) | Baixa | Médio | launchd não tem timeout padrão; monitorar duração do primeiro run real |
-| paramiko incompatível com chave Ed25519 | Baixa | Médio | Usar PKey.from_private_key_file() genérico; testar conexão SSH antes de iniciar Fase 1 |
-| Fuzzy match de representante com falso positivo | Média | Médio | Threshold ≥ 80 similarity; se match ambíguo, tool pede confirmação ao gestor antes de executar query |
+| `commerce_products` não tem coluna `ean` separada | Médio | Baixo | hotfix B-13 usa `external_id[-6:]` como sufixo — funciona independente de `ean` |
+| Evolution API envia áudio sem URL (apenas base64) | Alto | Baixo | Implementar fallback base64 obrigatório na Fase 3 |
+| Whisper API indisponível em staging (sem key real) | Médio | Médio | Mock no smoke gate; homologação real com key de produção |
+| import-linter viola D027 ao fazer catalog/service.py → commerce/repo.py | Baixo | Alto | Verificar contracts em pyproject.toml antes de submeter; adicionar contrato explícito se necessário |
+| Coluna `rows_published` não existe em `sync_runs` | Baixo | Baixo | Verificar migration 0023; se ausente, exibir `row_count` ou omitir |
 
-## Handoff para Sprint 9
+---
 
-- `commerce_products` populado e estável → `catalog/repo.py` pode migrar leituras de `produtos` para `commerce_products`
-- `commerce_accounts_b2b` populado → `agents/repo.py` pode complementar clientes com dados do EFOS quando não há cadastro manual
-- ADRs D025–D029 aprovados → base arquitetural para conector B2C (D030+)
-- Dashboard pode receber bloco "Última sincronização EFOS" sem bloqueio de Sprint 9
-- Crawler Playwright permanece ativo até Sprint 9 confirmar migração completa
+## Handoff para o próximo sprint
+
+- Sprint 9 deixa infraestrutura de leitura de `commerce_products` pronta; Sprint 10+ pode adicionar embeddings às tabelas commerce para busca semântica unificada.
+- A integração Whisper abre caminho para outros modelos de áudio (speaker diarization, idioma automático).
+- Fallback `clientes_b2b → commerce_accounts_b2b` pode ser invertido ou unificado em sprint de migração de dados futura.
