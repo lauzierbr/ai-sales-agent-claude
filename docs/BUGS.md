@@ -12,6 +12,14 @@
 | B-14 | listar_pedidos_por_status retorna vazio — tabela pedidos zerada e tool não consulta commerce_orders | Alta | Piloto | 2026-04-28 |
 | B-15 | commerce_vendedores ignorada pelo agente — clientes sem rep e impossível listar representantes | Alta | Piloto | 2026-04-28 |
 | B-16 | Dashboard /clientes exibe "Nenhum cliente encontrado" — consulta clientes_b2b (vazia) em vez de commerce_accounts_b2b | Alta | Piloto | 2026-04-28 |
+| B-17 | Dashboard /pedidos exibe "Nenhum pedido encontrado" — consulta pedidos (vazia) em vez de commerce_orders | Alta | Piloto | 2026-04-28 |
+
+> **B-17 detalhe:** Mesma raiz de B-14/B-15/B-16. Rota `/dashboard/pedidos` consulta
+> tabela `pedidos` (0 linhas pós-reset). 2592 pedidos reais estão em `commerce_orders`.
+> Generator deve, no hotfix, fazer grep exaustivo
+> `grep -rn "FROM pedidos\|FROM clientes_b2b\|JOIN pedidos\|JOIN clientes_b2b" output/src/ --include="*.py"`
+> e migrar cada hit — sem cherry-pick. Confirmar checklist em
+> `docs/exec-plans/active/sprint-9-hotfix.md`.
 
 > **B-16 detalhe:** Dashboard `/dashboard/clientes` consulta tabela `clientes_b2b` que está com
 > 0 linhas após reset do banco no deploy Sprint 8/9. Os 614 clientes reais estão em
