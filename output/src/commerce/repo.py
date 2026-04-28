@@ -265,6 +265,91 @@ class CommerceRepo:
             for row in rows
         ]
 
+    async def listar_pedidos_efos(
+        self,
+        tenant_id: str,
+        status: str | None,
+        dias: int,
+        limit: int,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Lista pedidos de commerce_orders com filtro opcional de status.
+
+        B-14: tabela pedidos pode estar vazia (dados reais em commerce_orders).
+        Esta query retorna pedidos importados do EFOS.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            status: filtro de status (pendente/confirmado/cancelado). None = todos.
+            dias: janela de busca em dias.
+            limit: máximo de registros.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de dicts compatível com listar_por_tenant_status.
+        """
+        from datetime import datetime, timedelta, timezone
+        data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)
+
+        if status is not None:
+            result = await session.execute(
+                text("""
+                    SELECT
+                        o.pe_numeropedido::text       AS id,
+                        o.cliente_nome                AS cliente_nome,
+                        o.vendedor_nome               AS representante_nome,
+                        o.total                       AS total_estimado,
+                        :status_val                   AS status,
+                        o.data_pedido                 AS criado_em
+                    FROM commerce_orders o
+                    WHERE o.tenant_id = :tenant_id
+                      AND o.data_pedido >= :data_inicio
+                    ORDER BY o.data_pedido DESC
+                    LIMIT :limit
+                """),
+                {
+                    "tenant_id": tenant_id,
+                    "status_val": status,
+                    "data_inicio": data_inicio,
+                    "limit": limit,
+                },
+            )
+        else:
+            result = await session.execute(
+                text("""
+                    SELECT
+                        o.pe_numeropedido::text       AS id,
+                        o.cliente_nome                AS cliente_nome,
+                        o.vendedor_nome               AS representante_nome,
+                        o.total                       AS total_estimado,
+                        'confirmado'                  AS status,
+                        o.data_pedido                 AS criado_em
+                    FROM commerce_orders o
+                    WHERE o.tenant_id = :tenant_id
+                      AND o.data_pedido >= :data_inicio
+                    ORDER BY o.data_pedido DESC
+                    LIMIT :limit
+                """),
+                {
+                    "tenant_id": tenant_id,
+                    "data_inicio": data_inicio,
+                    "limit": limit,
+                },
+            )
+        rows = result.mappings().all()
+        return [
+            {
+                "id": row["id"],
+                "cliente_nome": row["cliente_nome"] or "Cliente desconhecido",
+                "representante_nome": row["representante_nome"] or "Sem representante",
+                "total_estimado": Decimal(str(row["total_estimado"] or 0)),
+                "status": row["status"],
+                "criado_em": row["criado_em"],
+                "fonte": "commerce_orders",
+            }
+            for row in rows
+        ]
+
     async def listar_clientes_inativos(
         self,
         tenant_id: str,

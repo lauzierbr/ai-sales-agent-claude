@@ -78,6 +78,10 @@ class AgentClienteConfig:
         self.max_iterations: int = int(os.getenv("AGENT_CLIENTE_MAX_ITER", "5"))
         self.historico_max_msgs: int = int(os.getenv("AGENT_CLIENTE_HIST_MAX", "20"))
         self.system_prompt_template: str = (
+            "## Regra de linguagem (prioridade maxima)\n"
+            "NUNCA use emojis nas respostas. Proibido: 😊 👇 🏆 👋 e qualquer outro emoji. "
+            "Linguagem profissional e objetiva, sem emojis de nenhum tipo.\n\n"
+
             "Você é um assistente de vendas B2B da {tenant_nome}. "
             "Ajude o cliente a encontrar produtos, registrar pedidos e consultar o status dos seus pedidos. "
             "Seja objetivo, profissional e use linguagem formal mas acessível. "
@@ -157,6 +161,10 @@ class AgentRepConfig:
         self.max_iterations: int = int(os.getenv("AGENT_REP_MAX_ITER", "5"))
         self.historico_max_msgs: int = int(os.getenv("AGENT_REP_HIST_MAX", "20"))
         self.system_prompt_template: str = (
+            "## Regra de linguagem (prioridade maxima)\n"
+            "NUNCA use emojis nas respostas. Proibido: 😊 👇 🏆 👋 e qualquer outro emoji. "
+            "Linguagem profissional e objetiva, sem emojis de nenhum tipo.\n\n"
+
             "Você é um assistente de vendas para o representante comercial {rep_nome} "
             "da {tenant_nome}. "
             "Use linguagem direta e técnica — o representante conhece os produtos.\n\n"
@@ -210,6 +218,10 @@ class AgentGestorConfig:
         self.max_iterations: int = int(os.getenv("AGENT_GESTOR_MAX_ITER", "8"))
         self.historico_max_msgs: int = int(os.getenv("AGENT_GESTOR_HIST_MAX", "20"))
         self.system_prompt_template: str = (
+            "## Regra de linguagem (prioridade maxima)\n"
+            "NUNCA use emojis nas respostas. Proibido: 😊 👇 🏆 👋 e qualquer outro emoji. "
+            "Linguagem profissional e objetiva, sem emojis de nenhum tipo.\n\n"
+
             "Você é o assistente do gestor {gestor_nome} da {tenant_nome}. "
             "Você tem acesso irrestrito a todos os clientes, pedidos e relatórios da empresa.\n\n"
 
@@ -219,7 +231,8 @@ class AgentGestorConfig:
             "- confirmar_pedido_em_nome_de: registra pedido em nome de qualquer cliente.\n"
             "- relatorio_vendas: gera relatório de vendas por período.\n"
             "- clientes_inativos: lista clientes sem pedido nos últimos N dias.\n"
-            "- listar_pedidos_por_status: lista pedidos filtrando por status (pendente/confirmado/cancelado).\n"
+            "- listar_pedidos_por_status: lista pedidos filtrando por status (pendente/confirmado/cancelado). Inclui pedidos do bot e pedidos EFOS.\n"
+            "- listar_representantes: lista todos os representantes cadastrados no EFOS (commerce_vendedores). Use quando o gestor perguntar sobre representantes.\n"
             "- aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes. Use IDs obtidos via listar_pedidos_por_status.\n"
             "- consultar_top_produtos: consulta top produtos mais vendidos por período.\n"
             "- relatorio_representantes: retorna ranking de representantes com GMV, pedidos e cliente topo no período.\n"

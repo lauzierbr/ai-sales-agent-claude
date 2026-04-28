@@ -330,6 +330,24 @@ _TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "listar_representantes",
+        "description": (
+            "Lista todos os representantes cadastrados no EFOS (commerce_vendedores). "
+            "Use quando o gestor perguntar sobre representantes, quem sao os reps, "
+            "lista de representantes ou similar. "
+            "Retorna ve_codigo, ve_nome e situacao de cada representante ativo."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nome": {
+                    "type": "string",
+                    "description": "Filtrar por nome do representante (opcional, busca parcial).",
+                },
+            },
+        },
+    },
+    {
         "name": "registrar_feedback",
         "description": (
             "Registra feedback do gestor sobre uma resposta do assistente. "
@@ -661,6 +679,13 @@ class AgentGestor:
                 session=session,
             )
 
+        if tool_name == "listar_representantes":
+            return await self._listar_representantes(
+                nome=tool_input.get("nome"),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
         if tool_name == "registrar_feedback":
             return await self._registrar_feedback(
                 mensagem=tool_input.get("mensagem", ""),
@@ -905,6 +930,7 @@ class AgentGestor:
         tenant_id: str,
         session: AsyncSession,
     ) -> list[dict]:
+        """B-14: consulta pedidos do bot e, quando vazio, inclui commerce_orders."""
         pedidos = await self._order_repo.listar_por_tenant_status(
             tenant_id=tenant_id,
             status=status,
@@ -912,14 +938,30 @@ class AgentGestor:
             session=session,
             dias=dias,
         )
+        # B-14: se tabela pedidos está vazia, busca dados EFOS em commerce_orders
+        if not pedidos and self._commerce_repo is not None:
+            pedidos_efos = await self._commerce_repo.listar_pedidos_efos(
+                tenant_id=tenant_id,
+                status=status,
+                dias=dias,
+                limit=limit,
+                session=session,
+            )
+            pedidos = pedidos_efos  # type: ignore[assignment]
+
         return [
             {
-                "id": p["id"],
+                "id": str(p["id"]),
                 "cliente_nome": p["cliente_nome"],
-                "representante_nome": p["representante_nome"] or "Sem representante",
+                "representante_nome": p.get("representante_nome") or "Sem representante",
                 "total_estimado": str(p["total_estimado"]),
                 "status": p["status"],
-                "criado_em": p["criado_em"].strftime("%d/%m/%Y %H:%M") if p["criado_em"] else None,
+                "criado_em": (
+                    p["criado_em"].strftime("%d/%m/%Y %H:%M")
+                    if p.get("criado_em") and hasattr(p["criado_em"], "strftime")
+                    else (str(p["criado_em"])[:16] if p.get("criado_em") else None)
+                ),
+                "fonte": p.get("fonte", "pedidos"),
             }
             for p in pedidos
         ]
@@ -975,6 +1017,60 @@ class AgentGestor:
             }
             for r in rows
         ]
+
+    async def _listar_representantes(
+        self,
+        nome: str | None,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        """Lista representantes de commerce_vendedores (B-15).
+
+        Args:
+            nome: filtro parcial por nome (opcional).
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com lista de representantes ativos do EFOS.
+        """
+        from sqlalchemy import text as _text
+        try:
+            if nome:
+                result = await session.execute(
+                    _text("""
+                        SELECT ve_codigo, ve_nome, ve_situacaovendedor
+                        FROM commerce_vendedores
+                        WHERE tenant_id = :tenant_id
+                          AND LOWER(ve_nome) LIKE LOWER(:nome_like)
+                        ORDER BY ve_nome ASC
+                    """),
+                    {"tenant_id": tenant_id, "nome_like": f"%{nome}%"},
+                )
+            else:
+                result = await session.execute(
+                    _text("""
+                        SELECT ve_codigo, ve_nome, ve_situacaovendedor
+                        FROM commerce_vendedores
+                        WHERE tenant_id = :tenant_id
+                          AND ve_situacaovendedor = 1
+                        ORDER BY ve_nome ASC
+                    """),
+                    {"tenant_id": tenant_id},
+                )
+            rows = result.mappings().all()
+            representantes = [
+                {
+                    "codigo": str(r["ve_codigo"]),
+                    "nome": r["ve_nome"] or "",
+                    "ativo": r["ve_situacaovendedor"] == 1,
+                }
+                for r in rows
+            ]
+            return {"representantes": representantes, "total": len(representantes)}
+        except Exception as exc:
+            log.error("agent_gestor_listar_representantes_erro", error=str(exc))
+            return {"erro": f"Falha ao listar representantes: {exc}"}
 
     async def _registrar_feedback(
         self,

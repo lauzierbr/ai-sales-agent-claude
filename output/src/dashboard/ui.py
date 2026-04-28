@@ -201,11 +201,19 @@ async def home(request: Request) -> Any:
     kpis = await _get_kpis(tenant_id)
     pedidos = await _get_pedidos_recentes(tenant_id, limit=10)
     conversas = await _get_conversas_ativas(tenant_id)
+    # B-18: carrega sync_info no render inicial para não mostrar "Nunca sincronizado"
+    sync_info = await _get_last_sync_info(tenant_id)
 
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"kpis": kpis, "pedidos": pedidos, "conversas": conversas, "tenant_id": tenant_id},
+        {
+            "kpis": kpis,
+            "pedidos": pedidos,
+            "conversas": conversas,
+            "tenant_id": tenant_id,
+            "sync_info": sync_info,
+        },
     )
 
 
@@ -722,37 +730,127 @@ async def configuracoes(request: Request) -> Any:
 # ─────────────────────────────────────────────
 
 
-async def _get_kpis(tenant_id: str) -> dict[str, Any]:
-    """Retorna KPIs do dia (GMV, pedidos, ticket médio)."""
-    try:
-        from datetime import timedelta
+async def _get_last_sync_info(tenant_id: str) -> dict[str, Any] | None:
+    """Retorna metadados da última sincronização EFOS para o tenant.
 
-        from src.agents.repo import RelatorioRepo
+    B-18: usado no render inicial do home para não mostrar "Nunca sincronizado"
+    quando há sync_runs no banco.
+    """
+    try:
+        from datetime import timedelta as _timedelta
+
+        from src.integrations.repo import SyncRunRepo
         from src.providers.db import get_session_factory
 
         factory = get_session_factory()
-        repo = RelatorioRepo()
+        async with factory() as session:
+            sync_info = await SyncRunRepo().get_last_sync_run(
+                tenant_id=tenant_id,
+                session=session,
+            )
+
+        if sync_info and sync_info.get("finished_at"):
+            finished_utc = sync_info["finished_at"]
+            if hasattr(finished_utc, "utcoffset") and finished_utc.tzinfo is not None:
+                from datetime import timezone as _tz
+                finished_brt = finished_utc.astimezone(_tz(offset=_timedelta(hours=-3)))
+                sync_info["finished_at_brt"] = finished_brt.strftime("%d/%m/%Y %H:%M")
+            else:
+                sync_info["finished_at_brt"] = str(finished_utc)[:16]
+
+        return sync_info
+    except Exception as exc:
+        log.error("dashboard_sync_info_erro", tenant_id=tenant_id, error=str(exc))
+        return None
+
+
+async def _get_kpis(tenant_id: str) -> dict[str, Any]:
+    """Retorna KPIs do dia (GMV, pedidos, ticket médio).
+
+    B-19: quando pedidos está vazio, usa commerce_orders para KPIs (dados EFOS).
+    Label "EFOS — hoje" indica a fonte quando dados vêm do EFOS.
+    """
+    try:
+        from sqlalchemy import text
+
+        from src.providers.db import get_session_factory
+
+        factory = get_session_factory()
         now = datetime.now(timezone.utc)
         data_inicio = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         async with factory() as session:
-            totais = await repo.totais_periodo(
-                tenant_id=tenant_id,
-                data_inicio=data_inicio,
-                data_fim=now,
-                session=session,
+            # Tenta pedidos do bot primeiro
+            r = await session.execute(
+                text("""
+                    SELECT COUNT(*) AS n_pedidos,
+                           COALESCE(SUM(total_estimado), 0) AS total_gmv
+                    FROM pedidos
+                    WHERE tenant_id = :tenant_id
+                      AND ficticio = FALSE
+                      AND criado_em >= :data_inicio
+                      AND criado_em <= :now
+                """),
+                {"tenant_id": tenant_id, "data_inicio": data_inicio, "now": now},
             )
-        return {
-            **totais,
-            "atualizado_em": now.strftime("%H:%M:%S"),
-        }
+            row = r.mappings().first()
+            n = int(row["n_pedidos"]) if row else 0
+            gmv = row["total_gmv"] if row else 0
+
+            fonte = "bot"
+            if n == 0:
+                # B-19: fallback commerce_orders — KPIs históricos EFOS (hoje)
+                r2 = await session.execute(
+                    text("""
+                        SELECT COUNT(*) AS n_pedidos,
+                               COALESCE(SUM(total), 0) AS total_gmv
+                        FROM commerce_orders
+                        WHERE tenant_id = :tenant_id
+                          AND data_pedido >= :data_inicio
+                          AND data_pedido <= :now
+                    """),
+                    {"tenant_id": tenant_id, "data_inicio": data_inicio, "now": now},
+                )
+                row2 = r2.mappings().first()
+                n2 = int(row2["n_pedidos"]) if row2 else 0
+                if n2 > 0:
+                    n = n2
+                    gmv = row2["total_gmv"] if row2 else 0
+                    fonte = "efos_hoje"
+                else:
+                    # Se não há pedidos hoje no EFOS, usa o total geral para mostrar algo útil
+                    r3 = await session.execute(
+                        text("""
+                            SELECT COUNT(*) AS n_pedidos,
+                                   COALESCE(SUM(total), 0) AS total_gmv
+                            FROM commerce_orders
+                            WHERE tenant_id = :tenant_id
+                        """),
+                        {"tenant_id": tenant_id},
+                    )
+                    row3 = r3.mappings().first()
+                    n = int(row3["n_pedidos"]) if row3 else 0
+                    gmv = row3["total_gmv"] if row3 else 0
+                    fonte = "efos_total"
+
+            ticket = (gmv / n) if n > 0 else 0
+            return {
+                "total_gmv": gmv,
+                "n_pedidos": n,
+                "ticket_medio": ticket,
+                "atualizado_em": now.strftime("%H:%M:%S"),
+                "fonte": fonte,
+            }
     except Exception as exc:
         log.error("dashboard_kpis_erro", error=str(exc))
-        return {"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0, "atualizado_em": "--:--:--"}
+        return {"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0, "atualizado_em": "--:--:--", "fonte": "erro"}
 
 
 async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict[str, Any]]:
-    """Retorna os N pedidos mais recentes do tenant."""
+    """Retorna os N pedidos mais recentes do tenant.
+
+    B-17: se pedidos está vazio, faz fallback para commerce_orders (2592 pedidos EFOS).
+    """
     try:
         from sqlalchemy import text
 
@@ -773,7 +871,27 @@ async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict[st
                 {"tenant_id": tenant_id, "limit": limit},
             )
             rows = result.mappings().all()
-            return [dict(r) for r in rows]
+            if rows:
+                return [dict(r) for r in rows]
+
+            # B-17: fallback para commerce_orders quando pedidos está vazio
+            log.info("dashboard_pedidos_fallback_commerce", tenant_id=tenant_id)
+            fallback = await session.execute(
+                text("""
+                    SELECT
+                        pe_numeropedido::text AS id,
+                        'confirmado'          AS status,
+                        total                 AS total_estimado,
+                        data_pedido           AS criado_em,
+                        cliente_nome
+                    FROM commerce_orders
+                    WHERE tenant_id = :tenant_id
+                    ORDER BY data_pedido DESC
+                    LIMIT :limit
+                """),
+                {"tenant_id": tenant_id, "limit": limit},
+            )
+            return [dict(r) for r in fallback.mappings().all()]
     except Exception as exc:
         log.error("dashboard_pedidos_erro", error=str(exc))
         return []
@@ -807,7 +925,11 @@ async def _get_conversas_ativas(tenant_id: str) -> list[dict[str, Any]]:
 
 
 async def _get_clientes(tenant_id: str, q: str) -> list[dict[str, Any]]:
-    """Retorna clientes do tenant com filtro opcional por nome/CNPJ."""
+    """Retorna clientes do tenant com filtro opcional por nome/CNPJ.
+
+    B-16: se clientes_b2b retorna 0 rows, faz fallback para commerce_accounts_b2b
+    que contém os 614 clientes reais do EFOS.
+    """
     try:
         from sqlalchemy import text
 
@@ -839,32 +961,118 @@ async def _get_clientes(tenant_id: str, q: str) -> list[dict[str, Any]]:
                     {"tenant_id": tenant_id},
                 )
             rows = result.mappings().all()
-            return [dict(r) for r in rows]
+            if rows:
+                return [dict(r) for r in rows]
+
+            # B-16: fallback para commerce_accounts_b2b quando clientes_b2b está vazio
+            log.info("dashboard_clientes_fallback_commerce", tenant_id=tenant_id)
+            if q:
+                fallback = await session.execute(
+                    text("""
+                        SELECT
+                            external_id AS id, nome, cnpj, NULL AS telefone,
+                            (situacao_cliente = 1) AS ativo, NULL AS representante_id,
+                            v.ve_nome AS representante_nome
+                        FROM commerce_accounts_b2b a
+                        LEFT JOIN commerce_vendedores v
+                            ON v.tenant_id = a.tenant_id AND v.ve_codigo = a.vendedor_codigo
+                        WHERE a.tenant_id = :tenant_id
+                          AND LOWER(a.nome) LIKE LOWER(:q_like)
+                        ORDER BY a.nome LIMIT 100
+                    """),
+                    {"tenant_id": tenant_id, "q_like": f"%{q}%"},
+                )
+            else:
+                fallback = await session.execute(
+                    text("""
+                        SELECT
+                            external_id AS id, nome, cnpj, NULL AS telefone,
+                            (situacao_cliente = 1) AS ativo, NULL AS representante_id,
+                            v.ve_nome AS representante_nome
+                        FROM commerce_accounts_b2b a
+                        LEFT JOIN commerce_vendedores v
+                            ON v.tenant_id = a.tenant_id AND v.ve_codigo = a.vendedor_codigo
+                        WHERE a.tenant_id = :tenant_id
+                        ORDER BY a.nome LIMIT 100
+                    """),
+                    {"tenant_id": tenant_id},
+                )
+            return [dict(r) for r in fallback.mappings().all()]
     except Exception as exc:
         log.error("dashboard_clientes_erro", error=str(exc))
         return []
 
 
 async def _get_representantes_com_gmv(tenant_id: str) -> list[dict[str, Any]]:
-    """Retorna representantes com GMV do mês corrente."""
-    try:
-        from datetime import timedelta
+    """Retorna representantes com GMV do mês corrente.
 
-        from src.agents.repo import RelatorioRepo
+    B-21: se pedidos está vazio, faz fallback para commerce_vendedores +
+    commerce_orders para exibir GMV dos dados EFOS.
+    """
+    try:
+        from sqlalchemy import text
+
         from src.providers.db import get_session_factory
 
         factory = get_session_factory()
-        repo = RelatorioRepo()
         now = datetime.now(timezone.utc)
         data_inicio = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         async with factory() as session:
-            return await repo.totais_por_rep(
-                tenant_id=tenant_id,
-                data_inicio=data_inicio,
-                data_fim=now,
-                session=session,
+            # Tenta dados do bot primeiro
+            r = await session.execute(
+                text("""
+                    SELECT COUNT(*) AS n_pedidos
+                    FROM pedidos
+                    WHERE tenant_id = :tenant_id AND ficticio = FALSE
+                      AND criado_em >= :data_inicio
+                """),
+                {"tenant_id": tenant_id, "data_inicio": data_inicio},
             )
+            row = r.mappings().first()
+            n_bot = int(row["n_pedidos"]) if row else 0
+
+            if n_bot > 0:
+                from src.agents.repo import RelatorioRepo
+                repo = RelatorioRepo()
+                return await repo.totais_por_rep(
+                    tenant_id=tenant_id,
+                    data_inicio=data_inicio,
+                    data_fim=now,
+                    session=session,
+                )
+
+            # B-21: fallback — commerce_vendedores + commerce_orders
+            log.info("dashboard_reps_fallback_commerce", tenant_id=tenant_id)
+            fallback = await session.execute(
+                text("""
+                    SELECT
+                        v.ve_codigo                              AS rep_id,
+                        v.ve_nome                               AS rep_nome,
+                        COUNT(o.external_id)                    AS n_pedidos,
+                        COALESCE(SUM(o.total), 0)               AS total_gmv
+                    FROM commerce_vendedores v
+                    LEFT JOIN commerce_orders o
+                        ON o.tenant_id = v.tenant_id
+                       AND o.vendedor_codigo = v.ve_codigo
+                       AND o.data_pedido >= :data_inicio
+                    WHERE v.tenant_id = :tenant_id
+                      AND v.ve_situacaovendedor = 1
+                    GROUP BY v.ve_codigo, v.ve_nome
+                    ORDER BY total_gmv DESC
+                """),
+                {"tenant_id": tenant_id, "data_inicio": data_inicio},
+            )
+            rows = fallback.mappings().all()
+            return [
+                {
+                    "rep_id": r["rep_id"],
+                    "rep_nome": r["rep_nome"] or "Sem nome",
+                    "n_pedidos": int(r["n_pedidos"]),
+                    "total_gmv": r["total_gmv"],
+                }
+                for r in rows
+            ]
     except Exception as exc:
         log.error("dashboard_reps_erro", error=str(exc))
         return []

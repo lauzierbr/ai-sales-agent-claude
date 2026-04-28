@@ -9,15 +9,6 @@
 | B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |
 | B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
-| B-14 | listar_pedidos_por_status retorna vazio — tabela pedidos zerada e tool não consulta commerce_orders | Alta | Piloto | 2026-04-28 |
-| B-15 | commerce_vendedores ignorada pelo agente — clientes sem rep e impossível listar representantes | Alta | Piloto | 2026-04-28 |
-| B-16 | Dashboard /clientes exibe "Nenhum cliente encontrado" — consulta clientes_b2b (vazia) em vez de commerce_accounts_b2b | Alta | Piloto | 2026-04-28 |
-| B-17 | Dashboard /pedidos exibe "Nenhum pedido encontrado" — consulta pedidos (vazia) em vez de commerce_orders | Alta | Piloto | 2026-04-28 |
-| B-18 | Home — bloco "Última sincronização EFOS" mostra "Nunca sincronizado" apesar de 4 sync_runs (1 success, 61891 rows) | Alta | Revisão | 2026-04-28 |
-| B-19 | Home — KPIs (GMV HOJE, Pedidos HOJE, Ticket Médio) sempre R$ 0/0 — consultam pedidos vazio em vez de commerce_orders | Alta | Revisão | 2026-04-28 |
-| B-20 | Dashboard /top-produtos exibe "Nenhum produto no período" — depende de itens_pedido vazio | Alta | Revisão | 2026-04-28 |
-| B-21 | Dashboard /representantes (rota oculta, fora da navegação) exibe vazio — query em pedidos | Média | Revisão | 2026-04-28 |
-| B-22 | Bot continua usando emojis apesar de feedback explícito do gestor "Não usar emojis" (20/04) | Média | Piloto | 2026-04-28 |
 
 > **B-22 detalhe:** Feedback registrado em 20/04 instruiu "Não usar emojis nas respostas". 
 > O bot continua usando 😊, 👇, 🏆, 👋 nas respostas (visto em conversa do gestor 27/04).
@@ -123,6 +114,15 @@
 | B-04 | Feedback marcado como positivo mesmo em respostas de erro     | Hotfix v0.6.1 | 2026-04-21 |
 | B-05 | confirmar_pedido retornava erro técnico visível ao usuário    | Hotfix v0.6.1 | 2026-04-21 |
 | B-06 | PDF e chat exibiam UUIDs em vez de nomes de cliente/rep       | Hotfix v0.6.1 | 2026-04-21 |
+| B-14 | listar_pedidos_por_status retorna vazio — tabela pedidos zerada | Hotfix v0.9.1 | 2026-04-27 |
+| B-15 | commerce_vendedores ignorada — listar_representantes ausente   | Hotfix v0.9.1 | 2026-04-27 |
+| B-16 | Dashboard /clientes mostra "Nenhum cliente" (614 em commerce_*) | Hotfix v0.9.1 | 2026-04-27 |
+| B-17 | Dashboard /pedidos mostra "Nenhum pedido" (2592 em commerce_*)  | Hotfix v0.9.1 | 2026-04-27 |
+| B-18 | Home sync EFOS mostra "Nunca sincronizado" (bug render inicial)  | Hotfix v0.9.1 | 2026-04-27 |
+| B-19 | Home KPIs sempre 0/0/0 — pedidos vazio, sem fallback commerce   | Hotfix v0.9.1 | 2026-04-27 |
+| B-20 | Dashboard /top-produtos "Nenhum produto" — itens_pedido vazio   | Hotfix v0.9.1 | 2026-04-27 |
+| B-21 | Dashboard /representantes fora do menu de navegação + vazio     | Hotfix v0.9.1 | 2026-04-27 |
+| B-22 | Bot usava emojis apesar de feedback "Não usar emojis" (20/04)   | Hotfix v0.9.1 | 2026-04-27 |
 | B-07 | Redis history corruption — orphaned tool_result causava 400   | Sprint 4      | 2026-04-20 |
 | B-08 | Agentes anunciavam ferramentas que não existiam               | Sprint 4      | 2026-04-20 |
 | B-09 | Período hardcoded 30 dias no SQL — ignorava pedido do usuário | Sprint 4      | 2026-04-20 |

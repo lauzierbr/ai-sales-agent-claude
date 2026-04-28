@@ -895,6 +895,9 @@ class RelatorioRepo:
     ) -> list[dict]:
         """Retorna top produtos por quantidade vendida no período.
 
+        B-20: se itens_pedido está vazio, faz fallback para commerce_order_items
+        que contém os itens dos pedidos importados do EFOS.
+
         Args:
             tenant_id: ID do tenant — filtro obrigatório.
             dias: número de dias para o período (ex: 30 = últimos 30 dias).
@@ -924,11 +927,39 @@ class RelatorioRepo:
             {"tenant_id": tenant_id, "limite": limite, "data_inicio": data_inicio},
         )
         rows = result.mappings().all()
+        if rows:
+            return [
+                {
+                    "produto_nome": r["produto_nome"],
+                    "quantidade_total": int(r["quantidade_total"]),
+                    "valor_total": r["valor_total"],
+                }
+                for r in rows
+            ]
+
+        # B-20: fallback para commerce_order_items quando itens_pedido está vazio
+        fallback_result = await session.execute(
+            text("""
+                SELECT
+                    ci.produto_nome                              AS produto_nome,
+                    SUM(ci.quantidade)                          AS quantidade_total,
+                    COALESCE(SUM(ci.total), 0)                  AS valor_total
+                FROM commerce_order_items ci
+                JOIN commerce_orders co ON co.external_id = ci.order_external_id
+                WHERE ci.tenant_id = :tenant_id
+                  AND co.data_pedido >= :data_inicio
+                GROUP BY ci.produto_nome
+                ORDER BY quantidade_total DESC
+                LIMIT :limite
+            """),
+            {"tenant_id": tenant_id, "limite": limite, "data_inicio": data_inicio},
+        )
+        fallback_rows = fallback_result.mappings().all()
         return [
             {
                 "produto_nome": r["produto_nome"],
-                "quantidade_total": int(r["quantidade_total"]),
+                "quantidade_total": int(r["quantidade_total"]) if r["quantidade_total"] else 0,
                 "valor_total": r["valor_total"],
             }
-            for r in rows
+            for r in fallback_rows
         ]
