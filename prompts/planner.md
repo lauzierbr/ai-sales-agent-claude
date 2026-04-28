@@ -161,6 +161,28 @@ contra os dados reais. O Generator não pode adivinhar nomes de campos.
 Antes de fechar o spec, o Planner verifica unicidade das PKs:
 `SELECT col, COUNT(*) FROM tb GROUP BY col HAVING COUNT(*) > 1`.
 
+**Critério A_BEHAVIORAL obrigatório (Lição Sprint 9):** Todo spec que toca agente
+conversacional OU dashboard DEVE incluir critério `A_BEHAVIORAL_AGENT` (sprint
+de agente) ou `A_BEHAVIORAL_UI` (sprint de dashboard) — ou ambos. Smoke gate
+de endpoints + COUNTs no banco não basta: o Sprint 9 confirmou que dados podem
+existir e endpoints podem responder enquanto o produto ainda está quebrado para
+o usuário. Ver `prompts/evaluator.md` seção "Lição aprendida — Sprint 9" para
+o template exato.
+
+**Migração exaustiva (sprints que migram leituras de tabela legada):** Quando o
+sprint migra reads de uma tabela legada (`pedidos`, `clientes_b2b`, `produtos`)
+para uma nova fonte (`commerce_*`), o spec DEVE listar todos os hits encontrados
+via grep antes de fechar:
+
+```bash
+grep -rn "FROM <tabela_legada>\|JOIN <tabela_legada>" output/src/ --include="*.py"
+```
+
+Cada hit do grep deve estar categorizado no spec como: **migrar**, **manter
+(com justificativa)** ou **registrar em débito técnico**. Não pode haver hit
+não-categorizado. O Generator usa essa lista como checklist de migração;
+o Evaluator verifica que cada item foi endereçado antes de aprovar.
+
 ---
 
 ## Formato obrigatório de artifacts/spec.md

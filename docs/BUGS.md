@@ -9,6 +9,32 @@
 | B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |
 | B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
+| B-14 | listar_pedidos_por_status retorna vazio — tabela pedidos zerada e tool não consulta commerce_orders | Alta | Piloto | 2026-04-28 |
+| B-15 | commerce_vendedores ignorada pelo agente — clientes sem rep e impossível listar representantes | Alta | Piloto | 2026-04-28 |
+| B-16 | Dashboard /clientes exibe "Nenhum cliente encontrado" — consulta clientes_b2b (vazia) em vez de commerce_accounts_b2b | Alta | Piloto | 2026-04-28 |
+
+> **B-16 detalhe:** Dashboard `/dashboard/clientes` consulta tabela `clientes_b2b` que está com
+> 0 linhas após reset do banco no deploy Sprint 8/9. Os 614 clientes reais estão em
+> `commerce_accounts_b2b`. Mesma raiz do B-14 e B-15 — tabelas legadas zeradas, dados migrados
+> para `commerce_*`. Corrigir: endpoint do dashboard deve consultar `commerce_accounts_b2b`
+> (com fallback ou substituição definitiva de `clientes_b2b`).
+
+> **B-15 detalhe:** `commerce_vendedores` tem 24 representantes reais (EFOS) mas o AgentGestor
+> não tem tools que a consultam diretamente. Dois sintomas: (1) listagem de clientes exibe
+> "Sem representante" — query não faz LEFT JOIN com `commerce_vendedores` via
+> `commerce_accounts_b2b.vendedor_codigo = commerce_vendedores.ve_codigo`
+> (commerce/repo.py:98–119); (2) ao pedir "Liste os representantes", agente tenta inferir
+> via `commerce_orders` (vazia — B-14) e responde que não há dados. Corrigir:
+> (a) adicionar JOIN na query de clientes; (b) criar tool `listar_representantes` que
+> consulte `commerce_vendedores` diretamente.
+> Arquivos: `output/src/commerce/repo.py:98`, `output/src/agents/runtime/agent_gestor.py`.
+
+> **B-14 detalhe:** Dois problemas: (1) tabela `pedidos` está com 0 linhas para tenant jmb no staging
+> (provável reset de banco no deploy Sprint 8/9 — 2592 pedidos reais estão em `commerce_orders`,
+> importados pelo sync EFOS em 2026-04-27T20:40). (2) `listar_pedidos_por_status`
+> (agent_gestor.py:622) só consulta `pedidos` via `OrderRepo.listar_por_tenant_status()`
+> (orders/repo.py:230) — não inclui `commerce_orders`. Corrigir: (a) verificar se houve perda
+> de dados no deploy; (b) expandir a tool para incluir registros de `commerce_orders`.
 
 > **B-13 detalhe:** EAN JMB segue padrão: últimos 6 dígitos = `codigo_externo` interno
 > (ex: EAN 7898923148571 → codigo_externo "148571"). A busca atual faz match exato em

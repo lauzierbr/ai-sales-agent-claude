@@ -4,7 +4,9 @@ description: Sintetiza feedbacks do piloto, bugs abertos e backlog para propor
   priorização do próximo sprint. Invocar em sessão separada quando houver feedbacks
   acumulados para processar ou ao definir escopo do próximo sprint.
 tools: Read, Glob, Grep
-model: sonnet
+model: opus
+# Justificativa: Priorização de backlog e síntese de feedback exigem raciocínio
+# estratégico de produto — Opus justifica o custo aqui.
 ---
 
 Você é o agente de Product Owner do ai-sales-agent.

@@ -270,3 +270,41 @@
     O Evaluator verifica grep dos nomes reais no código gerado.
   category: runtime
   sprint: 8
+
+# ─────────────────────────────────────────────
+# Migração de leituras (tabela legada → commerce_*)
+# ─────────────────────────────────────────────
+
+- id: migration_cherry_picking
+  pattern: 'ESTE_GOTCHA_NAO_TEM_LINT_AUTOMATICO_VER_DESCRICAO'
+  description: >
+    Sprints de migração de leituras tendem a ser implementados de forma seletiva:
+    alguns reads migram, outros ficam para trás silenciosamente. Quando a tabela
+    legada fica vazia (ex: após reset de banco em deploy), os reads não-migrados
+    retornam vazio e o produto parece quebrado mesmo com smoke gate verde.
+    Caso real Sprint 9: B-14, B-15, B-16 — OrderRepo, dashboard /clientes e
+    AgentGestor não foram migrados para commerce_*.
+  fix: >
+    Antes de fechar qualquer fase de migração de reads, rodar:
+    grep -rn "FROM <tabela_legada>\|JOIN <tabela_legada>" output/src/ --include="*.py"
+    Cada hit deve ser categorizado: migrado / mantido (com justificativa) /
+    débito técnico. Lista exaustiva no spec, verificada pelo Evaluator.
+  category: deploy
+  sprint: 9
+
+- id: smoke_gate_existence_only
+  pattern: 'ESTE_GOTCHA_NAO_TEM_LINT_AUTOMATICO_VER_DESCRICAO'
+  description: >
+    Smoke gates que verificam apenas existência (COUNT no banco, GET /health 200,
+    HTTP 401 em endpoints protegidos) NÃO detectam bugs comportamentais. Sprint 9:
+    smoke ALL OK enquanto dashboard /clientes mostrava "Nenhum cliente encontrado"
+    e agente respondia "nenhum representante" tendo 24 reps no banco.
+  fix: >
+    Para sprint que toca agente: A_BEHAVIORAL_AGENT — POST /webhook simulando
+    perguntas reais, asserta dados não-vazios na resposta.
+    Para sprint que toca dashboard: A_BEHAVIORAL_UI — Chrome DevTools MCP /
+    Playwright / Preview MCP navegando em cada rota autenticada e capturando
+    listagens.
+    Ver prompts/evaluator.md "Lição aprendida — Sprint 9".
+  category: deploy
+  sprint: 9

@@ -5,6 +5,9 @@ description: Implementa o código do sprint do ai-sales-agent. Invocar quando o
   Lê o contrato, implementa em output/src/, roda auto-avaliação e devolve handoff.
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+# Justificativa: Sonnet 4.6 é forte em código e o trabalho do Generator é
+# majoritariamente mecânico (implementação seguindo contrato). Manter Sonnet
+# economiza ~5x vs Opus sem perda de qualidade.
 ---
 
 Você é o agente gerador do ai-sales-agent.

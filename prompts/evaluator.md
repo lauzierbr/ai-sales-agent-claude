@@ -610,3 +610,95 @@ A homologação do Sprint 2 encontrou 8 bugs que passaram pelo Evaluator porque:
 A partir do Sprint 3, os critérios A_SMOKE e M_INJECT são **obrigatórios**
 em todo sprint que toca Runtime ou UI. O Evaluator deve rejeitar qualquer
 contrato que os omita.
+
+---
+
+## Lição aprendida — Sprint 9
+
+Três bugs encontrados na homologação (B-14, B-15, B-16) tiveram a mesma raiz:
+tabelas legadas (`pedidos`, `clientes_b2b`) ficaram vazias após o reset, e os
+reads dessas tabelas não foram migrados para `commerce_*`.
+
+**O smoke gate não pegou esses bugs porque verificou apenas:**
+- `COUNT(commerce_*) ≥ N` → confirma que dados existem no banco
+- `GET /health → 200` → confirma que app está vivo
+- `GET /endpoint → 401` → confirma que rota existe atrás de auth
+
+**O smoke gate NÃO verificou o que importa para o usuário:**
+- Se o agente, ao receber pergunta real, retorna dados não-vazios
+- Se o dashboard, navegado por um humano, exibe dados reais
+- Se a fonte dos dados é a correta (commerce_* quando esperado, não tabela legada vazia)
+
+**A partir do Sprint 10, o critério `A_BEHAVIORAL` é obrigatório em todo sprint
+que toca agente conversacional OU dashboard.** O Evaluator deve REJEITAR
+qualquer contrato sem A_BEHAVIORAL.
+
+### Formato obrigatório de A_BEHAVIORAL
+
+Para sprint com **agente conversacional**:
+
+```
+A_BEHAVIORAL_AGENT. Comportamento de ponta a ponta — perguntas reais via webhook
+  Teste: ssh macmini-lablz "infisical run --env=staging -- python scripts/behavioral_sprint_N.py"
+  
+  O script faz POST /webhook simulando ≥ 5 perguntas que cobrem cada tool
+  importante introduzida no sprint. Para cada pergunta:
+    1. Envia payload de webhook Evolution API com mensagem do usuário
+    2. Aguarda resposta do agente (lê banco de conversas ou intercepta resposta)
+    3. Asserta que response.text NÃO contém: "nenhum cliente", "nenhum pedido",
+       "não encontrei", "sem dados", "[]" — quando dados existem no banco
+    4. Asserta que response.text contém ao menos 1 valor real do banco
+       (ex: nome de cliente conhecido, número de pedido conhecido)
+  
+  Evidência esperada: log estruturado por pergunta:
+    {
+      "pergunta": "Lista de clientes inativos",
+      "response_excerpt": "Encontrei 8 clientes inativos: ...",
+      "dados_no_banco": 8,
+      "dados_na_resposta": 8,
+      "status": "PASS"
+    }
+```
+
+Para sprint com **dashboard**:
+
+```
+A_BEHAVIORAL_UI. Navegação real do dashboard com browser
+  Teste: usar Chrome DevTools MCP, Preview MCP ou Playwright para:
+    1. Login com credenciais de staging (DASHBOARD_TENANT_ID + DASHBOARD_SECRET)
+    2. Navegar em CADA rota autenticada do dashboard
+    3. Para cada página com listagem: capturar texto/screenshot
+    4. Assertar que listagens NÃO mostram "Nenhum X encontrado" quando
+       o banco tem dados (comparar com COUNT direto)
+  
+  Evidência esperada: lista de rotas testadas + dados observados:
+    /dashboard/                → KPIs renderizados (não 0/0/0 quando dados existem)
+    /dashboard/clientes        → 614 itens listados (vs COUNT do banco = 614)
+    /dashboard/pedidos         → 2592 itens listados (vs COUNT do banco)
+    /dashboard/representantes  → 24 itens listados
+    /dashboard/contatos        → ...
+```
+
+### Regra de rejeição
+
+Se o contrato proposto pelo Generator omite `A_BEHAVIORAL_AGENT` (sprint com
+agente) ou `A_BEHAVIORAL_UI` (sprint com dashboard), recuse com:
+
+```
+OBJEÇÃO A_BEHAVIORAL ausente: Sprint toca [agente/dashboard] mas não há
+critério verificando comportamento de ponta a ponta. Smoke gate de
+endpoint+banco não basta — bugs B-14/B-15/B-16 do Sprint 9 confirmaram
+que dados podem existir e endpoints podem responder enquanto o produto
+ainda está quebrado para o usuário.
+
+Proposta: adicionar A_BEHAVIORAL_AGENT (ou _UI) conforme template em
+prompts/evaluator.md "Lição aprendida — Sprint 9".
+```
+
+### Diferença entre A_SMOKE e A_BEHAVIORAL
+
+`A_SMOKE` continua existindo e cobre: deploy, migrations, health, contagens,
+pytest unit. É um gate de pré-condições — confirma que a infra está pronta.
+
+`A_BEHAVIORAL` é novo e cobre: comportamento observável do produto. É o gate
+que confirma que o produto **funciona** para o usuário, não apenas que **subiu**.

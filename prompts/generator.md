@@ -787,3 +787,78 @@ Declarou o ciclo encerrado. O usuário teve que pedir para executar.
 **Regra:** o ciclo de sprint só encerra quando `GET /health` responde com a
 versão correta E `python scripts/smoke_sprint_N.py` retorna `ALL OK` — ambos
 confirmados com saída real, não apenas com "script criado".
+
+---
+
+## Lição aprendida — Sprint 9
+
+Cinco erros que causaram a rejeição completa do sprint:
+
+**1. Migração de leituras superficial.**
+O contrato disse "migrar leituras para commerce_*". Migrei `catalog/repo.py` (Fase 1a)
+e adicionei fallback em `agents/repo.py` (Fase 1b). Deixei intocados:
+- `OrderRepo.listar_por_tenant_status` → B-14 (agente não vê 2592 pedidos EFOS)
+- `dashboard/ui.py` rota `/clientes` → B-16 (614 clientes invisíveis no dashboard)
+- Ausência de tool `listar_representantes` em AgentGestor → B-15 (24 reps invisíveis)
+
+**Regra:** Para qualquer sprint que migra reads de tabelas legadas, ANTES de
+declarar a fase concluída, rodar grep exaustivo:
+
+```bash
+# Para cada tabela legada que está sendo migrada:
+grep -rn "FROM clientes_b2b\|FROM pedidos\|FROM produtos\|JOIN clientes_b2b" \
+  output/src/ --include="*.py"
+```
+
+Cada hit do grep deve ser categorizado como:
+- **Migrado:** lógica passou para `commerce_*` (citar arquivo:linha do novo código)
+- **Mantido com justificativa:** explicar por que continua na tabela legada
+- **Débito técnico:** registrado em `docs/TECH_DEBT.md` para sprint futuro
+
+Não pode haver hit não-categorizado. Sprint só fecha quando todos os hits foram
+endereçados.
+
+**2. Smoke gate testou existência, não comportamento.**
+Eu declarei "ALL OK" no Sprint 9 com:
+- `COUNT(commerce_products) = 743` ✅ (dados existem)
+- `GET /health → 200` ✅ (app está vivo)
+- `HTTP 401 em /dashboard/sync-status` ✅ (rota existe atrás de auth)
+
+Mas o usuário abriu `/dashboard/clientes` no browser e viu "Nenhum cliente encontrado".
+Os dados existiam, o endpoint respondia, mas o produto estava quebrado.
+
+**Regra:** Smoke gate de sprint que toca agente/dashboard DEVE incluir teste
+comportamental. O Evaluator agora exige `A_BEHAVIORAL_AGENT` ou `A_BEHAVIORAL_UI`
+no contrato (ver prompts/evaluator.md "Lição aprendida — Sprint 9").
+
+**3. Não usei as ferramentas de teste browser que tinha disponíveis.**
+Tenho acesso a Chrome DevTools MCP, Playwright via MCP, Preview MCP. Não usei
+em nenhum momento do Sprint 9. O usuário tinha registrado em memória desde
+Sprint 4 (`feedback_evaluator_browser.md`) que dashboard precisa de teste real
+no browser. Não apliquei.
+
+**Regra:** Sprint que toca dashboard tem como entrega obrigatória:
+`scripts/test_dashboard_sprint_N.py` ou similar usando MCP de browser
+(Chrome DevTools, Preview, ou Playwright via subprocess) que:
+- Faz login com credenciais de staging
+- Navega em CADA rota autenticada
+- Captura screenshot + texto de cada página
+- Asserta que listagens não mostram "Nenhum X" quando o banco tem dados
+
+**4. "Pronto para homologação" significa produto funciona, não pipeline verde.**
+Sprint 8 e Sprint 9 — o mesmo erro: smoke gate ALL OK + Evaluator APROVADO,
+mas bugs comportamentais óbvios que o usuário pegou nos primeiros 30 segundos.
+
+**Regra:** Antes de declarar pronto, simular a perspectiva do usuário humano:
+- Mandar 5+ perguntas reais via webhook simulando cliente/rep/gestor
+- Abrir o dashboard com browser e clicar em todas as listagens
+- Reportar evidência observacional (texto da resposta, screenshot da página),
+  não apenas COUNTs e HTTP status codes
+
+**5. Resposta a rejeição — não recodificar com vergonha, entender a causa.**
+Quando o usuário rejeitar um sprint:
+- Pause antes de tocar em código
+- Liste os bugs e busque a causa raiz comum (no Sprint 9, todos eram do mesmo
+  padrão de migração superficial)
+- Proponha mudança de processo, não só fix de código
+- Documente como lição em `docs/RETROSPECTIVES/sprint-N.md` antes de continuar

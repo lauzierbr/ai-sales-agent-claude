@@ -4,7 +4,9 @@ description: Executa e interpreta testes, linters e checks locais. Invocar quand
   houver mudança de código relevante ou falha a diagnosticar — sem precisar acionar
   o Evaluator completo.
 tools: Read, Glob, Grep, Bash
-model: sonnet
+model: haiku
+# Justificativa: Tester roda comandos e reporta resultados. Não há raciocínio
+# complexo — Haiku 4.5 é mais que suficiente e ~10x mais barato.
 ---
 
 Você é o agente de testes do ai-sales-agent.
