@@ -296,7 +296,7 @@ class CommerceRepo:
                 text("""
                     SELECT
                         o.numero_pedido               AS id,
-                        o.cliente_nome                AS cliente_nome,
+                        COALESCE(NULLIF(o.cliente_nome, ''), a.nome, o.cliente_codigo) AS cliente_nome,
                         v.ve_nome                     AS representante_nome,
                         o.total                       AS total_estimado,
                         :status_val                   AS status,
@@ -305,6 +305,9 @@ class CommerceRepo:
                     LEFT JOIN commerce_vendedores v
                         ON v.tenant_id = o.tenant_id
                        AND v.ve_codigo = o.vendedor_codigo
+                    LEFT JOIN commerce_accounts_b2b a
+                        ON a.tenant_id = o.tenant_id
+                       AND a.codigo = o.cliente_codigo
                     WHERE o.tenant_id = :tenant_id
                       AND o.data_pedido >= :data_inicio
                     ORDER BY o.data_pedido DESC
@@ -322,7 +325,7 @@ class CommerceRepo:
                 text("""
                     SELECT
                         o.numero_pedido               AS id,
-                        o.cliente_nome                AS cliente_nome,
+                        COALESCE(NULLIF(o.cliente_nome, ''), a.nome, o.cliente_codigo) AS cliente_nome,
                         v.ve_nome                     AS representante_nome,
                         o.total                       AS total_estimado,
                         'confirmado'                  AS status,
@@ -331,6 +334,9 @@ class CommerceRepo:
                     LEFT JOIN commerce_vendedores v
                         ON v.tenant_id = o.tenant_id
                        AND v.ve_codigo = o.vendedor_codigo
+                    LEFT JOIN commerce_accounts_b2b a
+                        ON a.tenant_id = o.tenant_id
+                       AND a.codigo = o.cliente_codigo
                     WHERE o.tenant_id = :tenant_id
                       AND o.data_pedido >= :data_inicio
                     ORDER BY o.data_pedido DESC

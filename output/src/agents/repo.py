@@ -938,19 +938,24 @@ class RelatorioRepo:
             ]
 
         # B-20: fallback para commerce_order_items quando itens_pedido está vazio
+        # JOIN com commerce_products para pegar nome do produto (commerce_order_items.produto_nome
+        # vem NULL do EFOS — só tem codigo). Fallback final: usar o próprio código.
         fallback_result = await session.execute(
             text("""
                 SELECT
-                    ci.produto_nome                              AS produto_nome,
-                    SUM(ci.quantidade)                          AS quantidade_total,
-                    COALESCE(SUM(ci.total), 0)                  AS valor_total
+                    COALESCE(p.nome, ci.produto_codigo, '(sem nome)') AS produto_nome,
+                    SUM(ci.quantidade)                                AS quantidade_total,
+                    COALESCE(SUM(ci.total), 0)                        AS valor_total
                 FROM commerce_order_items ci
                 JOIN commerce_orders co
                     ON co.external_id = ci.order_external_id
                    AND co.tenant_id = ci.tenant_id
+                LEFT JOIN commerce_products p
+                    ON p.tenant_id = ci.tenant_id
+                   AND p.codigo = ci.produto_codigo
                 WHERE ci.tenant_id = :tenant_id
                   AND co.data_pedido >= :data_inicio
-                GROUP BY ci.produto_nome
+                GROUP BY COALESCE(p.nome, ci.produto_codigo, '(sem nome)')
                 ORDER BY quantidade_total DESC
                 LIMIT :limite
             """),

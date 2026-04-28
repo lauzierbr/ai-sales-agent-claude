@@ -874,19 +874,24 @@ async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict[st
             if rows:
                 return [dict(r) for r in rows]
 
-            # B-17: fallback para commerce_orders quando pedidos está vazio
+            # B-17: fallback para commerce_orders quando pedidos está vazio.
+            # cliente_nome vem NULL do EFOS — usamos JOIN com commerce_accounts_b2b
+            # via cliente_codigo. Mesmo padrão para nome do representante.
             log.info("dashboard_pedidos_fallback_commerce", tenant_id=tenant_id)
             fallback = await session.execute(
                 text("""
                     SELECT
-                        numero_pedido         AS id,
-                        'confirmado'          AS status,
-                        total                 AS total_estimado,
-                        data_pedido           AS criado_em,
-                        cliente_nome
-                    FROM commerce_orders
-                    WHERE tenant_id = :tenant_id
-                    ORDER BY data_pedido DESC
+                        o.numero_pedido         AS id,
+                        'confirmado'            AS status,
+                        o.total                 AS total_estimado,
+                        o.data_pedido           AS criado_em,
+                        COALESCE(NULLIF(o.cliente_nome, ''), a.nome, o.cliente_codigo) AS cliente_nome
+                    FROM commerce_orders o
+                    LEFT JOIN commerce_accounts_b2b a
+                        ON a.tenant_id = o.tenant_id
+                       AND a.codigo = o.cliente_codigo
+                    WHERE o.tenant_id = :tenant_id
+                    ORDER BY o.data_pedido DESC
                     LIMIT :limit
                 """),
                 {"tenant_id": tenant_id, "limit": limit},
