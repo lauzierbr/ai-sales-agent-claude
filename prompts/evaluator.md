@@ -702,3 +702,17 @@ pytest unit. É um gate de pré-condições — confirma que a infra está pront
 
 `A_BEHAVIORAL` é novo e cobre: comportamento observável do produto. É o gate
 que confirma que o produto **funciona** para o usuário, não apenas que **subiu**.
+
+### Protocolo concreto: docs/PRE_HOMOLOGATION_REVIEW.md
+
+A_BEHAVIORAL é satisfeito executando o protocolo em `docs/PRE_HOMOLOGATION_REVIEW.md`,
+que enumera explicitamente:
+- 10 rotas do dashboard a navegar (Home, Pedidos, Conversas, Contatos, Clientes,
+  Preços, Feedbacks, Top Produtos, Representantes, Configurações)
+- ≥ 13 cenários de bot por persona (cliente/rep/gestor)
+- Verificação de invariantes históricos (bugs resolvidos não regrediram,
+  feedbacks ativos do gestor são respeitados)
+
+O Evaluator verifica que `artifacts/pre_homolog_review_sprint_N.md` existe e
+tem todos os itens em PASS. Se algum item está em FAIL, sprint é REPROVADO.
+Se o arquivo não existe, sprint é REPROVADO sem necessidade de outras checagens.

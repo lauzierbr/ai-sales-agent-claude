@@ -849,11 +849,14 @@ no browser. Não apliquei.
 Sprint 8 e Sprint 9 — o mesmo erro: smoke gate ALL OK + Evaluator APROVADO,
 mas bugs comportamentais óbvios que o usuário pegou nos primeiros 30 segundos.
 
-**Regra:** Antes de declarar pronto, simular a perspectiva do usuário humano:
-- Mandar 5+ perguntas reais via webhook simulando cliente/rep/gestor
-- Abrir o dashboard com browser e clicar em todas as listagens
-- Reportar evidência observacional (texto da resposta, screenshot da página),
-  não apenas COUNTs e HTTP status codes
+**Regra:** Antes de declarar pronto, executar o protocolo
+`docs/PRE_HOMOLOGATION_REVIEW.md` e anexar `artifacts/pre_homolog_review_sprint_N.md`
+com PASS. O protocolo é fixo: 10 rotas do dashboard navegadas via Chrome DevTools
+MCP / Playwright / Preview MCP + ≥ 13 cenários de bot por persona + verificação
+de invariantes históricos (feedbacks ativos do gestor).
+
+Sem esse artefato, sprint NÃO está pronto — independente de quantos OKs o
+smoke gate tenha. O Evaluator verifica a existência do artefato antes de aprovar.
 
 **5. Resposta a rejeição — não recodificar com vergonha, entender a causa.**
 Quando o usuário rejeitar um sprint:
