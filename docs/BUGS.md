@@ -9,6 +9,37 @@
 | B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |
 | B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
+| B-23 | Áudio WhatsApp (H-20/F-02a) não funciona — Whisper rejeita 400 "Invalid file format" porque audioMessage.url retorna conteúdo criptografado E2E | Alta | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-23 detalhe:** Implementação Sprint 9 baixa o áudio via `audioMessage.url`
+> (servidor mmg.whatsapp.net) e envia para Whisper. Conteúdo é criptografado
+> end-to-end pelo WhatsApp — não é OGG válido. Whisper rejeita com:
+> `400 Invalid file format. Supported formats: ['flac','m4a','mp3','mp4','mpeg','mpga','oga','ogg','wav','webm']`
+>
+> Log confirma duas tentativas em 28/04 19:04 e 19:05, ambas com erro 400.
+> O bot então cai no fallback "Recebi seu áudio, mas houve uma falha na
+> transcrição" — porém respondeu de forma diferente da esperada porque o
+> agente cliente reformulou a mensagem como se fosse texto puro.
+>
+> **Correção:** baixar áudio descriptografado via endpoint da Evolution API
+> ao invés da URL do WhatsApp:
+>
+>   ```python
+>   # POST {EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{instance}
+>   # body: {"message": {"key": {...}}}
+>   # headers: {"apikey": EVOLUTION_API_KEY}
+>   # retorna: {"base64": "<áudio descriptografado>", "mimetype": "audio/ogg; codecs=opus"}
+>   ```
+>
+> Alternativa: configurar `WEBHOOK_BASE64=true` no servidor Evolution API
+> (env var) — webhook passaria a incluir `audioMessage.base64` já
+> descriptografado. Solução via Evolution API endpoint é mais defensiva
+> (não depende de config externa).
+>
+> **Arquivos a modificar:**
+> - `output/src/agents/ui.py:285-312` — substituir tentativa de URL+base64
+>   por chamada ao endpoint da Evolution API
+> - Pode reaproveitar `EVOLUTION_API_URL` e `EVOLUTION_API_KEY` já no Infisical
 
 > **B-22 detalhe:** Feedback registrado em 20/04 instruiu "Não usar emojis nas respostas". 
 > O bot continua usando 😊, 👇, 🏆, 👋 nas respostas (visto em conversa do gestor 27/04).
