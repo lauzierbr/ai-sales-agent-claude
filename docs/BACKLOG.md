@@ -15,6 +15,28 @@ Features solicitadas ainda não implementadas, priorizadas pelo PO.
 | F-02 | Aceitar áudio e imagem como input no WhatsApp (transcrever pedido por voz, buscar produto por imagem ou código de barras) | Piloto | Alto — reduz fricção operacional para clientes e reps | Alto |
 | F-03 | Status e versão de entrega no feedback — campos `status` (aberto/em_andamento/resolvido) e `versao_entrega` (ex: v0.7.0) na tabela `feedbacks` + UI no painel do gestor para visualizar e atualizar | Piloto | Médio — rastreabilidade do ciclo feedback→entrega | Médio |
 | F-04 | Modelagem cliente PJ × contato PF — separar `commerce_accounts_b2b` (pessoa jurídica) de `cliente_contatos` (1+N pessoas físicas com WhatsApp); importar `cl_contato`, `cl_telefone`, `cl_telefonecelular`, `cl_email` do EFOS | Homologação Sprint 9 | Alto — resolve B-27 estruturalmente e dá base para múltiplos compradores por cliente | Médio |
+| F-05 | **AnalystAgent — meta-agente de observabilidade** — persona admin que consulta Langfuse e extrai inteligência operacional (custo, anomalias, qualidade). Diferencial de produto. Aprovado em ADR D031, alvo Sprint 11. | Investigação 29/04 | Alto — diferencial competitivo + reduz tempo de investigação de bugs/incidentes | Alto (3 sprints incrementais) |
+
+> **F-05 detalhe:** Visto em ADR [D031](../docs/design-docs/D031-analyst-agent-observability.md).
+>
+> **MVP (Sprint 11):** 3 tools (cost_breakdown, top_anomalies,
+> conversation_summary) + 4 detectors (loop, cost_outlier, recovery_destrutivo,
+> tool_failure) + persona Analyst exclusiva admin via WhatsApp + endpoint
+> `/dashboard/insights`.
+>
+> **Pré-requisito:** B-30 corrigido no Sprint 10 (sem generations no Langfuse,
+> não há o que analisar).
+>
+> **Decisões PO confirmadas:**
+> - Persona separada (não integra ao AgentGestor)
+> - Single admin/operador no MVP; preparar arch para futuro Manager por tenant
+> - Dados internos (sem PII redaction no MVP)
+> - Sprint 11 alvo
+>
+> **Por que é diferencial:** poucos sistemas SaaS de agentes têm
+> meta-observabilidade conversacional. Reduz drasticamente tempo de investigação
+> (B-26, B-28, B-30 levaram horas de análise manual nesta semana — auto-detectados
+> seriam minutos).
 
 > **F-04 detalhe (investigação 29/04):**
 >
