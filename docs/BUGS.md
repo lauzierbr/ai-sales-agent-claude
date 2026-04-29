@@ -13,6 +13,83 @@
 | B-24 | Bot nega capacidade de áudio em vez de admitir falha temporária — fallback injeta texto que confunde o LLM + system prompt não menciona a capacidade | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-25 | Inconsistência de ano em relatórios + ausência de tool de ranking — agente faz 24 chamadas seriais e escolhe ano default diferente da pergunta anterior | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-26 | Truncação cega do histórico Redis quebra pares tool_use/tool_result, dispara erro 400 e "recovery destrutivo" que apaga TODO o contexto conversacional | Crítica | Homologação Sprint 9 | 2026-04-29 |
+| B-27 | Criar contato com perfil "cliente" via dashboard é NO-OP silencioso — UPDATE em clientes_b2b com ID do EFOS (commerce_accounts_b2b) acerta 0 rows e redireciona como sucesso | Crítica | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-27 detalhe (showstopper):** Caso real homologação 29/04 09:30-09:32.
+> Logs confirmam 2 POSTs `/dashboard/contatos/novo` retornando 302 sem erro,
+> mas `clientes_b2b` permaneceu com 0 rows.
+>
+> **Mecanismo do bug:**
+>
+> 1. Página `/dashboard/contatos/novo` (GET) chama `_get_clientes(tenant_id, "")`
+>    para popular dropdown de clientes B2B existentes
+> 2. `clientes_b2b` está vazia (0 rows após reset Sprint 8/9)
+> 3. `_get_clientes` cai no fallback de `commerce_accounts_b2b` (B-16 fix do
+>    hotfix) — retorna 614 clientes do EFOS, com `id = external_id` do EFOS
+> 4. Usuário seleciona um cliente do dropdown — `cliente_b2b_id` no form vai
+>    com ID do `commerce_accounts_b2b` (não existe em `clientes_b2b`)
+> 5. POST `/dashboard/contatos/novo` (linha 502-506 de `dashboard/ui.py`):
+>    ```python
+>    elif perfil == "cliente" and cliente_b2b_id:
+>        await session.execute(
+>            text("UPDATE clientes_b2b SET telefone=:tel, nome_contato=:nc
+>                  WHERE id=:id AND tenant_id=:tid"),
+>            {"tel": telefone, "nc": nome_contato,
+>             "id": cliente_b2b_id, "tid": tenant_id},
+>        )
+>    ```
+> 6. UPDATE acerta **0 rows** (id do EFOS não existe em `clientes_b2b`)
+> 7. PostgreSQL não levanta erro em UPDATE sem match — é semanticamente válido
+> 8. `await session.commit()` roda sem erro
+> 9. Redirect 302 para `/dashboard/contatos` — usuário vê tela como se sucesso
+> 10. Listagem `/dashboard/contatos` lista gestores+reps+contatos de
+>     `clientes_b2b` (que continua vazia) — novo contato não aparece
+>
+> **Por que é showstopper:** Impede o gestor de cadastrar novos contatos de
+> cliente via dashboard. Único método alternativo é via /dashboard/clientes/novo
+> (que cria cliente novo do zero, não vincula a um EFOS existente). Mesmo essa
+> rota provavelmente tem o mesmo problema de visibilidade (será criado em
+> `clientes_b2b` mas a listagem `/dashboard/clientes` mostra fallback EFOS
+> ignorando os 1-N novos cadastros — verificar B-27b abaixo).
+>
+> **Sub-bugs:**
+>
+> **B-27a — UPDATE silencioso sem feedback de NO-OP**
+> O código deveria verificar `result.rowcount` após UPDATE e levantar erro
+> se 0 rows afetadas. Hoje aceita silenciosamente.
+>
+> **B-27b — Fallback condicional do `_get_clientes` esconde mistura**
+> A lógica `if rows: return ... fallback` faz com que a listagem mostre OU
+> `clientes_b2b` (quando ≥ 1 row) OU `commerce_accounts_b2b` (quando vazia)
+> — nunca os dois juntos. Quando o gestor criar 1 cliente novo em
+> `clientes_b2b`, a listagem vai mostrar APENAS esse 1 e esconder os 614 do
+> EFOS. UX inconsistente.
+>
+> **B-27c — Modelo conceitual misturado**
+> O fluxo de "criar contato cliente" assume que o cliente B2B já existe e o
+> gestor está apenas adicionando contato/telefone. Mas com o reset, ninguém
+> existe. Em vez de UPDATE, o fluxo deveria ser:
+> - "Criar cliente B2B novo" (INSERT em clientes_b2b)
+> - "Vincular telefone a cliente EFOS existente" (INSERT em clientes_b2b
+>   clonando dados do commerce_accounts_b2b + telefone fornecido)
+>
+> **Correções:**
+>
+> 1. Verificar `result.rowcount` em todos os UPDATEs do dashboard, retornar
+>    400 se 0 rows
+> 2. Para "cliente": se `cliente_b2b_id` aponta para EFOS (não existe em
+>    `clientes_b2b`), fazer INSERT em `clientes_b2b` clonando dados de
+>    `commerce_accounts_b2b` + adicionando telefone/nome_contato
+> 3. Padronizar listagem: mostrar UNION ALL de `clientes_b2b` + clientes do
+>    EFOS que ainda não foram clonados, com badge indicando origem
+> 4. Adicionar teste de regressão `test_b27_*` que cria contato cliente e
+>    valida que aparece na listagem
+>
+> **Locais a modificar:**
+> - `output/src/dashboard/ui.py:475-518` (POST contatos/novo)
+> - `output/src/dashboard/ui.py:927-1003` (`_get_clientes` listagem)
+> - `output/src/dashboard/ui.py` rota POST de `/dashboard/clientes/novo`
+>   (verificar mesmo padrão)
 
 > **B-26 detalhe:** **CAUSA RAIZ do B-25c**. Investigação aprofundada mostrou
 > que o agente perde contexto não por limitação do LLM, mas por bug estrutural
