@@ -11,6 +11,106 @@
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
 | B-28 | Criar pedido em nome de cliente EFOS falha — get_by_id sem fallback commerce + LLM alucina "instabilidade de ID" | Crítica | Homologação Sprint 9 | 2026-04-29 |
 | B-29 | Logs poluídos com "'str' object has no attribute 'decode'" em persona_key_redis_erro — fix B-11 quebra com redis-py >= 5.0 (decode_responses já retorna str) | Baixa | Homologação Sprint 9 | 2026-04-29 |
+| B-30 | B-12 só parcialmente resolvido — Langfuse continua sem tokens/custo. `_get_anthropic_client` tem docstring mentindo: não wrappa o cliente, só seta session_id no trace. Generations nunca são criadas | Média | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-30 detalhe (continuação do B-12):**
+>
+> Sprint 8 marcou B-12 como resolvido alegando "wrapper Langfuse + session_id +
+> output". Verificação via Langfuse API mostra que apenas 2 dos 3 gaps foram
+> corrigidos:
+>
+> | Gap | Status | Observado |
+> |-----|--------|-----------|
+> | `output=null` no trace | ✅ resolvido | `update_current_observation(output=...)` chamado |
+> | `session_id` ausente | ✅ resolvido | `update_current_trace(session_id=...)` chamado |
+> | tokens/custo zerados | ❌ **NÃO resolvido** | `observations: []` vazio em todos os traces |
+>
+> **Evidência via API Langfuse (29/04 13:05 traces reais):**
+> ```json
+> {
+>   "id": "2a33baa6-...",
+>   "name": "processar_mensagem_gestor",
+>   "sessionId": "d6f3753a-...",   ← OK
+>   "output": "Houve um erro ao registrar...",  ← OK
+>   "totalCost": 0,                ← FALHA
+>   "latency": 0,                  ← FALHA
+>   "observations": []             ← FALHA — sem generations
+> }
+> ```
+>
+> **Causa raiz:**
+>
+> `output/src/agents/runtime/agent_gestor.py:1309-1326` (e equivalente em
+> agent_cliente.py e agent_rep.py):
+>
+> ```python
+> def _get_anthropic_client(self, session_id: str = "") -> Any:
+>     """Retorna cliente Anthropic com wrapper Langfuse..."""  # ← MENTIRA
+>     if self._anthropic is not None:
+>         return self._anthropic
+>     import anthropic
+>     if _LANGFUSE_ENABLED and session_id:
+>         _lf_ctx.update_current_trace(session_id=session_id)
+>     return anthropic.AsyncAnthropic()  # ← cliente PURO
+> ```
+>
+> Não há wrapping. A chamada subsequente
+> `client.messages.create(model=..., messages=..., tools=...)` é invisível
+> ao Langfuse. Sem generation registrada, Langfuse não tem tokens nem
+> contagem de uso para calcular custo.
+>
+> **Por que o Sprint 8 errou:**
+>
+> Não existe integração nativa Langfuse-Anthropic (existe para OpenAI via
+> `from langfuse.openai import openai`). Para Anthropic, precisa de wrapper
+> manual. O Generator não percebeu — leu a doc do Langfuse de OpenAI por
+> analogia e implementou só metade.
+>
+> **Correção (uma das três opções):**
+>
+> **Opção A — Context manager manual em torno do `call_with_overload_retry`:**
+> ```python
+> async def call_anthropic_with_langfuse(client, **kwargs):
+>     if not _LANGFUSE_ENABLED:
+>         return await client.messages.create(**kwargs)
+>     with _lf.start_generation(
+>         name="anthropic_call",
+>         model=kwargs.get("model"),
+>         input=kwargs.get("messages"),
+>     ) as gen:
+>         response = await client.messages.create(**kwargs)
+>         gen.update(
+>             output=[b.model_dump() for b in response.content],
+>             usage={
+>                 "input": response.usage.input_tokens,
+>                 "output": response.usage.output_tokens,
+>             },
+>         )
+>     return response
+> ```
+> Aplicar nos 3 agentes (cliente, rep, gestor) substituindo a chamada direta
+> a `client.messages.create()`.
+>
+> **Opção B — Subclasse interceptando:**
+> ```python
+> class LangfuseWrappedAnthropic(anthropic.AsyncAnthropic):
+>     async def messages_create(self, **kwargs):
+>         # mesma lógica de wrap acima
+>         ...
+> ```
+> Mais limpo se for usado em vários lugares.
+>
+> **Opção C — Decorator @observe(as_type="generation"):**
+> Decorar uma função wrapper. Funciona mas exige refatoração maior.
+>
+> Recomendação: **Opção A** — menos invasivo, alinhada com `call_with_overload_retry`
+> existente, fácil de testar.
+>
+> **Severidade Média (não Crítica):**
+> - Não bloqueia funcionalidade do produto
+> - Mas bloqueia observabilidade — sem custo por conversa, não dá para
+>   monitorar gasto de tokens (importante para governance)
+> - Sem generations não dá para fazer evals de qualidade no Langfuse
 | B-23 | Áudio WhatsApp (H-20/F-02a) não funciona — Whisper rejeita 400 "Invalid file format" porque audioMessage.url retorna conteúdo criptografado E2E | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-24 | Bot nega capacidade de áudio em vez de admitir falha temporária — fallback injeta texto que confunde o LLM + system prompt não menciona a capacidade | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-25 | Inconsistência de ano em relatórios + ausência de tool de ranking — agente faz 24 chamadas seriais e escolhe ano default diferente da pergunta anterior | Alta | Homologação Sprint 9 | 2026-04-29 |
