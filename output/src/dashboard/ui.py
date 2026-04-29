@@ -766,6 +766,32 @@ async def _get_last_sync_info(tenant_id: str) -> dict[str, Any] | None:
             else:
                 sync_info["finished_at_brt"] = str(finished_utc)[:16]
 
+        # Totais históricos EFOS — mostrados no bloco sync (não como "hoje")
+        try:
+            from sqlalchemy import text as _text
+            async with factory() as session:
+                r = await session.execute(
+                    _text("""
+                        SELECT COUNT(*) AS n_pedidos,
+                               COALESCE(SUM(total), 0) AS total_gmv,
+                               MIN(data_pedido) AS data_min,
+                               MAX(data_pedido) AS data_max
+                        FROM commerce_orders
+                        WHERE tenant_id = :tenant_id
+                    """),
+                    {"tenant_id": tenant_id},
+                )
+                row = r.mappings().first()
+                if row and row["n_pedidos"]:
+                    if sync_info is None:
+                        sync_info = {}
+                    sync_info["historico_n_pedidos"] = int(row["n_pedidos"])
+                    sync_info["historico_gmv"] = row["total_gmv"]
+                    sync_info["historico_data_min"] = row["data_min"]
+                    sync_info["historico_data_max"] = row["data_max"]
+        except Exception as exc:
+            log.warning("dashboard_sync_historico_erro", tenant_id=tenant_id, error=str(exc))
+
         return sync_info
     except Exception as exc:
         log.error("dashboard_sync_info_erro", tenant_id=tenant_id, error=str(exc))
@@ -807,7 +833,10 @@ async def _get_kpis(tenant_id: str) -> dict[str, Any]:
 
             fonte = "bot"
             if n == 0:
-                # B-19: fallback commerce_orders — KPIs históricos EFOS (hoje)
+                # B-19: fallback para commerce_orders — APENAS de hoje, sem histórico.
+                # Mostrar total histórico aqui é mentira ("HOJE" não pode incluir
+                # 2 anos de pedidos). Se hoje não houver pedidos no EFOS, KPIs ficam
+                # zerados — semântica honesta. Histórico vai no bloco sync EFOS.
                 r2 = await session.execute(
                     text("""
                         SELECT COUNT(*) AS n_pedidos,
@@ -825,27 +854,13 @@ async def _get_kpis(tenant_id: str) -> dict[str, Any]:
                     n = n2
                     gmv = row2["total_gmv"] if row2 else 0
                     fonte = "efos_hoje"
-                else:
-                    # Se não há pedidos hoje no EFOS, usa o total geral para mostrar algo útil
-                    r3 = await session.execute(
-                        text("""
-                            SELECT COUNT(*) AS n_pedidos,
-                                   COALESCE(SUM(total), 0) AS total_gmv
-                            FROM commerce_orders
-                            WHERE tenant_id = :tenant_id
-                        """),
-                        {"tenant_id": tenant_id},
-                    )
-                    row3 = r3.mappings().first()
-                    n = int(row3["n_pedidos"]) if row3 else 0
-                    gmv = row3["total_gmv"] if row3 else 0
-                    fonte = "efos_total"
 
             ticket = (gmv / n) if n > 0 else 0
             return {
                 "total_gmv": gmv,
                 "n_pedidos": n,
                 "ticket_medio": ticket,
+                "fonte": fonte,
                 "atualizado_em": now.strftime("%H:%M:%S"),
                 "fonte": fonte,
             }

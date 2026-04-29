@@ -19,7 +19,7 @@
     </span>
     {% if sync_info.rows_published is not none %}
       <span class="text-muted" style="font-size:0.85em;">
-        &bull; {{ sync_info.rows_published }} registros
+        &bull; {{ sync_info.rows_published|int_br }} registros
       </span>
     {% endif %}
     {% if sync_info.error %}
@@ -28,6 +28,16 @@
       </span>
     {% endif %}
   </div>
+  {% if sync_info.historico_n_pedidos %}
+    <div class="text-muted" style="font-size:0.82em;margin-top:0.4rem;">
+      Histórico EFOS:
+      <strong>{{ sync_info.historico_n_pedidos|int_br }}</strong> pedidos
+      &middot; <strong>{{ sync_info.historico_gmv|brl }}</strong>
+      {% if sync_info.historico_data_min and sync_info.historico_data_max %}
+        &middot; {{ sync_info.historico_data_min.strftime("%d/%m/%Y") }} a {{ sync_info.historico_data_max.strftime("%d/%m/%Y") }}
+      {% endif %}
+    </div>
+  {% endif %}
 {% else %}
   <span class="text-muted" style="font-size:0.9em;">Nunca sincronizado</span>
 {% endif %}

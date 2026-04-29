@@ -13,6 +13,23 @@
 | B-29 | Logs poluídos com "'str' object has no attribute 'decode'" em persona_key_redis_erro — fix B-11 quebra com redis-py >= 5.0 (decode_responses já retorna str) | Baixa | Homologação Sprint 9 | 2026-04-29 |
 | B-30 | B-12 só parcialmente resolvido — Langfuse continua sem tokens/custo. `_get_anthropic_client` tem docstring mentindo: não wrappa o cliente, só seta session_id no trace. Generations nunca são criadas | Média | Homologação Sprint 9 | 2026-04-29 |
 | B-31 | Valores monetários no dashboard em formato americano ("R$ 2106925.14" em vez de "R$ 2.106.925,14") — corrigido em v0.9.2 com filter Jinja `\|brl` central em providers/format.py | Média | Homologação Sprint 9 | 2026-04-29 |
+| B-32 | KPIs "GMV HOJE / PEDIDOS HOJE" mostravam total histórico EFOS (2592 pedidos, R$ 2.1M) quando não há pedidos hoje — fallback de 3 níveis caía em "efos_total" sem mudar label. Corrigido em v0.9.3 — KPIs zeram quando hoje vazio; total histórico vai pro bloco sync. | Alta | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-32 detalhe:** Hotfix Sprint 9 (B-19) introduziu fallback em 3 níveis no
+> `_get_kpis`: bot → EFOS hoje → **EFOS total histórico**. Quando não havia
+> pedidos hoje, exibia o total acumulado desde 2024-06-10 (2592 pedidos,
+> R$ 2.106.925,14) com label "GMV HOJE" — semanticamente errado. Gestor JMB
+> identificou imediatamente em homologação 29/04 ("não aconteceram 2592
+> pedidos em um único dia").
+>
+> **Correção (v0.9.3):**
+> - Removido o terceiro fallback `efos_total` em `_get_kpis`
+> - KPIs "hoje" voltam a ser estritos: 0 quando hoje não há pedidos, ponto
+> - `kpis.fonte` exposto ao template (bot | efos_hoje) — label muda quando
+>   dados vêm do EFOS-hoje ("GMV Hoje (EFOS hoje)")
+> - Total histórico EFOS movido para o bloco "Última sincronização EFOS"
+>   onde faz sentido: linha extra "Histórico EFOS: 2.592 pedidos · R$ 2.106.925,14
+>   · 10/06/2024 a 27/04/2026"
 
 > **B-30 detalhe (continuação do B-12):**
 >

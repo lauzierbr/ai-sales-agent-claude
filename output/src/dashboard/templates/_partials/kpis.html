@@ -1,10 +1,11 @@
+{% set fonte_label = {"bot": "", "efos_hoje": " (EFOS hoje)"}.get(kpis.fonte, "") %}
 <div class="kpi-grid">
   <div class="kpi">
-    <div class="kpi-label">GMV Hoje</div>
+    <div class="kpi-label">GMV Hoje{{ fonte_label }}</div>
     <div class="kpi-value accent">{{ kpis.total_gmv|brl }}</div>
   </div>
   <div class="kpi">
-    <div class="kpi-label">Pedidos Hoje</div>
+    <div class="kpi-label">Pedidos Hoje{{ fonte_label }}</div>
     <div class="kpi-value">{{ kpis.n_pedidos|int_br }}</div>
   </div>
   <div class="kpi">
