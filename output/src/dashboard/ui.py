@@ -27,6 +27,10 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
+# Disponibiliza a versão do app em todos os templates como global Jinja
+from src import __version__ as _APP_VERSION
+templates.env.globals["app_version"] = _APP_VERSION
+
 _COOKIE_NAME = "dashboard_session"
 _COOKIE_MAX_AGE = 8 * 3600  # 8h em segundos
 

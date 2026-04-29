@@ -144,9 +144,15 @@ passa com cobertura ≥ 80% das funções de Service" é critério.
 um critério de smoke staging executável no macmini-lablz com infra real. Não é
 opcional — sem smoke gate, o Evaluator não pode aprovar o sprint.
 
-**Versão obrigatória:** Todo spec deve especificar a versão alvo. Convenção:
-`0.N.0` para staging onde N = número do sprint. Produção usa `N.0.0`.
-O spec deve incluir critério `A_VERSION`: `GET /health` retorna `"version": "0.N.0"`.
+**Versão obrigatória:** Todo spec deve especificar a versão alvo. Convenção
+formal em `docs/VERSIONING.md`:
+- Entrega inicial do sprint = `v0.{SPRINT}.0` (ex: Sprint 10 = v0.10.0)
+- Hotfixes dentro do sprint = `v0.{SPRINT}.1`, `v0.{SPRINT}.2`, ...
+- Produção (pós-piloto) usará `vN.0.0` com SemVer padrão.
+
+A versão vive em `output/src/__init__.py` como `__version__` (fonte única).
+O spec deve incluir critério `A_VERSION`: `GET /health` retorna a versão
+correta E `output/src/__init__.py` foi bumpado no primeiro commit do sprint.
 
 **Ambiente de execução para CLIs externas:** Se o sprint introduz um CLI que roda
 fora do FastAPI (jobs, scripts de sync), o spec DEVE ter uma seção

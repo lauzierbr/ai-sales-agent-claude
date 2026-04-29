@@ -564,10 +564,15 @@ Homologação
 [ ] CICLO SÓ ENCERRA COM EVIDÊNCIA REAL: deploy.sh executado, smoke ALL OK
     confirmados no log real. "Script criado" não é suficiente — executar.
 
-Versão
-[ ] GET /health retorna "version": "0.N.0" onde N = número do sprint
-    Convenção: staging = 0.N.0 | produção = N.0.0
-    Verificar: grep -n '"version"' output/src/main.py
+Versão (ver docs/VERSIONING.md)
+[ ] output/src/__init__.py bumpado para "__version__ = '0.{SPRINT}.0'" no
+    primeiro commit do sprint (ex: Sprint 10 → "0.10.0")
+[ ] Hotfixes dentro do mesmo sprint: bumpar HOTFIX (Y → Y+1) em commit
+    dedicado: "chore(version): bump v0.{N}.{Y+1} — hotfix <descrição>"
+[ ] main.py NÃO tem "0.X.Y" hardcoded — usa "from src import __version__ as APP_VERSION"
+[ ] GET /health retorna a version correta (lendo a constante)
+[ ] Auto-tag no deploy: scripts/deploy.sh cria git tag v0.X.Y automaticamente
+    em staging — Generator NÃO precisa criar tag manualmente
 
 Integração com banco externo (quando aplicável)
 [ ] Nomes de campos do ERP/banco externo são os confirmados no spec —

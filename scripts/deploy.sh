@@ -163,6 +163,40 @@ ssh "$REMOTE_HOST" "
 "
 
 echo ""
+
+# ─────────────────────────────────────────────
+# 7. Auto-tag em staging (convenção VERSIONING.md)
+#
+# Lê __version__ de output/src/__init__.py no commit deployado e cria tag
+# v<version> apontando para esse commit. Idempotente — se a tag já existe
+# para o mesmo commit, é noop. Se já existe para commit diferente, alerta
+# e não sobrescreve (mudança de versão deve ser commit explícito).
+# ─────────────────────────────────────────────
+if [[ "$ENV" == "staging" ]]; then
+  echo "[7/7] Auto-tag de staging..."
+  DEPLOY_SHA=$(git rev-parse "$REF")
+  APP_VERSION=$(git show "$DEPLOY_SHA:output/src/__init__.py" 2>/dev/null \
+                | grep -E '^__version__' \
+                | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+  if [[ -z "$APP_VERSION" ]]; then
+    echo "   (não foi possível ler __version__ — pulando auto-tag)"
+  else
+    TAG="v${APP_VERSION}"
+    EXISTING_SHA=$(git rev-parse -q --verify "refs/tags/$TAG" 2>/dev/null || true)
+    if [[ -z "$EXISTING_SHA" ]]; then
+      git tag -a "$TAG" "$DEPLOY_SHA" -m "staging deploy: $TAG @ ${DEPLOY_SHA:0:7}"
+      git push origin "$TAG"
+      echo "   tag $TAG criada apontando para ${DEPLOY_SHA:0:7}"
+    elif [[ "$EXISTING_SHA" == "$DEPLOY_SHA" ]]; then
+      echo "   tag $TAG já existe no commit ${DEPLOY_SHA:0:7} — nada a fazer"
+    else
+      echo "   ⚠️  tag $TAG já existe em ${EXISTING_SHA:0:7} (diferente do deploy ${DEPLOY_SHA:0:7})"
+      echo "      Bumpe __version__ em output/src/__init__.py antes de commitar/deployar."
+    fi
+  fi
+fi
+
+echo ""
 echo "========================================"
 echo " Deploy concluido!"
 echo "   Ref: $REF @ $(git rev-parse --short "$REF" 2>/dev/null || echo $REF)"

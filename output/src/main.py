@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from src import __version__ as APP_VERSION
 from src.catalog.ui import router as catalog_router
 from src.dashboard.ui import router as dashboard_router
 from src.providers.telemetry import setup_telemetry
@@ -64,7 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler = create_scheduler()
     await start_scheduler_from_db(scheduler, get_session_factory())
 
-    log.info("app_iniciada", versao="0.9.1")
+    log.info("app_iniciada", versao=APP_VERSION)
     yield
 
     if scheduler.running:
@@ -79,7 +80,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Sales Agent",
         description="Agente de vendas B2B via WhatsApp para distribuidoras brasileiras",
-        version="0.9.1",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 
@@ -145,7 +146,7 @@ def create_app() -> FastAPI:
         overall = "ok" if anthropic_state == "ok" else "degraded"
         return {
             "status": overall,
-            "version": "0.9.1",
+            "version": APP_VERSION,
             "components": {
                 "anthropic": anthropic_state,
             },
