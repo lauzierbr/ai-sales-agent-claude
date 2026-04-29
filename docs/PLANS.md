@@ -149,9 +149,9 @@ Bugs corrigidos na homologação (pós-QA):
 - Langfuse (auto-hospedado via Docker): instrumentação dos 3 agentes com traces por tool call, custo por conversa e avaliação de qualidade
 - Doc-gardening agent (verifica documentação vs código)
 
-### Sprint 6 — Pre-Pilot Hardening 🏁 Aguardando homologação
-Plano detalhado: `docs/exec-plans/active/sprint-6-pre-pilot-hardening.md`
-Commit: `43f7302` | Versão alvo: v0.7.0
+### Sprint 6 — Pre-Pilot Hardening ✅ APROVADO — v0.6.1
+Plano detalhado: `docs/exec-plans/completed/sprint-6-pre-pilot-hardening.md`
+Tag: v0.6.1 | Homologado pré-piloto
 
 Entregue:
 - Cadastro de cliente via dashboard (E1) — `TenantService.criar_cliente_ficticio()`
@@ -165,15 +165,175 @@ Entregue:
 - CORS por ambiente + cookie Secure apenas em production (E9)
 - 281 unit tests; test_ui_injection.py; smoke G1–G9 (E10–E11)
 
-Próximos passos:
-1. `./scripts/deploy.sh staging` → sincronizar macmini-lablz
-2. `python scripts/seed_homologacao_sprint-6.py`
-3. `python scripts/smoke_sprint_6.py` → ALL OK
-4. Homologação manual H1–H7
-5. Tag v0.7.0 + mover para completed/
+### Sprint 7 — Notificação ao gestor ✅ APROVADO — v0.7.0
+Plano detalhado: `docs/exec-plans/completed/sprint-7-notificacao-gestor.md`
+Tag: v0.7.0 | Homologado em conjunto com Sprint 9 (29/04/2026)
+
+**Contexto:** durante piloto JMB descobriu-se que `tenant.whatsapp_number = None`,
+fazendo notificações ao gestor falharem silenciosamente (B-01 / TD-08). Sprint 7
+introduz `GestorRepo.listar_ativos_por_tenant()` e itera sobre todos os gestores
+ativos do tenant.
+
+Entregue:
+- E1 — `GestorRepo.listar_ativos_por_tenant(tenant_id)` em `agents/repo.py`
+- E2 — AgentCliente: loop sobre gestores ativos para enviar PDF do pedido
+- E3 — AgentRep: mesmo padrão com caption incluindo nome do rep
+- E4 — Testes unitários `test_gestor_repo.py` + atualização A8/A8b
+- E5 — Smoke script `scripts/smoke_sprint_7.py`
+
+Lições registradas:
+- A_TOOL_COVERAGE obrigatório (capacidade anunciada deve ter tool e teste)
+
+### Sprint 8 — Integração EFOS via backup diário SSH/pg_restore ✅ APROVADO — v0.8.0
+Plano detalhado: `docs/exec-plans/completed/sprint-8-efos-backup.md`
+Tag: v0.8.0 | Homologado em conjunto com Sprint 9 (29/04/2026)
+
+**Contexto:** aposentar crawler Playwright (frágil, lento, anti-bot) e consumir
+dados do dump diário do EFOS via SSH/SFTP + `pg_restore` em staging DB
+isolado, normalizando para o read model `commerce_*`.
+
+Entregue:
+- Domínio `integrations/` (5º) com `EFOSBackupConfig`, `SyncRunRepo`, `SyncArtifactRepo`
+- Conector `efos_backup` em 4 módulos: acquire (SSH+SFTP+SHA-256), stage
+  (`pg_restore --format=c` via `docker exec ai-sales-postgres`), normalize
+  (tb_itens/clientes/pedido/itenspedido/estoque/vendas/vendedor → commerce_*),
+  publish (transação atômica com DELETE+INSERT)
+- Domínio `commerce/` (6º) — read model puro com `CommerceRepo`
+- Migrations 0018–0023 (sync_runs, sync_artifacts, commerce_products,
+  commerce_accounts_b2b, commerce_orders+items, commerce_inventory,
+  commerce_sales_history, commerce_vendedores)
+- CLI `python -m integrations.jobs.sync_efos --tenant jmb [--dry-run] [--force]`
+  com idempotência por checksum SHA-256
+- launchd plist agendando 13:00 BRT diário
+- Hotfixes piloto: B-10 (representante_id em get_by_telefone), B-11
+  (Redis stale na troca de persona), B-12 (instrumentação Langfuse — parcial,
+  ver B-30 em Sprint 10)
+- 3 tools EFOS no AgentGestor: `relatorio_vendas_representante_efos`,
+  `relatorio_vendas_cidade_efos`, `clientes_inativos_efos` (com fuzzy match
+  + normalização de mês/cidade)
+
+ADRs aprovados:
+- D025 (paramiko SSH/SFTP), D026 (efos_staging isolado), D027 (CLI one-shot
+  vs FastAPI lifespan), D028 (launchd vs APScheduler), D029 (read model
+  separado do write model)
+
+Lições registradas (gotchas):
+- pg_restore custom format requer `--format=c` explícito
+- `tb_vendedor` tem `ve_codigo` duplicado por filial (DISTINCT ON)
+- Cidades EFOS são UPPERCASE (normalizar antes de match)
+- Postgres em Docker no macmini → usar `docker exec` para psql/pg_restore
+
+### Sprint 9 — Commerce reads + dashboard sync + áudio Whisper ✅ APROVADO — v0.9.4
+Plano detalhado: `docs/exec-plans/completed/sprint-9-commerce-audio.md`
+Fechamento: `docs/exec-plans/completed/sprint-9-fechamento.md`
+Tags: v0.9.0, v0.9.1, v0.9.2, v0.9.3, v0.9.4 | Homologado 29/04/2026
+
+**Contexto:** com `commerce_*` populado pelo Sprint 8, os agentes e dashboard
+ainda liam das tabelas legadas vazias após reset. Sprint 9 migra leituras
+com fallback, adiciona dashboard de sync EFOS, áudio WhatsApp via Whisper
+e corrige B-13 (busca por EAN completo).
+
+Entregas iniciais (v0.9.0):
+- Hotfix B-13: busca EAN completo via `query[-6:]` quando query é numérica
+  com > 6 dígitos (3 agentes)
+- E1a: `catalog/service.py` lê `commerce_products` com fallback para `produtos`
+- E1b: `agents/repo.py` fallback `commerce_accounts_b2b` quando `clientes_b2b` vazio
+- E2: dashboard bloco "Última sincronização EFOS" (depois removido em v0.9.4)
+- E3: áudio WhatsApp via Whisper (`audioMessage` → transcrição → prefixo 🎤)
+- Migration 0024: `pedidos.ficticio` + PDF watermark + caption ⚠️ TESTE
+- E0-B: AgentGestor — tools antigas removidas, EFOS assumiu o lugar
+- Convenção de versionamento `v0.{SPRINT}.{HOTFIX}` + auto-tag deploy
+- Badge de versão discreto no dashboard (top-left)
+
+Hotfixes pós-homologação (4 iterações):
+- v0.9.1: migração exaustiva — corrige B-14 (listar_pedidos_por_status),
+  B-15 (listar_representantes), B-16 (/clientes), B-17 (/pedidos),
+  B-18 (sync-status visível), B-19 (KPIs com fallback), B-20 (top-produtos),
+  B-21 (rota /representantes na nav), B-22 (emojis no system prompt)
+- v0.9.2: formatação monetária pt-BR centralizada (B-31) — função
+  `providers/format.py:format_brl()` + filter Jinja `|brl` em 7 templates
+- v0.9.3: KPIs HOJE não inflam com histórico EFOS (B-32) — removido
+  fallback `efos_total` que mostrava 2592 pedidos cumulativos como "hoje"
+- v0.9.4: UX KPIs janela mensal — "GMV Abril/2026" + "Atualizado no sync
+  EFOS 27/04/2026 17:42"; removido bloco redundante "Última sincronização EFOS"
+
+ADRs aprovados durante o sprint:
+- **D030** — ERP adapter pattern + canonical contact ownership no app
+  (App é dono de canais/contatos, ERP é dono de cadastro fiscal). Bling
+  como ERP alvo principal.
+- **D031** — AnalystAgent meta-agente de observabilidade (persona admin
+  consulta Langfuse, extrai custo/anomalias/qualidade). Sprint 11.
+
+Documentação criada:
+- `docs/VERSIONING.md` — convenção `v0.{SPRINT}.{HOTFIX}` e auto-tag
+- `docs/PRE_HOMOLOGATION_REVIEW.md` — protocolo concreto (10 rotas dashboard
+  + 13+ cenários bot por persona) — obrigatório antes de declarar pronto
+- `docs/DEPRECATIONS.md` — plano de remoção do catalog legado (Sprint 10)
+
+Lições registradas em prompts:
+- A_BEHAVIORAL obrigatório em sprints com agente/dashboard (browser real)
+- Migração exaustiva via grep antes de declarar fase concluída
+- Investigação de Langfuse via API (não só UI) para validar generations
+- Modelos por agente: Opus para Evaluator/PO, Sonnet para Generator,
+  Haiku para Tester
+
+Bugs abertos para Sprint 10 (ver `sprint-9-fechamento.md`):
+- Críticos: B-26 (truncação histórico), B-27/B-28 (clientes EFOS — D030)
+- Altos: B-23 (áudio criptografia), B-24 (capacidade áudio), B-25 (ranking)
+- Médios: B-30 (Langfuse generations), B-29 (log noise persona_key)
+
+### Sprint 10 — Hotfixes críticos + foundations D030 🔄 Em planejamento
+Plano detalhado: a ser criado pelo Planner em `docs/exec-plans/active/sprint-10-*.md`
+Versão alvo: v0.10.0
+
+Escopo confirmado pelo PO (29/04/2026):
+
+**Hotfixes críticos:**
+- B-26 — truncação cega do histórico Redis (afeta 3 agentes — recovery destrutivo)
+- B-27 — cadastro contato cliente NO-OP (resolução estrutural via D030)
+- B-28 — pedido em nome de cliente EFOS falha (resolução via D030)
+- B-23 — áudio Whisper rejeita criptografia E2E (usar endpoint Evolution API)
+- B-24 — bot nega capacidade de áudio (system prompt + fallback direto)
+- B-25 — ranking ineficiente + ano default + contexto temporal
+- B-30 — Langfuse continua sem tokens/custo (B-12 só parcial — wrapper Anthropic)
+- B-29 — log noise persona_key (decode em str já decodada)
+
+**Foundations D030:**
+- Migration: tabela `contacts` (PF, write model) referenciando `commerce_accounts_b2b.external_id`
+- Migration: `pedidos.account_external_id VARCHAR` (substituindo FK rígida)
+- Migration: estender `commerce_accounts_b2b` com `contato_padrao`, `telefone`,
+  `email` (campos perdidos no Sprint 8)
+- Dashboard `/dashboard/contatos` refeito conforme D030 (busca em commerce, INSERT em contacts)
+- `/dashboard/clientes` read-only (sem botão "Novo Cliente")
+- Auto-criação de `contacts` `origin='self_registered'` quando número desconhecido manda mensagem
+- Notificação dual ao gestor (dashboard + WhatsApp) com candidato em `commerce_accounts_b2b`
+
+**F-07 — Controle de frequência sync EFOS (temporário):**
+- Migration: `sync_schedule`
+- Tela `/dashboard/sync` (admin only) com 5 presets + toggle + "Rodar agora"
+- Migração `launchd` → APScheduler interno
+- Redis lock anti-overlap
+
+**Deprecação catalog legado:**
+- Pré-condição: migrar embeddings vector(1536) para `commerce_products`
+  (atualmente em `produtos` — usado pela busca semântica do AgentCliente)
+- Job batch que enriquece embeddings via OpenAI text-embedding-3-small
+- Atualizar `AgentCliente._buscar_produtos` para ler de `commerce_products`
+- Remover: crawler Playwright, EnricherAgent, scheduler_job, painel,
+  template, rotas, tabela `produtos`, dependência `playwright`
+
+### Sprint 11 — AnalystAgent MVP (D031)
+Não iniciado. Spec a ser feito após Sprint 10 estabilizar.
+Pré-requisito: B-30 corrigido (sem generations no Langfuse, não há o que analisar).
+
+### Sprint 12+ — Bling adapter (D030)
+Não iniciado. Discussão estratégica em thread separada do PO.
 
 ### Sprints futuros (backlog)
 - Sugestão proativa por ciclo de compra
 - Push ativo WhatsApp (promoções, alertas)
 - Onboarding de segundo tenant
 - Enriquecimento OTEL: spans filhos por tool call nos 3 agentes + dashboards Grafana de latência e taxa de erro
+- F-02b — imagem/código de barras no WhatsApp (após F-02a áudio estar estável)
+- F-03 — status e versão de entrega no feedback
+- F-06 — Painel de Divergências do Catálogo ERP (pós-Bling)
