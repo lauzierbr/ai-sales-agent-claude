@@ -25,6 +25,65 @@ Features solicitadas ainda não implementadas, priorizadas pelo PO.
 > no ERP (não cadastrar duplicado no app). Decisão se entra como tela própria
 > ou como capability do AnalystAgent fica para discussão futura.
 
+| F-07 | **Controle de frequência do sync EFOS (TEMPORÁRIO)** — UI admin para escolher preset (manual/diário/2x dia/4x dia/horário), pausar/retomar, rodar agora e ver próxima/última execução. Migra scheduling do launchd para APScheduler interno. | Investigação 29/04 | Alto operacional durante piloto — controle sem editar plist; serão deprecated quando Bling entrar (webhooks) | Médio |
+
+> **F-07 detalhe (Sprint 10):**
+>
+> **Caráter:** TEMPORÁRIO. Substituído quando migrar para Bling (Sprint 11+),
+> que tem webhooks event-driven em vez de polling. Não vale super-engenhar.
+>
+> **Migration nova:** `sync_schedule` (tenant_id, connector_kind, preset,
+> cron_expression, enabled, last_triggered_at, next_run_at).
+>
+> **Presets confirmados (5, sem cron livre):**
+> - `manual` — sem agendamento, só "Rodar agora"
+> - `diario` — 1x/dia às 13:00 BRT (default atual)
+> - `2x_dia` — 08:00 e 13:00
+> - `4x_dia` — a cada 6h
+> - `horario` — a cada hora
+>
+> **Permissão:** admin only (operador do app, persona ANALYST do D031).
+> Gestor JMB **não** controla — risco de desligar sync por engano supera
+> benefício. Visibilidade no AgentGestor: **não** (admin pergunta via dashboard
+> ou pelo Analyst no Sprint 11+).
+>
+> **UI (`/dashboard/sync`, admin only):**
+> - Radio buttons dos 5 presets
+> - Toggle "Sync ativo"
+> - Botão "Salvar" (persiste + reschedule no APScheduler em runtime)
+> - Botão "Rodar agora" (dispara subprocess com Redis lock anti-overlap)
+> - Próxima execução + última execução (status, rows, duração)
+> - Histórico das últimas 10 execuções de `sync_runs`
+>
+> **Implementação técnica:**
+> - **APScheduler interno** substitui `launchd`. Já está usado no projeto
+>   (D019, scheduler do crawler — também sai com a deprecação).
+> - **Redis lock** `sync:efos:{tenant}:running` (TTL 30min) para evitar
+>   overlap quando "Rodar agora" colide com schedule.
+> - **Background task isolada** — `asyncio.create_task` com try/except interno
+>   para que sync explodindo não derrube o app.
+> - **Reschedule em runtime** — UI atualiza tabela + chama `scheduler.reschedule_job`
+>   sem restart.
+>
+> **Sequência segura de migração launchd → APScheduler:**
+> 1. Implementar APScheduler interno + tabela `sync_schedule` populada com
+>    default `diario 13:00`
+> 2. Deploy em staging — confirmar que job aparece no APScheduler list
+> 3. Validar 1 execução real do agendamento interno (não manual)
+> 4. **Só então** `launchctl unload ~/Library/LaunchAgents/com.jmb.efos-sync.plist`
+> 5. Remover `scripts/launchd/com.jmb.efos-sync.plist` do repo
+>
+> Durante a transição, deixar plist do launchd com `RunAtLoad=false` e
+> `Disabled=true` antes de remover — evita race condition com 2 schedulers.
+>
+> **Sinergia com D031:** AnalystAgent (Sprint 11+) ganha tool `sync_status_efos`
+> reutilizando a mesma tabela e UI: admin pergunta "quando foi último sync?
+> qual a próxima?" e o Analyst responde via WhatsApp.
+>
+> **Quando deprecar (não definido):** quando Bling estiver estável com webhooks
+> em produção, sync polling de EFOS sai e essa UI vai junto. Provável Sprint
+> 12-14. Por enquanto, é necessário enquanto JMB depender de EFOS.
+
 > **F-05 detalhe:** Visto em ADR [D031](../docs/design-docs/D031-analyst-agent-observability.md).
 >
 > **MVP (Sprint 11):** 3 tools (cost_breakdown, top_anomalies,
