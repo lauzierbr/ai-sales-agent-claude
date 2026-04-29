@@ -280,26 +280,30 @@ def test_base_html_contem_link_representantes() -> None:
 
 
 @pytest.mark.unit
-def test_get_last_sync_info_funcao_existe() -> None:
-    """B-18: função _get_last_sync_info deve existir em dashboard/ui.py."""
-    from src.dashboard.ui import _get_last_sync_info
-    assert callable(_get_last_sync_info), (
-        "B-18: _get_last_sync_info não é callable em dashboard/ui.py"
+def test_kpis_usa_janela_mensal() -> None:
+    """v0.9.4: _get_kpis usa janela mensal (não diária) e timestamp do último
+    sync EFOS bem-sucedido como 'atualizado em' (B-18 removido em v0.9.4)."""
+    import inspect
+    from src.dashboard.ui import _get_kpis
+    source = inspect.getsource(_get_kpis)
+    assert "mes_inicio" in source and "now.replace(day=1" in source, (
+        "_get_kpis deve agregar pelo mês corrente (day=1)"
+    )
+    assert "sync_runs" in source and "status = 'success'" in source, (
+        "_get_kpis deve usar último sync_runs success como timestamp 'atualizado em'"
     )
 
 
 @pytest.mark.unit
-def test_home_passa_sync_info_no_contexto() -> None:
-    """B-18: rota /dashboard/home deve incluir sync_info no contexto do template.
-
-    Verifica inspecionando o código-fonte da função home() para garantir que
-    sync_info é calculado e passado ao TemplateResponse.
-    """
+def test_home_nao_passa_sync_info() -> None:
+    """v0.9.4: bloco 'Última sincronização EFOS' removido — home() não deve mais
+    calcular nem passar sync_info no contexto."""
     import inspect
     from src.dashboard.ui import home
     source = inspect.getsource(home)
-    assert "sync_info" in source, (
-        "B-18: variável sync_info não encontrada na função home() do dashboard"
+    assert "sync_info" not in source, (
+        "v0.9.4: home() não deve mais carregar sync_info "
+        "(bloco removido — info migrou para o card 'Atualizado no sync EFOS')"
     )
 
 

@@ -1,19 +1,18 @@
-{% set fonte_label = {"bot": "", "efos_hoje": " (EFOS hoje)"}.get(kpis.fonte, "") %}
 <div class="kpi-grid">
   <div class="kpi">
-    <div class="kpi-label">GMV Hoje{{ fonte_label }}</div>
+    <div class="kpi-label">GMV {{ kpis.mes_label }}</div>
     <div class="kpi-value accent">{{ kpis.total_gmv|brl }}</div>
   </div>
   <div class="kpi">
-    <div class="kpi-label">Pedidos Hoje{{ fonte_label }}</div>
+    <div class="kpi-label">Pedidos {{ kpis.mes_label }}</div>
     <div class="kpi-value">{{ kpis.n_pedidos|int_br }}</div>
   </div>
   <div class="kpi">
-    <div class="kpi-label">Ticket Médio</div>
+    <div class="kpi-label">Ticket médio</div>
     <div class="kpi-value">{{ kpis.ticket_medio|brl }}</div>
   </div>
   <div class="kpi">
-    <div class="kpi-label">Atualizado às</div>
-    <div class="kpi-value" style="font-size: 1.1rem; color: #aaa;">{{ kpis.atualizado_em }}</div>
+    <div class="kpi-label">Atualizado no sync EFOS</div>
+    <div class="kpi-value" style="font-size: 1.05rem; color: #aaa;">{{ kpis.atualizado_em }}</div>
   </div>
 </div>

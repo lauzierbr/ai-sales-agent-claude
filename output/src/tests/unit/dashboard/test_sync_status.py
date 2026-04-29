@@ -1,16 +1,18 @@
-"""Testes unitários para /dashboard/sync-status (E2 — Sprint 9).
+"""Testes do SyncRunRepo (último sync EFOS bem-sucedido).
 
-Cobre:
-  - Endpoint retorna 200 com HTML contendo status e finished_at
-  - Fallback "Nunca sincronizado" quando sem registros
-  - Query inclui tenant_id (isolamento)
-  - SyncRunRepo.get_last_sync_run existe e filtra por tenant_id
+Sprint 9 (E2) introduziu o partial /dashboard/sync-status com bloco visual
+"Última sincronização EFOS". Em v0.9.4 esse bloco foi REMOVIDO — a info
+migrou para o card "Atualizado no sync EFOS" dentro dos KPIs.
+
+Os testes aqui mantêm a cobertura do método `SyncRunRepo.get_last_sync_run`
+(que continua sendo usado por _get_kpis para o timestamp). Os testes do
+partial/endpoint removidos foram apagados junto com o código.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -23,11 +25,11 @@ def test_sync_run_repo_get_last_sync_run_filtra_tenant() -> None:
 
     source = inspect.getsource(SyncRunRepo.get_last_sync_run)
     assert "tenant_id" in source, (
-        "A_DASHBOARD_SYNC: get_last_sync_run deve filtrar por tenant_id. "
+        "get_last_sync_run deve filtrar por tenant_id. "
         "Toda query em integrations/repo.py deve incluir tenant_id."
     )
     assert "WHERE" in source or "where" in source.lower(), (
-        "A_DASHBOARD_SYNC: get_last_sync_run deve ter cláusula WHERE com tenant_id."
+        "get_last_sync_run deve ter cláusula WHERE com tenant_id."
     )
 
 
@@ -77,26 +79,14 @@ async def test_sync_run_repo_retorna_dict_com_campos() -> None:
 
 
 @pytest.mark.unit
-def test_dashboard_sync_status_endpoint_existe() -> None:
-    """Endpoint /dashboard/sync-status deve existir no router."""
-    from src.dashboard.ui import router
-
-    routes = [r.path for r in router.routes]  # type: ignore[attr-defined]
-    assert "/dashboard/sync-status" in routes, (
-        "A_DASHBOARD_SYNC: endpoint GET /dashboard/sync-status deve existir em dashboard/ui.py."
+def test_kpis_consome_sync_runs_para_timestamp() -> None:
+    """v0.9.4: _get_kpis passa a usar sync_runs success como 'atualizado em'."""
+    import inspect
+    from src.dashboard.ui import _get_kpis
+    source = inspect.getsource(_get_kpis)
+    assert "sync_runs" in source, (
+        "_get_kpis deve consultar sync_runs para timestamp 'atualizado em'"
     )
-
-
-@pytest.mark.unit
-def test_sync_status_partial_template_existe() -> None:
-    """Template _partials/sync_status.html deve existir."""
-    from pathlib import Path
-    template_path = Path(__file__).parent.parent.parent.parent.parent / \
-        "src" / "dashboard" / "templates" / "_partials" / "sync_status.html"
-    assert template_path.exists(), (
-        "A_DASHBOARD_SYNC: template _partials/sync_status.html deve existir."
-    )
-    content = template_path.read_text()
-    assert "Nunca sincronizado" in content, (
-        "A_DASHBOARD_SYNC: template deve incluir fallback 'Nunca sincronizado'."
+    assert "status = 'success'" in source, (
+        "_get_kpis deve filtrar apenas syncs bem-sucedidos"
     )

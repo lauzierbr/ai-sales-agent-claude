@@ -209,8 +209,6 @@ async def home(request: Request) -> Any:
     kpis = await _get_kpis(tenant_id)
     pedidos = await _get_pedidos_recentes(tenant_id, limit=10)
     conversas = await _get_conversas_ativas(tenant_id)
-    # B-18: carrega sync_info no render inicial para não mostrar "Nunca sincronizado"
-    sync_info = await _get_last_sync_info(tenant_id)
 
     return templates.TemplateResponse(
         request,
@@ -220,7 +218,6 @@ async def home(request: Request) -> Any:
             "pedidos": pedidos,
             "conversas": conversas,
             "tenant_id": tenant_id,
-            "sync_info": sync_info,
         },
     )
 
@@ -738,135 +735,112 @@ async def configuracoes(request: Request) -> Any:
 # ─────────────────────────────────────────────
 
 
-async def _get_last_sync_info(tenant_id: str) -> dict[str, Any] | None:
-    """Retorna metadados da última sincronização EFOS para o tenant.
 
-    B-18: usado no render inicial do home para não mostrar "Nunca sincronizado"
-    quando há sync_runs no banco.
-    """
-    try:
-        from datetime import timedelta as _timedelta
 
-        from src.integrations.repo import SyncRunRepo
-        from src.providers.db import get_session_factory
-
-        factory = get_session_factory()
-        async with factory() as session:
-            sync_info = await SyncRunRepo().get_last_sync_run(
-                tenant_id=tenant_id,
-                session=session,
-            )
-
-        if sync_info and sync_info.get("finished_at"):
-            finished_utc = sync_info["finished_at"]
-            if hasattr(finished_utc, "utcoffset") and finished_utc.tzinfo is not None:
-                from datetime import timezone as _tz
-                finished_brt = finished_utc.astimezone(_tz(offset=_timedelta(hours=-3)))
-                sync_info["finished_at_brt"] = finished_brt.strftime("%d/%m/%Y %H:%M")
-            else:
-                sync_info["finished_at_brt"] = str(finished_utc)[:16]
-
-        # Totais históricos EFOS — mostrados no bloco sync (não como "hoje")
-        try:
-            from sqlalchemy import text as _text
-            async with factory() as session:
-                r = await session.execute(
-                    _text("""
-                        SELECT COUNT(*) AS n_pedidos,
-                               COALESCE(SUM(total), 0) AS total_gmv,
-                               MIN(data_pedido) AS data_min,
-                               MAX(data_pedido) AS data_max
-                        FROM commerce_orders
-                        WHERE tenant_id = :tenant_id
-                    """),
-                    {"tenant_id": tenant_id},
-                )
-                row = r.mappings().first()
-                if row and row["n_pedidos"]:
-                    if sync_info is None:
-                        sync_info = {}
-                    sync_info["historico_n_pedidos"] = int(row["n_pedidos"])
-                    sync_info["historico_gmv"] = row["total_gmv"]
-                    sync_info["historico_data_min"] = row["data_min"]
-                    sync_info["historico_data_max"] = row["data_max"]
-        except Exception as exc:
-            log.warning("dashboard_sync_historico_erro", tenant_id=tenant_id, error=str(exc))
-
-        return sync_info
-    except Exception as exc:
-        log.error("dashboard_sync_info_erro", tenant_id=tenant_id, error=str(exc))
-        return None
+_MESES_PT = [
+    "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]
 
 
 async def _get_kpis(tenant_id: str) -> dict[str, Any]:
-    """Retorna KPIs do dia (GMV, pedidos, ticket médio).
+    """Retorna KPIs do mês corrente (GMV, pedidos, ticket médio).
 
-    B-19: quando pedidos está vazio, usa commerce_orders para KPIs (dados EFOS).
-    Label "EFOS — hoje" indica a fonte quando dados vêm do EFOS.
+    Como o sync EFOS é esporádico (diário ou eventual) e o bot ainda gera
+    poucos pedidos próprios no piloto, usamos janela MENSAL — não diária.
+    Dados vêm de commerce_orders + pedidos do bot (ficticio=FALSE)
+    referentes ao mês corrente, somados.
+
+    O timestamp "atualizado em" reflete o ÚLTIMO SYNC EFOS bem-sucedido —
+    não a hora atual do servidor (essa info iludiria o gestor).
     """
     try:
+        from datetime import timedelta as _timedelta
         from sqlalchemy import text
 
         from src.providers.db import get_session_factory
 
         factory = get_session_factory()
         now = datetime.now(timezone.utc)
-        data_inicio = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Primeiro dia do mês corrente, 00:00 UTC
+        mes_inicio = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         async with factory() as session:
-            # Tenta pedidos do bot primeiro
-            r = await session.execute(
+            # Pedidos do bot no mês (não fictícios)
+            r_bot = await session.execute(
                 text("""
                     SELECT COUNT(*) AS n_pedidos,
                            COALESCE(SUM(total_estimado), 0) AS total_gmv
                     FROM pedidos
                     WHERE tenant_id = :tenant_id
                       AND ficticio = FALSE
-                      AND criado_em >= :data_inicio
-                      AND criado_em <= :now
+                      AND criado_em >= :mes_inicio
                 """),
-                {"tenant_id": tenant_id, "data_inicio": data_inicio, "now": now},
+                {"tenant_id": tenant_id, "mes_inicio": mes_inicio},
             )
-            row = r.mappings().first()
-            n = int(row["n_pedidos"]) if row else 0
-            gmv = row["total_gmv"] if row else 0
+            row_bot = r_bot.mappings().first()
+            n_bot = int(row_bot["n_pedidos"]) if row_bot else 0
+            gmv_bot = row_bot["total_gmv"] if row_bot and row_bot["total_gmv"] else 0
 
-            fonte = "bot"
-            if n == 0:
-                # B-19: fallback para commerce_orders — APENAS de hoje, sem histórico.
-                # Mostrar total histórico aqui é mentira ("HOJE" não pode incluir
-                # 2 anos de pedidos). Se hoje não houver pedidos no EFOS, KPIs ficam
-                # zerados — semântica honesta. Histórico vai no bloco sync EFOS.
-                r2 = await session.execute(
-                    text("""
-                        SELECT COUNT(*) AS n_pedidos,
-                               COALESCE(SUM(total), 0) AS total_gmv
-                        FROM commerce_orders
-                        WHERE tenant_id = :tenant_id
-                          AND data_pedido >= :data_inicio
-                          AND data_pedido <= :now
-                    """),
-                    {"tenant_id": tenant_id, "data_inicio": data_inicio, "now": now},
-                )
-                row2 = r2.mappings().first()
-                n2 = int(row2["n_pedidos"]) if row2 else 0
-                if n2 > 0:
-                    n = n2
-                    gmv = row2["total_gmv"] if row2 else 0
-                    fonte = "efos_hoje"
+            # Pedidos do EFOS no mês
+            r_efos = await session.execute(
+                text("""
+                    SELECT COUNT(*) AS n_pedidos,
+                           COALESCE(SUM(total), 0) AS total_gmv
+                    FROM commerce_orders
+                    WHERE tenant_id = :tenant_id
+                      AND data_pedido >= :mes_inicio
+                """),
+                {"tenant_id": tenant_id, "mes_inicio": mes_inicio},
+            )
+            row_efos = r_efos.mappings().first()
+            n_efos = int(row_efos["n_pedidos"]) if row_efos else 0
+            gmv_efos = row_efos["total_gmv"] if row_efos and row_efos["total_gmv"] else 0
 
-            ticket = (gmv / n) if n > 0 else 0
+            # Combina bot + EFOS (sem dedupe — bot é independente)
+            n = n_bot + n_efos
+            from decimal import Decimal as _Dec
+            gmv = _Dec(str(gmv_bot)) + _Dec(str(gmv_efos))
+            ticket = (gmv / n) if n > 0 else _Dec("0")
+
+            # Timestamp do último sync EFOS bem-sucedido (não a hora atual)
+            r_sync = await session.execute(
+                text("""
+                    SELECT MAX(finished_at) AS ult_sync
+                    FROM sync_runs
+                    WHERE tenant_id = :tenant_id AND status = 'success'
+                """),
+                {"tenant_id": tenant_id},
+            )
+            row_sync = r_sync.mappings().first()
+            ult_sync_utc = row_sync["ult_sync"] if row_sync else None
+            if ult_sync_utc and getattr(ult_sync_utc, "tzinfo", None):
+                from datetime import timezone as _tz
+                ult_sync_brt = ult_sync_utc.astimezone(_tz(offset=_timedelta(hours=-3)))
+                atualizado_em = ult_sync_brt.strftime("%d/%m/%Y %H:%M")
+            elif ult_sync_utc:
+                atualizado_em = str(ult_sync_utc)[:16]
+            else:
+                atualizado_em = "aguardando primeira sincronização"
+
+            mes_label = f"{_MESES_PT[mes_inicio.month]}/{mes_inicio.year}"
+
             return {
                 "total_gmv": gmv,
                 "n_pedidos": n,
                 "ticket_medio": ticket,
-                "fonte": fonte,
-                "atualizado_em": now.strftime("%H:%M:%S"),
-                "fonte": fonte,
+                "mes_label": mes_label,
+                "atualizado_em": atualizado_em,
             }
     except Exception as exc:
         log.error("dashboard_kpis_erro", error=str(exc))
-        return {"total_gmv": 0, "n_pedidos": 0, "ticket_medio": 0, "atualizado_em": "--:--:--", "fonte": "erro"}
+        return {
+            "total_gmv": 0,
+            "n_pedidos": 0,
+            "ticket_medio": 0,
+            "mes_label": "—",
+            "atualizado_em": "—",
+        }
 
 
 async def _get_pedidos_recentes(tenant_id: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -1165,66 +1139,6 @@ async def feedbacks(request: Request) -> Any:
         request,
         "feedbacks.html",
         {"feedbacks": feedbacks_list, "perfil_filtro": perfil_filtro, "tenant_id": tenant_id},
-    )
-
-
-# ─────────────────────────────────────────────
-# Sincronização EFOS — bloco de status com htmx polling
-# ─────────────────────────────────────────────
-
-
-@router.get("/sync-status", response_class=HTMLResponse)
-async def sync_status(request: Request) -> Any:
-    """Partial htmx com status da última sincronização EFOS.
-
-    E2: chamado pelo dashboard home a cada 60s via hx-trigger="every 60s".
-    Retorna HTML com badge de status, finished_at em BRT e rows_published.
-
-    Returns:
-        HTML com bloco de sincronização ou fallback "Nunca sincronizado".
-    """
-    session_data = _require_session(request)
-    if session_data is None:
-        return HTMLResponse(
-            "<div>Sessão expirada. <a href='/dashboard/login'>Login</a></div>",
-            status_code=401,
-        )
-
-    tenant_id = session_data["tenant_id"]
-    sync_info: dict | None = None
-
-    try:
-        from src.integrations.repo import SyncRunRepo
-        from src.providers.db import get_session_factory
-        from datetime import timedelta as _timedelta
-
-        factory = get_session_factory()
-        repo = SyncRunRepo()
-        async with factory() as session:
-            sync_info = await repo.get_last_sync_run(
-                tenant_id=tenant_id,
-                session=session,
-            )
-
-        # Converte finished_at para BRT (UTC-3) se disponível
-        if sync_info and sync_info.get("finished_at"):
-            finished_utc = sync_info["finished_at"]
-            # Aplica offset BRT (UTC-3)
-            if hasattr(finished_utc, "utcoffset") and finished_utc.tzinfo is not None:
-                from datetime import timezone as _tz
-                finished_brt = finished_utc.astimezone(_tz(offset=_timedelta(hours=-3)))
-                sync_info["finished_at_brt"] = finished_brt.strftime("%d/%m/%Y %H:%M")
-            else:
-                sync_info["finished_at_brt"] = str(finished_utc)[:16]
-
-    except Exception as exc:
-        log.error("dashboard_sync_status_erro", tenant_id=tenant_id, error=str(exc))
-        sync_info = None
-
-    return templates.TemplateResponse(
-        request,
-        "_partials/sync_status.html",
-        {"sync_info": sync_info},
     )
 
 
