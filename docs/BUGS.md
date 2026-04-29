@@ -15,6 +15,13 @@
 | B-26 | Truncação cega do histórico Redis quebra pares tool_use/tool_result, dispara erro 400 e "recovery destrutivo" que apaga TODO o contexto conversacional | Crítica | Homologação Sprint 9 | 2026-04-29 |
 | B-27 | Criar contato com perfil "cliente" via dashboard é NO-OP silencioso — UPDATE em clientes_b2b com ID do EFOS (commerce_accounts_b2b) acerta 0 rows e redireciona como sucesso | Crítica | Homologação Sprint 9 | 2026-04-29 |
 
+> **B-27 — RESOLUÇÃO ESTRUTURAL VIA D030 (não fix raso):**
+> Decisão do PO em 29/04: B-27 NÃO será corrigido com remendo no
+> `clientes_b2b`. Será resolvido no Sprint 10 com a estrutura nova de
+> `contacts` (write model app) referenciando `commerce_accounts` (read model
+> ERP). Ver [ADR D030](design-docs/D030-erp-adapter-and-contact-ownership.md)
+> para o modelo completo.
+
 > **B-27 detalhe (showstopper):** Caso real homologação 29/04 09:30-09:32.
 > Logs confirmam 2 POSTs `/dashboard/contatos/novo` retornando 302 sem erro,
 > mas `clientes_b2b` permaneceu com 0 rows.

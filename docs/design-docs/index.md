@@ -35,7 +35,7 @@ Log de decisões técnicas. Atualizar sempre que uma nova decisão for tomada.
 | D027 | Domínio commerce/ como camada de dados EFOS normalizada | Sprint 8 | ok |
 | D028 | Langfuse session_id + update_current_observation em todos os agentes | Sprint 8 | ok |
 | D029 | Staging DB efos_staging destruído em bloco finally após cada sync | Sprint 8 | ok |
-| [D030](D030-erp-adapter-and-contact-ownership.md) | ERP adapter pattern + canonical contact ownership no app — App é dono de canais/contatos, ERP é dono de cadastro fiscal/financeiro. Bling como ERP alvo. | Pré-Sprint 10 | proposto |
+| [D030](D030-erp-adapter-and-contact-ownership.md) | ERP adapter pattern + canonical contact ownership no app — App é dono de canais/contatos, ERP é dono de cadastro fiscal/financeiro. Bling como ERP alvo. | Pré-Sprint 10 | aprovado |
 
 ---
 

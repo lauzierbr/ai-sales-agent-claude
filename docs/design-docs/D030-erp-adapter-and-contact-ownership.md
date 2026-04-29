@@ -1,6 +1,6 @@
 # D030 — ERP Adapter pattern + canonical contact ownership no app
 
-**Status:** Proposto (2026-04-29)
+**Status:** APROVADO (2026-04-29)
 **Decisão de:** Lauzier (PO/Tech Lead) e Claude (arquitetura)
 **Substitui:** Reflete uma escolha estrutural ainda não formalizada nos sprints anteriores
 **Relacionado a:** F-04 (modelagem cliente×contato), B-27 (showstopper), Sprint 8 EFOS, futuro Sprint Bling
@@ -235,13 +235,44 @@ core (`commerce/`, `agents/`, `dashboard/`) não muda.
 
 ---
 
-## Decisões pendentes (para PO confirmar)
+## Decisões confirmadas pelo PO (2026-04-29)
 
-1. **Confirmar Bling como ERP alvo principal** (vs Tiny ou outro)
-2. **Janela de migração JMB:** Sprint 11 paralelo ou Sprint 12+ depois de
-   estabilizar bot?
-3. **`clientes_b2b` legacy** — deprecar quando? Quem migra os 5 contatos
-   atuais?
+1. **Bling é o ERP alvo principal** — confirmação do PO. Detalhamento de
+   migração e cronograma fica em thread/ADR separado.
+
+2. **B-27 NÃO será corrigido como remendo no `clientes_b2b`** — confirmado
+   pelo PO. Será resolvido estruturalmente no Sprint 10 com a tabela `contacts`
+   nova, conforme este ADR.
+
+3. **Comportamento de número desconhecido** (auto-criação + autorização):
+   - **Auto-criação de `contacts` pendentes** — confirmado. Quando número
+     não-cadastrado manda mensagem, app cria contact com
+     `origin='self_registered'`, `authorized=False`. Bot responde
+     "Vou avisar o gestor para te autorizar".
+   - **Notificação ao gestor**: dual — via **dashboard E WhatsApp**.
+     Mensagem ao gestor inclui número, mensagem original e candidato
+     (match em `commerce_accounts` via CNPJ ou nome de empresa extraído
+     da mensagem). Gestor pode autorizar/rejeitar/vincular via WhatsApp
+     direto ou via dashboard.
+
+4. **`/dashboard/clientes` fica read-only** — confirmado. Empresas (PJ) só
+   vêm do ERP. Sem botão "Novo Cliente" no dashboard. Caso de cliente que
+   "ainda não está no ERP" não é tratado por enquanto — gestor cadastra no
+   ERP primeiro, depois cria contato no app.
+
+## Decisões pendentes (para próximas threads/sprints)
+
+1. **`clientes_b2b` legacy** — deprecar quando? 5 contatos atuais migrados
+   automaticamente para `contacts` (origin='manual') na migration ou
+   apagados? **Sugestão:** migrar automaticamente os 5 atuais para
+   `contacts` durante a migration; manter `clientes_b2b` por 1-2 sprints
+   como fallback de leitura; remover quando confiança total.
+
+2. **Janela de migração JMB EFOS → Bling** — definir em thread separada
+   (PO já indicou que vai tratar à parte).
+
+3. **Política de retenção** de contatos `self_registered` não autorizados
+   após N dias sem ação do gestor — descartar? Manter? Notificar de novo?
 
 ---
 
