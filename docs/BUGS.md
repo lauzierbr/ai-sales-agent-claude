@@ -12,6 +12,72 @@
 | B-23 | Áudio WhatsApp (H-20/F-02a) não funciona — Whisper rejeita 400 "Invalid file format" porque audioMessage.url retorna conteúdo criptografado E2E | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-24 | Bot nega capacidade de áudio em vez de admitir falha temporária — fallback injeta texto que confunde o LLM + system prompt não menciona a capacidade | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-25 | Inconsistência de ano em relatórios + ausência de tool de ranking — agente faz 24 chamadas seriais e escolhe ano default diferente da pergunta anterior | Alta | Homologação Sprint 9 | 2026-04-29 |
+| B-26 | Truncação cega do histórico Redis quebra pares tool_use/tool_result, dispara erro 400 e "recovery destrutivo" que apaga TODO o contexto conversacional | Crítica | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-26 detalhe:** **CAUSA RAIZ do B-25c**. Investigação aprofundada mostrou
+> que o agente perde contexto não por limitação do LLM, mas por bug estrutural
+> no gerenciamento de histórico. Afeta os **3 agentes** (cliente, rep, gestor).
+>
+> **Mecanismo exato (passo a passo, exemplo do gestor 28/04 13:16):**
+>
+> 1. Conversa do gestor acumula >= 20 mensagens (cada tool_use gera 4 entries:
+>    user, assistant_tool_use, user_tool_result, assistant_text)
+> 2. `_salvar_historico_redis` (agent_gestor.py:1353) trunca cegamente:
+>    `trimmed = messages[-historico_max_msgs:]` (max=20)
+> 3. Truncação corta no meio de um par tool_use/tool_result — o histórico
+>    salvo começa com um `tool_result` órfão ou contém `tool_use` sem `tool_result`
+> 4. Próxima mensagem do usuário: `_carregar_historico_redis` lê histórico
+>    inválido, anexa nova mensagem e envia à API
+> 5. Anthropic API retorna 400: `"messages.0.content.0: unexpected tool_result..."`
+> 6. Bloco `except` em agent_gestor.py:487-507 detecta o erro e:
+>    a. Loga `agent_gestor_historico_corrompido_recovery`
+>    b. **Chama `_limpar_historico_redis` — APAGA TODO O HISTÓRICO REDIS**
+>    c. Reseta `messages = [{"role":"user","content":mensagem.texto}]`
+>    d. Refaz a chamada com histórico vazio
+> 7. **Resultado: agente perdeu TODO o contexto da conversa anterior**
+>
+> **Frequência observada:** 3 ocorrências em 19h (27/04 23:22, 28/04 09:15,
+> 28/04 13:16). Não é raro — qualquer conversa com >= 5 tool calls dispara.
+>
+> **Locais afetados (mesmo padrão nos 3 agentes):**
+> - `output/src/agents/runtime/agent_gestor.py:495` (limpar) + `:1353` (truncar)
+> - `output/src/agents/runtime/agent_rep.py:350` (limpar) + `:528` (truncar)
+> - `output/src/agents/runtime/agent_cliente.py:301` (limpar) + `:469` (truncar)
+> - `output/src/agents/runtime/agent_cliente.py:441` (truncar no load também)
+> - `output/src/agents/runtime/agent_rep.py:502` (truncar no load também)
+>
+> **Correções (precisa ambas):**
+>
+> **B-26a — Truncação respeitando integridade**
+> Substituir `messages[-N:]` por uma função `truncate_preserving_pairs(messages, max)`:
+> - Se o slice começaria com `{"role":"user","content":[{"type":"tool_result",...}]}`,
+>   recuar até o `assistant` com `tool_use` correspondente (incluí-lo)
+> - Se o slice terminaria com `{"role":"assistant","content":[{"type":"tool_use",...}]}`
+>   sem `tool_result` adjacente após, avançar até incluir o `tool_result` ou
+>   recuar até excluir o `tool_use`
+> - Alternativa mais simples: trabalhar em "turnos" (user-message → assistant-final-text),
+>   nunca cortar dentro de um turno
+>
+> **B-26b — Recovery não-destrutivo**
+> Em vez de `_limpar_historico_redis`, usar uma função `repair_history`:
+> - Tentar remover apenas os pares órfãos do início do histórico
+> - Se ainda assim falhar, descartar TOOL CALLS antigas mas manter o texto
+>   das mensagens user/assistant (preservando o contexto conversacional)
+> - Apagar tudo só como último recurso, e logar como erro (não warning)
+>
+> **Teste de regressão obrigatório:**
+> - `tests/regression/test_b26_truncation_integrity.py`
+> - Criar histórico de 25 mensagens com pares tool_use/tool_result
+> - Aplicar truncação para 20 → assertar que o histórico retornado é válido
+>   para Anthropic API (cada tool_use tem seu tool_result, nenhum órfão)
+> - Aplicar repair com histórico já corrompido → assertar que retorna histórico
+>   válido com pelo menos as N últimas mensagens text-only preservadas
+>
+> **Severidade Crítica porque:**
+> - Afeta os 3 agentes (todo o produto)
+> - Impede continuidade conversacional (UX core do bot)
+> - Não foi pego por nenhum teste anterior (mocks não simulam API real)
+> - Confundido com bug de LLM (B-25c) — investigação revelou ser estrutural
 
 > **B-25 detalhe:** Caso real (28/04 13:16-13:17):
 >
