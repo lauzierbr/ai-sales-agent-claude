@@ -9,11 +9,92 @@
 | B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |
 | B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
+| B-28 | Criar pedido em nome de cliente EFOS falha — get_by_id sem fallback commerce + LLM alucina "instabilidade de ID" | Crítica | Homologação Sprint 9 | 2026-04-29 |
+| B-29 | Logs poluídos com "'str' object has no attribute 'decode'" em persona_key_redis_erro — fix B-11 quebra com redis-py >= 5.0 (decode_responses já retorna str) | Baixa | Homologação Sprint 9 | 2026-04-29 |
 | B-23 | Áudio WhatsApp (H-20/F-02a) não funciona — Whisper rejeita 400 "Invalid file format" porque audioMessage.url retorna conteúdo criptografado E2E | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-24 | Bot nega capacidade de áudio em vez de admitir falha temporária — fallback injeta texto que confunde o LLM + system prompt não menciona a capacidade | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-25 | Inconsistência de ano em relatórios + ausência de tool de ranking — agente faz 24 chamadas seriais e escolhe ano default diferente da pergunta anterior | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-26 | Truncação cega do histórico Redis quebra pares tool_use/tool_result, dispara erro 400 e "recovery destrutivo" que apaga TODO o contexto conversacional | Crítica | Homologação Sprint 9 | 2026-04-29 |
 | B-27 | Criar contato com perfil "cliente" via dashboard é NO-OP silencioso — UPDATE em clientes_b2b com ID do EFOS (commerce_accounts_b2b) acerta 0 rows e redireciona como sucesso | Crítica | Homologação Sprint 9 | 2026-04-29 |
+
+| B-28 | Criar pedido em nome de cliente EFOS falha — get_by_id sem fallback commerce_accounts_b2b + LLM aluciena erro técnico ("continua retornando o mesmo ID") | Crítica | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-28 detalhe (showstopper do fluxo de pedido pelo gestor):**
+>
+> Caso real 29/04 10:02-10:03. Gestor pediu pedido para "Lauzier Pereira", bot
+> encontrou em commerce_accounts_b2b, mostrou confirmação correta, gestor
+> respondeu "sim", bot retornou:
+>
+> > "O sistema continua retornando o mesmo ID. Pode ser uma instabilidade
+> > pontual. Recomendo tentar novamente em instantes ou verificar diretamente
+> > no sistema se o cliente esta ativo."
+>
+> Essa frase é **alucinação do LLM** reformulando o erro real
+> `{"erro": "Cliente XYZ não encontrado."}` que veio da tool. Nada disso
+> sobre "ID instável" existe no código.
+>
+> **Mecanismo:**
+>
+> 1. Gestor: "quero 5 Loção... para o cliente Lauzier Pereira"
+> 2. AgentGestor chama `_buscar_clientes("Lauzier Pereira")`
+> 3. `_buscar_clientes` em `agents/repo.py` faz fallback para
+>    `commerce_accounts_b2b` quando `clientes_b2b` retorna vazio (B-16 fix)
+> 4. Retorna cliente Lauzier com `id = external_id` do EFOS (string tipo "63.153.691")
+> 5. Bot mostra confirmação "Cliente: 63.153.691 LAUZIER PEREIRA DE ARAUJO" ✓
+> 6. Gestor: "sim"
+> 7. AgentGestor chama `confirmar_pedido_em_nome_de(cliente_b2b_id="63.153.691", ...)`
+> 8. `_confirmar_pedido` em `agent_gestor.py:768` chama
+>    `self._cliente_b2b_repo.get_by_id(id="63.153.691", tenant_id="jmb", session=...)`
+> 9. `ClienteB2BRepo.get_by_id` em `agents/repo.py:367-374`:
+>    ```python
+>    SELECT id, ... FROM clientes_b2b WHERE id = :id AND tenant_id = :tenant_id
+>    ```
+>    **NÃO TEM FALLBACK para commerce_accounts_b2b** (diferente de
+>    `_buscar_clientes`). E `clientes_b2b` está vazia.
+> 10. Retorna `None` → `{"erro": "Cliente 63.153.691 não encontrado."}`
+> 11. LLM tenta reformular o erro mas alucina "ID instável", "instabilidade
+>     pontual" — porque vê "Cliente {id} não encontrado" e infere problema
+>     técnico de ID
+> 12. Em iteration 2 (logs 10:03:01), bot tenta de novo `_buscar_clientes`
+>     no fluxo (talvez para validar) — busca acerta de novo no EFOS, mas o
+>     loop continua. Atinge limite ou desiste.
+> 13. Gestor recebe alucinação técnica
+>
+> **Por que a tool de busca funciona mas a de confirmar não:**
+> - `_buscar_clientes` foi atualizada no hotfix Sprint 9 (B-16) com fallback
+>   para `commerce_accounts_b2b`
+> - `get_by_id` NÃO foi atualizada — não estava no escopo grep do hotfix
+>   porque não usa "FROM clientes_b2b" como pattern principal (usa por id)
+> - Esse é o tipo de inconsistência que o D030 resolve estruturalmente
+>
+> **Severidade Crítica:** bloqueia o fluxo de "gestor fazer pedido em nome de
+> cliente" — caso de uso central do produto. Combinado com B-26 (recovery
+> destrutivo) e B-27 (cadastro contato no-op), o gestor na prática não
+> consegue operar via WhatsApp.
+>
+> **Resolução:**
+>
+> Estrutural via D030 — mesmo grupo de B-27. Quando migrar para tabela
+> `contacts` + `commerce_accounts`, `confirmar_pedido_em_nome_de` deve
+> aceitar `account_external_id` (do `commerce_accounts`) e gravar em
+> `pedidos.cliente_b2b_id` apontando para... aqui há decisão arquitetural:
+>
+> - **Opção A**: `pedidos.account_external_id VARCHAR` (sem FK) — pedido
+>   referencia EFOS direto, simples
+> - **Opção B**: criar `clientes_b2b` automaticamente clonando do EFOS
+>   antes do INSERT — mantém schema atual mas suja a tabela
+> - **Opção C**: substituir `pedidos.cliente_b2b_id` por
+>   `pedidos.account_external_id` em migration; remover FK
+>
+> Recomendação: **Opção C** — alinhada com D030 onde `commerce_accounts`
+> é fonte de verdade para PJ. Migration nova no Sprint 10.
+>
+> **Bug adicional (Média) detectado nos logs:**
+> `persona_key_redis_erro error="'str' object has no attribute 'decode'"`
+> aparece em todas as mensagens. É no fix do B-11 (invalidação Redis ao
+> trocar persona) — código chama `persona_anterior.decode()` mas em
+> redis-py >= 5.0 o `get()` já retorna string em modo `decode_responses=True`.
+> Não impede funcionalidade mas polui logs. Registrar como B-29 leve.
 
 > **B-27 — RESOLUÇÃO ESTRUTURAL VIA D030 (não fix raso):**
 > Decisão do PO em 29/04: B-27 NÃO será corrigido com remendo no
