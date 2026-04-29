@@ -136,7 +136,7 @@
       <td>{{ p.categoria or '—' }}</td>
       <td class="preco">
         {% if p.preco_padrao %}
-          R$ {{ p.preco_padrao }}
+          {{ p.preco_padrao|brl }}
         {% else %}
           —
         {% endif %}

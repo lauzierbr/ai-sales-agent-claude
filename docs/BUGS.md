@@ -12,6 +12,7 @@
 | B-28 | Criar pedido em nome de cliente EFOS falha — get_by_id sem fallback commerce + LLM alucina "instabilidade de ID" | Crítica | Homologação Sprint 9 | 2026-04-29 |
 | B-29 | Logs poluídos com "'str' object has no attribute 'decode'" em persona_key_redis_erro — fix B-11 quebra com redis-py >= 5.0 (decode_responses já retorna str) | Baixa | Homologação Sprint 9 | 2026-04-29 |
 | B-30 | B-12 só parcialmente resolvido — Langfuse continua sem tokens/custo. `_get_anthropic_client` tem docstring mentindo: não wrappa o cliente, só seta session_id no trace. Generations nunca são criadas | Média | Homologação Sprint 9 | 2026-04-29 |
+| B-31 | Valores monetários no dashboard em formato americano ("R$ 2106925.14" em vez de "R$ 2.106.925,14") — corrigido em v0.9.2 com filter Jinja `\|brl` central em providers/format.py | Média | Homologação Sprint 9 | 2026-04-29 |
 
 > **B-30 detalhe (continuação do B-12):**
 >

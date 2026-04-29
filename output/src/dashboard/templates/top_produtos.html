@@ -27,8 +27,8 @@
       <tr>
         <td>{{ loop.index }}</td>
         <td>{{ produto.produto_nome }}</td>
-        <td>{{ produto.quantidade_total }}</td>
-        <td>R$ {{ "%.2f"|format(produto.valor_total|float) }}</td>
+        <td>{{ produto.quantidade_total|int_br }}</td>
+        <td>{{ produto.valor_total|brl }}</td>
       </tr>
       {% endfor %}
     </tbody>

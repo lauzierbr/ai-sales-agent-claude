@@ -72,6 +72,10 @@ def create_catalog_service(repo: CatalogRepo) -> CatalogService:
 _templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
 
+# Filters Jinja pt-BR (B-31): |brl, |int_br
+from src.providers.format import register_jinja_filters as _register_jinja_filters
+_register_jinja_filters(templates.env)
+
 
 # ─────────────────────────────────────────────
 # Dependency injection

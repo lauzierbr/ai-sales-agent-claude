@@ -31,6 +31,10 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 from src import __version__ as _APP_VERSION
 templates.env.globals["app_version"] = _APP_VERSION
 
+# Filters Jinja pt-BR (B-31): |brl, |int_br
+from src.providers.format import register_jinja_filters as _register_jinja_filters
+_register_jinja_filters(templates.env)
+
 _COOKIE_NAME = "dashboard_session"
 _COOKIE_MAX_AGE = 8 * 3600  # 8h em segundos
 

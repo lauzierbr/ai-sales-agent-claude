@@ -6,7 +6,7 @@
   <tr>
     <td>{{ p.numero_pedido or p.id[:8] }}</td>
     <td>{{ p.cliente_nome or "—" }}</td>
-    <td>R$ {{ "%.2f"|format(p.total_estimado|float) }}</td>
+    <td>{{ p.total_estimado|brl }}</td>
     <td><span class="badge badge-ok">{{ p.status }}</span></td>
   </tr>
   {% endfor %}

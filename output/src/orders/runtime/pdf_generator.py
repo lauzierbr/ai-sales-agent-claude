@@ -238,16 +238,9 @@ class PDFGenerator:
 
     @staticmethod
     def _fmt_brl(valor: Decimal) -> str:
-        """Formata valor decimal no padrao brasileiro (R$ 1.250,00).
+        """Formata valor decimal no padrão brasileiro (R$ 1.250,00).
 
-        Args:
-            valor: valor a formatar.
-
-        Returns:
-            String no formato brasileiro.
+        Delega para src.providers.format.format_brl (função central — B-31).
         """
-        # Formata com 2 casas decimais e troca separadores
-        formatted = f"{valor:,.2f}"
-        # Converte separador de milhar e decimal para padrao BR
-        formatted = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
-        return f"R$ {formatted}"
+        from src.providers.format import format_brl
+        return format_brl(valor)
