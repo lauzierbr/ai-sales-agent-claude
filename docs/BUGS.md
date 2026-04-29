@@ -10,6 +10,42 @@
 | B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
 | B-23 | Áudio WhatsApp (H-20/F-02a) não funciona — Whisper rejeita 400 "Invalid file format" porque audioMessage.url retorna conteúdo criptografado E2E | Alta | Homologação Sprint 9 | 2026-04-29 |
+| B-24 | Bot nega capacidade de áudio em vez de admitir falha temporária — fallback injeta texto que confunde o LLM + system prompt não menciona a capacidade | Alta | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-24 detalhe:** Independente do B-23 (que é técnico). Mesmo se Whisper
+> funcionasse, há dois problemas de UX no comportamento do agente:
+>
+> **B-24a — Fallback de erro confunde o LLM**
+> Em `output/src/agents/ui.py:314-330`, quando a transcrição falha, o código
+> faz `mensagem.model_copy(update={"texto": "Recebi seu áudio, mas houve uma
+> falha na transcrição..."})` — esse texto vai para o histórico Redis e o
+> agente Claude o processa como se fosse uma mensagem do usuário. Resultado:
+> Claude reformula com base no system prompt ("Sou um assistente de texto e
+> não envio áudios") em vez de propagar a mensagem amigável.
+>
+> **B-24b — System prompt não menciona capacidade de áudio**
+> Os 3 system prompts em `output/src/agents/config.py` não mencionam que o
+> agente aceita áudio. Quando o usuário pergunta "Você consegue ouvir áudio?"
+> o LLM responde "Trabalho apenas com texto" — porque é o que ele "sabe"
+> pelo prompt. Confirmado em conversa 28/04 19:05.
+>
+> **Correção:**
+>
+> 1. Em ui.py: quando transcrição falha, enviar resposta DIRETAMENTE via
+>    `send_whatsapp_message()` (sem passar pelo agente) e dar `return` — não
+>    deixar o LLM processar uma mensagem fake. Padrão similar ao que já é
+>    usado em outros pontos do fluxo (ex: rate limit).
+>
+> 2. Em config.py: adicionar bloco "## Capacidades de mensagem" nos 3 system
+>    prompts:
+>    ```
+>    Você aceita mensagens de texto e áudio.
+>    Áudios aparecem prefixados com "🎤 Ouvi: <transcrição>" — trate o
+>    conteúdo após "Ouvi:" como a mensagem real do usuário.
+>    Se perguntarem se você aceita áudio, confirme.
+>    ```
+>
+> Sub-bugs B-24a e B-24b devem ser corrigidos juntos para evitar regressão.
 
 > **B-23 detalhe:** Implementação Sprint 9 baixa o áudio via `audioMessage.url`
 > (servidor mmg.whatsapp.net) e envia para Whisper. Conteúdo é criptografado
