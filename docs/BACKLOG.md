@@ -16,6 +16,14 @@ Features solicitadas ainda não implementadas, priorizadas pelo PO.
 | F-03 | Status e versão de entrega no feedback — campos `status` (aberto/em_andamento/resolvido) e `versao_entrega` (ex: v0.7.0) na tabela `feedbacks` + UI no painel do gestor para visualizar e atualizar | Piloto | Médio — rastreabilidade do ciclo feedback→entrega | Médio |
 | F-04 | Modelagem cliente PJ × contato PF — separar `commerce_accounts_b2b` (pessoa jurídica) de `cliente_contatos` (1+N pessoas físicas com WhatsApp); importar `cl_contato`, `cl_telefone`, `cl_telefonecelular`, `cl_email` do EFOS | Homologação Sprint 9 | Alto — resolve B-27 estruturalmente e dá base para múltiplos compradores por cliente | Médio |
 | F-05 | **AnalystAgent — meta-agente de observabilidade** — persona admin que consulta Langfuse e extrai inteligência operacional (custo, anomalias, qualidade). Diferencial de produto. Aprovado em ADR D031, alvo Sprint 11. | Investigação 29/04 | Alto — diferencial competitivo + reduz tempo de investigação de bugs/incidentes | Alto (3 sprints incrementais) |
+| F-06 | **Painel de Divergências do Catálogo ERP** — repurpose do antigo /catalog/painel: mostrar produtos com dados inconsistentes vindos do ERP (preço fora do esperado, sem categoria, sem foto, EAN inválido). QA do dado ingerido pelo sync. | Investigação 29/04 | Médio — qualidade de dado do ERP afeta resposta do bot | Médio |
+
+> **F-06 detalhe:** Considerar pós-Bling. Substitui o painel legado do Sprint 0
+> (que era acoplado ao crawler+enricher) por uma view nova alinhada com D030.
+> Tem sinergia com D031 (AnalystAgent) — divergências de catálogo são tipo de
+> anomalia que o agente meta detectaria. Foco: ajudar gestor a corrigir dado
+> no ERP (não cadastrar duplicado no app). Decisão se entra como tela própria
+> ou como capability do AnalystAgent fica para discussão futura.
 
 > **F-05 detalhe:** Visto em ADR [D031](../docs/design-docs/D031-analyst-agent-observability.md).
 >
