@@ -11,6 +11,59 @@
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
 | B-23 | Áudio WhatsApp (H-20/F-02a) não funciona — Whisper rejeita 400 "Invalid file format" porque audioMessage.url retorna conteúdo criptografado E2E | Alta | Homologação Sprint 9 | 2026-04-29 |
 | B-24 | Bot nega capacidade de áudio em vez de admitir falha temporária — fallback injeta texto que confunde o LLM + system prompt não menciona a capacidade | Alta | Homologação Sprint 9 | 2026-04-29 |
+| B-25 | Inconsistência de ano em relatórios + ausência de tool de ranking — agente faz 24 chamadas seriais e escolhe ano default diferente da pergunta anterior | Alta | Homologação Sprint 9 | 2026-04-29 |
+
+> **B-25 detalhe:** Caso real (28/04 13:16-13:17):
+>
+> - **Pergunta 1:** "relatório de vendas do representante Rondinele de março/26"
+>   → R$ 32.221,22 / 43 pedidos (correto: março/2026 confirmado no banco)
+> - **Pergunta 2:** "qual foi o melhor vendedor de março?"
+>   → Rondinele com R$ 34.283,49 / 27 pedidos (correto: março/2025 no banco, mas
+>     ano errado — usuário esperava 2026, mesmo contexto da pergunta anterior)
+>
+> **3 problemas independentes na mesma cena:**
+>
+> **B-25a — Sem tool de ranking consolidada**
+> O agente não tem tool tipo `ranking_vendedores_efos(mes, ano)` que retorne o
+> ranking completo numa query. Ao receber "melhor vendedor de março", iterou
+> em 24 chamadas seriais de `relatorio_vendas_representante_efos` (uma por rep
+> ativo), confirmado nos logs `fuzzy_match_vendedor` para todos os 24 reps em
+> sequência às 13:17:12. Comportamento ineficiente, lento, custoso (24x tokens).
+>
+> **Correção:** Adicionar tool `ranking_vendedores_efos(mes, ano, top_n=10)`
+> que faz uma única SQL agregada em `commerce_orders` JOIN `commerce_vendedores`
+> ordenada por SUM(total) DESC LIMIT top_n. Anunciar no system prompt como a
+> tool preferida para perguntas de ranking/comparação.
+>
+> **B-25b — Ano default inconsistente**
+> Hoje é 2026-04-29. "Março" sem qualificação deveria ser março/2026 (último
+> março passado). Mas o agente escolheu março/2025. Provável causa: tool
+> consultada (`relatorio_vendas_representante_efos`) recebe `ano` como parâmetro
+> obrigatório do LLM — se LLM não tem default claro no system prompt, escolha
+> é arbitrária.
+>
+> **Correção:** No system prompt do AgentGestor, adicionar regra explícita:
+> "Quando o usuário não informar ano, use o ano corrente. Se o mês mencionado
+> ainda não passou no ano corrente, use o ano anterior."
+>
+> Em `_relatorio_vendas_representante_efos` e `_relatorio_vendas_cidade_efos`,
+> tornar `ano` opcional com default `datetime.now().year`.
+>
+> **B-25c — Sem manutenção de contexto temporal entre perguntas**
+> Quando a primeira pergunta especifica "março/26", a segunda sobre "março"
+> deveria herdar o mesmo ano (mesmo escopo conversacional). Hoje cada
+> tool_call é independente.
+>
+> **Correção (escopo maior):** Adicionar ao system prompt: "Quando o usuário
+> fizer perguntas sequenciais sobre o mesmo período, mantenha o ano da pergunta
+> anterior se não houver indicação contrária." Isso é uma regra de prompt;
+> não requer mudança estrutural.
+>
+> **Arquivos a modificar:**
+> - `output/src/agents/runtime/agent_gestor.py` — nova tool ranking +
+>   defaults de ano nas tools existentes
+> - `output/src/commerce/repo.py` — novo método `ranking_vendedores`
+> - `output/src/agents/config.py` — system prompt do gestor com regras de ano
 
 > **B-24 detalhe:** Independente do B-23 (que é técnico). Mesmo se Whisper
 > funcionasse, há dois problemas de UX no comportamento do agente:
