@@ -1,6 +1,6 @@
 # Sprint 3 — AgentRep + Hardening de Linguagem Brasileira
 
-**Status:** ✅ APROVADO — 2026-04-16
+**Status:** 🔄 Em planejamento
 **Data início:** 2026-04-16
 **Spec:** `artifacts/spec.md`
 **Branch:** claude/awesome-benz

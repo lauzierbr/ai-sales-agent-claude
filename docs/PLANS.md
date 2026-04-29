@@ -17,9 +17,10 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 5 | ✅ | Produto | Observabilidade LLM, feedback, UX dashboard, contatos — v0.6.0 |
 | Sprint 6 | ✅ | Hardening | Pre-pilot hardening — rate limit, startup validation, CORS, health Anthropic — v0.6.1 APROVADO |
 | **Piloto JMB** | 🚀 | Piloto | Teste com usuários reais iniciado 2026-04-22 — banco limpo, staging em v0.6.1 |
-| Sprint 7 | 🏁 | Produto | Notificação gestor (TD-08) — todos gestores ativos recebem PDF ao confirmar pedido — aguardando homologação |
-| Sprint 8 | ⏩ | Produto | Hotfixes piloto (B-10/B-11/B-12) + integração EFOS via backup diário SSH/pg_restore + 3 tools relatório AgentGestor — homologação unificada com Sprint 9 |
-| Sprint 9 | 🔄 | Produto | Hotfix B-13 (EAN completo) + leituras para commerce_* + dashboard sync EFOS + áudio WhatsApp Whisper — homologação unificada com Sprint 8 |
+| Sprint 7 | ✅ | Produto | Notificação gestor (TD-08) — v0.7.0, homologado em conjunto com Sprint 9 (29/04/2026) |
+| Sprint 8 | ✅ | Produto | Hotfixes piloto (B-10/B-11/B-12) + integração EFOS via backup diário SSH/pg_restore + 3 tools relatório AgentGestor — v0.8.0, homologado com Sprint 9 (29/04/2026) |
+| Sprint 9 | ✅ | Produto | Hotfix B-13 + leituras commerce_* + dashboard sync + áudio Whisper + 4 hotfixes pós-homologação (B-14 a B-22, B-31, B-32, formato BR, KPIs mensais) — v0.9.4, homologado 29/04/2026 com 11 bugs abertos para Sprint 10 |
+| Sprint 10 | 🔄 | Produto | **Em planejamento** — hotfixes críticos (B-26 truncação histórico, B-23/B-24 áudio, B-25 ranking, B-30 Langfuse, B-29) + foundations D030 (tabela `contacts`) + F-07 controle frequência sync + deprecação catalog legado |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 
