@@ -17,6 +17,14 @@ em 30 segundos de uso real, com smoke gate verde e Evaluator aprovado.
 **Princípio:** cada cenário tem `click → fill → submit → assert URL → assert DB`.
 **Sem submit, não conta.**
 
+> **Lição v0.10.6 (2026-04-30):** a11y snapshot (`take_snapshot`) NÃO captura
+> layout visual quebrado por CSS. Em v0.10.5 todos os 5 radios de `/dashboard/sync`
+> estavam semanticamente OK no a11y tree mas visualmente despencados em coluna
+> separada das labels (regra global `input { width: 100%; }` aplicava em radio).
+> **Para cada rota com form criado ou alterado no sprint, adicionar `take_screenshot()`
+> e revisar visualmente** — comparar com mock/template esperado. Layout quebrado
+> = FAIL.
+
 ### Cenários por sprint
 
 Para cada rota com POST handler **alterado ou criado no sprint**:
