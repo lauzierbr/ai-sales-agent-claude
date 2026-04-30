@@ -298,7 +298,7 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                             json={"message": {"key": msg_key}},
                             headers={"apikey": _evo_key},
                         )
-                        if resp.status_code == 200:
+                        if resp.is_success:
                             resp_data = resp.json()
                             b64_raw = resp_data.get("base64") or ""
                             if b64_raw:
