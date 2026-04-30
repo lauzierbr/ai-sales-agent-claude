@@ -9,4 +9,4 @@ onde:
 Ver docs/VERSIONING.md para detalhes da convenção e processo de release.
 """
 
-__version__ = "0.10.7"
+__version__ = "0.10.8"

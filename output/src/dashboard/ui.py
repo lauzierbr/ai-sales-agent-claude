@@ -800,6 +800,26 @@ async def sync_admin_get(request: Request) -> Any:
     ultimas_runs = await _get_ultimas_sync_runs(tenant_id)
     proxima = _calcular_proxima_execucao(schedule.get("cron_expression", ""))
 
+    # B-S10-K: detectar estado para feedback visual
+    triggered = request.query_params.get("triggered") == "1"
+    running = bool(ultimas_runs) and (ultimas_runs[0].get("status") == "running")
+    last_success_recent = False
+    if ultimas_runs and ultimas_runs[0].get("status") == "success":
+        from datetime import datetime as _dt, timezone as _tz
+        finished = ultimas_runs[0].get("finished_at")
+        if finished:
+            try:
+                if isinstance(finished, str):
+                    fin_dt = _dt.fromisoformat(finished.replace("Z", "+00:00"))
+                else:
+                    fin_dt = finished
+                if fin_dt.tzinfo is None:
+                    fin_dt = fin_dt.replace(tzinfo=_tz.utc)
+                delta_min = (_dt.now(_tz.utc) - fin_dt).total_seconds() / 60
+                last_success_recent = delta_min < 5
+            except Exception:
+                pass
+
     return templates.TemplateResponse(
         request,
         "sync.html",
@@ -810,6 +830,9 @@ async def sync_admin_get(request: Request) -> Any:
             "ultimas_runs": ultimas_runs,
             "mensagem": None,
             "sucesso": None,
+            "triggered": triggered,
+            "running": running,
+            "last_success_recent": last_success_recent,
         },
     )
 
