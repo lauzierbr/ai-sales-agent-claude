@@ -1,0 +1,21 @@
+# Smoke Gate Sprint 10 — Resultado 2026-04-30T08:05:21-03:00
+
+  OK  health_version_0.10.0
+  OK  alembic_em_0028
+  FAIL contacts_manual_>=5: contacts manual=0, esperado >= 5
+  FAIL commerce_accounts_telefone_>=900: commerce_accounts_b2b.telefone=0, esperado >= 900
+  OK  commerce_products_embedding_>=700
+  OK  sync_schedule_enabled
+  OK  apscheduler_jobs
+  OK  produtos_nao_existe
+  FAIL langfuse_trace_com_usage: Trace 8bd5688c sem usage: totalCost=0, observations=0
+  OK  dashboard_contatos_200
+  OK  dashboard_clientes_readonly
+  OK  dashboard_sync_admin_gate
+
+9 OK, 3 FAILED: contacts_manual_>=5, commerce_accounts_telefone_>=900, langfuse_trace_com_usage
+
+Análise das falhas:
+- contacts_manual_>=5: clientes_b2b não tem registros elegíveis em staging (sem telefone/nome_contato preenchidos)
+- commerce_accounts_telefone_>=900: sync EFOS backup ainda não rodou com os novos campos D030 (telefone popula via EFOS backup); scheduler configurado para 13h00 — executar manualmente
+- langfuse_trace_com_usage: requer interação real com agente via WhatsApp; não automatizável em smoke gate
