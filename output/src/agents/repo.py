@@ -1037,7 +1037,7 @@ class ContactRepo:
                        last_active_at, criado_em, authorized_by_gestor_id
                 FROM contacts
                 WHERE tenant_id = :tenant_id
-                  AND channels @> :channel_filter::jsonb
+                  AND channels @> CAST(:channel_filter AS JSONB)
             """),
             {
                 "tenant_id": tenant_id,

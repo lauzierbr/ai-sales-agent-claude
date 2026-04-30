@@ -90,7 +90,7 @@ class TenantRepo:
         await session.execute(
             text("""
                 INSERT INTO tenants (id, nome, cnpj, ativo, whatsapp_number, config_json, criado_em)
-                VALUES (:id, :nome, :cnpj, :ativo, :whatsapp_number, :config_json::jsonb, :criado_em)
+                VALUES (:id, :nome, :cnpj, :ativo, :whatsapp_number, CAST(:config_json AS JSONB), :criado_em)
             """),
             {
                 "id": tenant.id,

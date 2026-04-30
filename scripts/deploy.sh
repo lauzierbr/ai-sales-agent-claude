@@ -52,7 +52,7 @@ echo ""
 # Nenhum arquivo é copiado individualmente (sem scp, sem rsync).
 # ─────────────────────────────────────────────
 echo "[1/6] Checando out '$REF' no destino..."
-ssh "$REMOTE_HOST" "
+ssh -n "$REMOTE_HOST" "
     set -euo pipefail
     export PATH=/usr/local/bin:\$PATH
     cd $REMOTE_PATH
@@ -79,14 +79,14 @@ ssh "$REMOTE_HOST" "
 # 2. Garante containers Docker ativos
 # ─────────────────────────────────────────────
 echo "[2/6] Verificando containers (Postgres, Redis, etc)..."
-ssh "$REMOTE_HOST" "
+ssh -n "$REMOTE_HOST" "
     export PATH=/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:\$PATH
     export DOCKER_HOST=unix:///Users/dev/.docker/run/docker.sock
     cd $REMOTE_PATH
     docker compose -f infra/docker-compose.staging.yml up -d
 "
 echo "    Aguardando Postgres..."
-ssh "$REMOTE_HOST" "
+ssh -n "$REMOTE_HOST" "
     for i in \$(seq 1 15); do
         docker exec ai-sales-postgres pg_isready -U aisales >/dev/null 2>&1 && break
         sleep 1
@@ -98,7 +98,7 @@ ssh "$REMOTE_HOST" "
 # 3. Pre-checklist de migrations
 # ─────────────────────────────────────────────
 echo "[3/6] Pre-checklist de migrations..."
-ssh "$REMOTE_HOST" "
+ssh -n "$REMOTE_HOST" "
     export PATH=/usr/local/bin:\$PATH
     cd $REMOTE_PATH/output
     export PYTHONPATH=.
@@ -122,7 +122,7 @@ echo ""
 # 4. Aplica migrations
 # ─────────────────────────────────────────────
 echo "[4/6] Aplicando migrations..."
-ssh "$REMOTE_HOST" "
+ssh -n "$REMOTE_HOST" "
     export PATH=/usr/local/bin:\$PATH
     cd $REMOTE_PATH/output
     export PYTHONPATH=.
@@ -137,7 +137,7 @@ ssh "$REMOTE_HOST" "
 # 5. Reinicia uvicorn
 # ─────────────────────────────────────────────
 echo "[5/6] Reiniciando uvicorn..."
-ssh "$REMOTE_HOST" "
+ssh -n "$REMOTE_HOST" "
     export PATH=/usr/local/bin:\$PATH
     pkill -f 'uvicorn src.main:app' 2>/dev/null || true
     sleep 1
@@ -156,7 +156,7 @@ ssh "$REMOTE_HOST" "
 # 6. Health check final
 # ─────────────────────────────────────────────
 echo "[6/6] Health check..."
-ssh "$REMOTE_HOST" "
+ssh -n "$REMOTE_HOST" "
     export PATH=/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:\$PATH
     cd $REMOTE_PATH
     bash scripts/health-check.sh
