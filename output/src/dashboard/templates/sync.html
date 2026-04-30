@@ -10,13 +10,13 @@
 </div>
 {% endif %}
 
-{# B-S10-K: feedback visual do "Rodar Agora" — ciclo iniciado → em andamento → concluído #}
+{# B-S10-K: feedback visual do "Rodar Agora" — estado real (não query string) #}
 {% if running %}
 <div class="card" style="border-left:3px solid #f0a020;margin-bottom:1rem;background:#3a2a00"
      hx-get="/dashboard/sync" hx-trigger="every 5s" hx-select=".container" hx-target=".container" hx-swap="outerHTML">
   <p style="margin:0">
     <strong>⏳ Sync em andamento</strong> —
-    <span class="text-muted">atualizando automaticamente a cada 5s...</span>
+    <span class="text-muted">atualizando automaticamente a cada 5s. Veja progresso no histórico abaixo.</span>
   </p>
 </div>
 {% elif last_success_recent %}
@@ -28,11 +28,21 @@
     {% endif %}
   </p>
 </div>
+{% elif last_error_recent %}
+<div class="card" style="border-left:3px solid var(--error);margin-bottom:1rem;background:#4d1e1e">
+  <p style="margin:0">
+    <strong>✗ Sync falhou</strong>
+    {% if last_error_msg %}
+    — <span class="text-muted">{{ last_error_msg }}</span>
+    {% endif %}
+  </p>
+</div>
 {% elif triggered %}
-<div class="card" style="border-left:3px solid var(--accent);margin-bottom:1rem">
+<div class="card" style="border-left:3px solid var(--accent);margin-bottom:1rem"
+     hx-get="/dashboard/sync" hx-trigger="every 3s" hx-select=".container" hx-target=".container" hx-swap="outerHTML">
   <p style="margin:0">
     <strong>🚀 Sync iniciado</strong> —
-    <span class="text-muted">o processo está rodando em background. Acompanhe abaixo.</span>
+    <span class="text-muted">aguardando primeiro registro... (auto-refresh 3s)</span>
   </p>
 </div>
 {% endif %}

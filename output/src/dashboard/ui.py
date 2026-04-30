@@ -800,25 +800,49 @@ async def sync_admin_get(request: Request) -> Any:
     ultimas_runs = await _get_ultimas_sync_runs(tenant_id)
     proxima = _calcular_proxima_execucao(schedule.get("cron_expression", ""))
 
-    # B-S10-K: detectar estado para feedback visual
-    triggered = request.query_params.get("triggered") == "1"
+    # B-S10-K: detectar estado real para feedback visual (não confiar em query string)
+    from datetime import datetime as _dt, timezone as _tz
+    now_utc = _dt.now(_tz.utc)
+
+    def _to_aware(v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                v = _dt.fromisoformat(v.replace("Z", "+00:00"))
+            except Exception:
+                return None
+        if hasattr(v, "tzinfo") and v.tzinfo is None:
+            v = v.replace(tzinfo=_tz.utc)
+        return v
+
     running = bool(ultimas_runs) and (ultimas_runs[0].get("status") == "running")
     last_success_recent = False
-    if ultimas_runs and ultimas_runs[0].get("status") == "success":
-        from datetime import datetime as _dt, timezone as _tz
-        finished = ultimas_runs[0].get("finished_at")
+    last_error_recent = False
+    last_error_msg = ""
+    if ultimas_runs:
+        first = ultimas_runs[0]
+        st = first.get("status")
+        finished = _to_aware(first.get("finished_at"))
         if finished:
-            try:
-                if isinstance(finished, str):
-                    fin_dt = _dt.fromisoformat(finished.replace("Z", "+00:00"))
-                else:
-                    fin_dt = finished
-                if fin_dt.tzinfo is None:
-                    fin_dt = fin_dt.replace(tzinfo=_tz.utc)
-                delta_min = (_dt.now(_tz.utc) - fin_dt).total_seconds() / 60
-                last_success_recent = delta_min < 5
-            except Exception:
-                pass
+            delta_min = (now_utc - finished).total_seconds() / 60
+            if delta_min < 5:
+                if st == "success":
+                    last_success_recent = True
+                elif st in ("error", "failed"):
+                    last_error_recent = True
+                    last_error_msg = str(first.get("error") or "")[:200]
+
+    # "iniciado" = POST /dashboard/sync com action=run_now ocorreu recentemente
+    # mas sync_runs ainda não criou row 'running' (race window de ~1-2s).
+    # Usar schedule.last_triggered_at (atualizado pelo scheduler.run_now).
+    triggered_recent = False
+    last_trig = _to_aware(schedule.get("last_triggered_at"))
+    if last_trig:
+        delta_s = (now_utc - last_trig).total_seconds()
+        # Mostrar "iniciado" só se: trigger recente E ainda não há running E não há resultado recente
+        if 0 <= delta_s < 30 and not running and not last_success_recent and not last_error_recent:
+            triggered_recent = True
 
     return templates.TemplateResponse(
         request,
@@ -830,9 +854,11 @@ async def sync_admin_get(request: Request) -> Any:
             "ultimas_runs": ultimas_runs,
             "mensagem": None,
             "sucesso": None,
-            "triggered": triggered,
+            "triggered": triggered_recent,
             "running": running,
             "last_success_recent": last_success_recent,
+            "last_error_recent": last_error_recent,
+            "last_error_msg": last_error_msg,
         },
     )
 
@@ -895,6 +921,20 @@ async def sync_admin_post(request: Request) -> Any:
                     ),
                     status_code=409,
                 )
+
+            # Marcar last_triggered_at IMEDIATAMENTE para que o GET subsequente
+            # detecte que houve disparo (não esperar o sync terminar).
+            try:
+                from sqlalchemy import text as _text
+                async with session_factory() as _ses:
+                    await _ses.execute(
+                        _text("UPDATE sync_schedule SET last_triggered_at = NOW() "
+                              "WHERE tenant_id=:tid AND connector_kind='efos_backup'"),
+                        {"tid": tenant_id},
+                    )
+                    await _ses.commit()
+            except Exception as _exc_trig:
+                log.warning("dashboard_sync_trigger_marker_erro", error=str(_exc_trig))
 
             # Disparar como background task — retorna imediatamente
             _asyncio.create_task(
