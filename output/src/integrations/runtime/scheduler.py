@@ -233,7 +233,8 @@ async def _run_sync_job(
     try:
         log.info("efos_sync_iniciado", tenant_id=tenant_id, connector_kind=connector_kind)
         from src.integrations.jobs.sync_efos import run_sync
-        await run_sync(tenant_id=tenant_id, session_factory=session_factory)
+        # run_sync busca session factory via get_session_factory() internamente
+        await run_sync(tenant_id=tenant_id)
 
         # Atualizar last_triggered_at no banco
         async with session_factory() as session:
