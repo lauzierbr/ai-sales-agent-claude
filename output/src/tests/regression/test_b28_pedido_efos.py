@@ -1,14 +1,16 @@
-"""Testes de regressão — B-28: pedido em nome de cliente EFOS (E12, Sprint 10).
+"""Testes de regressao B-28: pedido em nome de cliente EFOS (E12 + hotfix v0.10.2).
 
 Verifica que:
 - get_by_id tem fallback para commerce_accounts_b2b.
-- Mock: clientes_b2b retorna None → commerce_accounts_b2b é consultado.
-- Pedido mock criado com account_external_id populado.
+- Pedido de cliente EFOS-only usa account_external_id (nao cliente_b2b_id).
+- Pedido de cliente clientes_b2b usa cliente_b2b_id UUID (nao account_external_id).
+- Migration 0025 adiciona account_external_id; migration 0029 adiciona observacao.
+- INSERT nao empurra external_id em cliente_b2b_id (FK/UUID).
 """
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.mark.unit
@@ -60,7 +62,7 @@ async def test_get_by_id_fallback_commerce_accounts(mocker):
 
 @pytest.mark.unit
 async def test_get_by_id_retorna_none_quando_nao_existe(mocker):
-    """get_by_id retorna None quando não encontra em nenhuma tabela."""
+    """get_by_id retorna None quando nao encontra em nenhuma tabela."""
     from src.agents.repo import ClienteB2BRepo
 
     repo = ClienteB2BRepo()
@@ -84,11 +86,94 @@ async def test_get_by_id_retorna_none_quando_nao_existe(mocker):
 @pytest.mark.unit
 async def test_pedidos_tem_account_external_id():
     """Verificar que a migration 0025 adiciona account_external_id em pedidos."""
-    # Verificar que a migration existe
     from pathlib import Path
-    migration_path = Path(__file__).parent.parent.parent.parent / "alembic" / "versions" / "0025_d030_contacts_and_account_extras.py"
+    migration_path = (
+        Path(__file__).parent.parent.parent.parent
+        / "alembic" / "versions" / "0025_d030_contacts_and_account_extras.py"
+    )
 
-    assert migration_path.exists(), "Migration 0025 não encontrada"
+    assert migration_path.exists(), "Migration 0025 nao encontrada"
 
     content = migration_path.read_text()
-    assert "account_external_id" in content, "Migration 0025 deve adicionar account_external_id em pedidos"
+    assert "account_external_id" in content, (
+        "Migration 0025 deve adicionar account_external_id em pedidos"
+    )
+
+
+@pytest.mark.unit
+async def test_migration_0029_adiciona_observacao():
+    """Migration 0029 deve adicionar coluna observacao em pedidos."""
+    from pathlib import Path
+    migration_path = (
+        Path(__file__).parent.parent.parent.parent
+        / "alembic" / "versions" / "0029_pedidos_observacao.py"
+    )
+
+    assert migration_path.exists(), "Migration 0029 nao encontrada"
+
+    content = migration_path.read_text()
+    assert "observacao" in content, "Migration 0029 deve adicionar coluna observacao"
+    assert "pedidos" in content, "Migration 0029 deve referenciar tabela pedidos"
+
+
+@pytest.mark.unit
+def test_criar_pedido_input_aceita_account_external_id():
+    """CriarPedidoInput deve aceitar account_external_id e cliente_b2b_id opcional."""
+    from decimal import Decimal
+    from src.orders.types import CriarPedidoInput, ItemPedidoInput
+
+    # Cenario EFOS-only: cliente_b2b_id=None, account_external_id preenchido
+    item = ItemPedidoInput(
+        produto_id="prod-1",
+        codigo_externo="617",
+        nome_produto="Produto Teste",
+        quantidade=2,
+        preco_unitario=Decimal("10.00"),
+    )
+
+    pedido_efos = CriarPedidoInput(
+        tenant_id="jmb",
+        cliente_b2b_id=None,
+        account_external_id="617",
+        representante_id=None,
+        itens=[item],
+        observacao=None,
+    )
+    assert pedido_efos.cliente_b2b_id is None
+    assert pedido_efos.account_external_id == "617"
+
+    # Cenario UUID: cliente_b2b_id preenchido, account_external_id=None
+    pedido_uuid = CriarPedidoInput(
+        tenant_id="jmb",
+        cliente_b2b_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        account_external_id=None,
+        representante_id=None,
+        itens=[item],
+    )
+    assert pedido_uuid.cliente_b2b_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert pedido_uuid.account_external_id is None
+
+
+@pytest.mark.unit
+def test_uuid_vs_external_id_detection():
+    """Logica de deteccao UUID vs external_id usada em _confirmar_pedido."""
+    import uuid
+
+    # external_id do EFOS (nao e UUID)
+    external_ids = ["617", "63.153.691", "1234", "abc"]
+    for eid in external_ids:
+        try:
+            uuid.UUID(str(eid))
+            is_uuid = True
+        except (ValueError, AttributeError):
+            is_uuid = False
+        assert not is_uuid, f"'{eid}' nao deveria ser UUID valido"
+
+    # UUID real
+    valid_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    try:
+        uuid.UUID(valid_uuid)
+        is_uuid = True
+    except (ValueError, AttributeError):
+        is_uuid = False
+    assert is_uuid, "UUID valido deve ser reconhecido"

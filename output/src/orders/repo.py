@@ -53,15 +53,19 @@ class OrderRepo:
         result = await session.execute(
             text("""
                 INSERT INTO pedidos
-                    (tenant_id, cliente_b2b_id, representante_id, total_estimado, ficticio, observacao)
+                    (tenant_id, cliente_b2b_id, account_external_id,
+                     representante_id, total_estimado, ficticio, observacao)
                 VALUES
-                    (:tenant_id, :cliente_b2b_id, :representante_id, :total_estimado, :ficticio, :observacao)
-                RETURNING id, tenant_id, cliente_b2b_id, representante_id,
-                          status, total_estimado, pdf_path, criado_em, ficticio, observacao
+                    (:tenant_id, :cliente_b2b_id, :account_external_id,
+                     :representante_id, :total_estimado, :ficticio, :observacao)
+                RETURNING id, tenant_id, cliente_b2b_id, account_external_id,
+                          representante_id, status, total_estimado, pdf_path,
+                          criado_em, ficticio, observacao
             """),
             {
                 "tenant_id": tenant_id,
                 "cliente_b2b_id": pedido_input.cliente_b2b_id,
+                "account_external_id": pedido_input.account_external_id,
                 "representante_id": pedido_input.representante_id,
                 "total_estimado": str(total_estimado),
                 "ficticio": _is_ficticio,
@@ -126,6 +130,7 @@ class OrderRepo:
             id=row["id"],
             tenant_id=row["tenant_id"],
             cliente_b2b_id=row["cliente_b2b_id"],
+            account_external_id=row.get("account_external_id"),
             representante_id=row["representante_id"],
             status=StatusPedido(row["status"]),
             total_estimado=Decimal(str(row["total_estimado"])),
@@ -251,12 +256,17 @@ class OrderRepo:
         from datetime import datetime, timedelta, timezone
         data_inicio = datetime.now(timezone.utc) - timedelta(days=dias)
 
+        # B-28: quando cliente_b2b_id for NULL (cliente EFOS-only), o nome vem de
+        # commerce_accounts_b2b via account_external_id (fallback).
         base_select = """
             SELECT p.id, p.total_estimado, p.status, p.criado_em,
-                   COALESCE(c.nome, 'Cliente desconhecido') AS cliente_nome,
+                   COALESCE(c.nome, ca.nome, 'Cliente desconhecido') AS cliente_nome,
                    r.nome AS representante_nome
             FROM pedidos p
             LEFT JOIN clientes_b2b c ON c.id = p.cliente_b2b_id
+            LEFT JOIN commerce_accounts_b2b ca
+                ON ca.external_id = p.account_external_id
+               AND ca.tenant_id = p.tenant_id
             LEFT JOIN representantes r
                 ON r.id = p.representante_id AND r.tenant_id = p.tenant_id
         """

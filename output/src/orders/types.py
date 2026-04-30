@@ -46,10 +46,17 @@ class ItemPedido(BaseModel):
 
 
 class CriarPedidoInput(BaseModel):
-    """Input DTO para OrderService.criar_pedido_from_intent()."""
+    """Input DTO para OrderService.criar_pedido_from_intent().
+
+    Quando o cliente existe apenas em commerce_accounts_b2b (EFOS-only),
+    passar cliente_b2b_id=None e account_external_id=<external_id>.
+    Quando o cliente existe em clientes_b2b (UUID), passar cliente_b2b_id=<uuid>
+    e account_external_id=None.
+    """
 
     tenant_id: str
     cliente_b2b_id: str | None
+    account_external_id: str | None = None
     representante_id: str | None
     itens: list[ItemPedidoInput]
     observacao: str | None = None
@@ -63,6 +70,7 @@ class Pedido(BaseModel):
     id: str
     tenant_id: str
     cliente_b2b_id: str | None
+    account_external_id: str | None = None
     representante_id: str | None
     status: StatusPedido
     total_estimado: Decimal

@@ -832,9 +832,21 @@ class AgentGestor:
             for item in itens
         ]
 
+        # B-28: distinguir cliente UUID (clientes_b2b) de external_id (commerce_accounts_b2b).
+        # Se o parse UUID falhar, o id é um external_id do EFOS — cliente_b2b_id deve ser NULL.
+        import uuid as _uuid
+        _uuid_cliente: str | None = None
+        _external_id: str | None = None
+        try:
+            _uuid.UUID(str(cliente_b2b_id))
+            _uuid_cliente = cliente_b2b_id
+        except (ValueError, AttributeError):
+            _external_id = str(cliente_b2b_id)
+
         pedido_input = CriarPedidoInput(
             tenant_id=tenant.id,
-            cliente_b2b_id=cliente_b2b_id,
+            cliente_b2b_id=_uuid_cliente,
+            account_external_id=_external_id,
             representante_id=representante_id,
             itens=itens_input,
             observacao=observacao,
