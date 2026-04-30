@@ -1090,12 +1090,15 @@ class ContactRepo:
 
         # Criar novo contact self_registered
         channels = _json.dumps([{"kind": kind, "identifier": identifier, "verified": False}])
+        # B-33: usar CAST(:channels AS JSONB) em vez de :channels::jsonb
+        # SQLAlchemy text() pode interpretar ':channels:' como param e 'jsonb' como literal,
+        # ou conflitar com outros estilos de binding. CAST é portável e inequívoco.
         result = await session.execute(
             text("""
                 INSERT INTO contacts
                     (tenant_id, nome, authorized, channels, origin, last_active_at, criado_em, atualizado_em)
                 VALUES
-                    (:tenant_id, :nome, false, :channels::jsonb, 'self_registered', NOW(), NOW(), NOW())
+                    (:tenant_id, :nome, false, CAST(:channels AS JSONB), 'self_registered', NOW(), NOW(), NOW())
                 RETURNING id
             """),
             {

@@ -42,13 +42,16 @@ class IdentityRouter:
         self._cliente_repo = ClienteB2BRepo()
         self._rep_repo = RepresentanteRepo()
         self._gestor_repo = GestorRepo()
+        self._contact_repo = ContactRepo()
 
     async def resolve(
         self, mensagem: Mensagem, tenant_id: str, session: AsyncSession
     ) -> Persona:
         """Resolve persona do remetente pelo número de telefone.
 
-        Lookup em ordem: gestores → representantes → clientes_b2b → DESCONHECIDO.
+        Lookup em ordem: gestores → representantes → clientes_b2b → contacts → DESCONHECIDO.
+        B-40: contacts consultados antes de DESCONHECIDO — número autorizado via D030
+        retorna CLIENTE_B2B em vez de DESCONHECIDO.
         Remove sufixo @s.whatsapp.net antes da busca.
 
         Args:
@@ -110,6 +113,31 @@ class IdentityRouter:
             if cliente is not None:
                 span.set_attribute("persona", "cliente_b2b")
                 return Persona.CLIENTE_B2B
+
+            # B-40: consultar contacts (D030) antes de retornar DESCONHECIDO.
+            # Número autorizado via comando AUTORIZAR deve ser roteado como CLIENTE_B2B.
+            try:
+                contact = await self._contact_repo.get_by_channel(
+                    tenant_id=tenant_id,
+                    kind="whatsapp",
+                    identifier=telefone,
+                    session=session,
+                )
+                if contact is not None and contact.get("authorized"):
+                    log.info(
+                        "identity_router_contact_autorizado",
+                        tenant_id=tenant_id,
+                        telefone_hash=hashlib.sha256(telefone.encode()).hexdigest()[:12],
+                        contact_id=str(contact.get("id", "")),
+                    )
+                    span.set_attribute("persona", "cliente_b2b")
+                    return Persona.CLIENTE_B2B
+            except Exception as exc:
+                log.warning(
+                    "identity_router_contact_lookup_erro",
+                    tenant_id=tenant_id,
+                    error=str(exc),
+                )
 
             span.set_attribute("persona", "desconhecido")
             return Persona.DESCONHECIDO
@@ -571,10 +599,11 @@ async def notify_gestor_pendente(
     for gestor in gestores:
         if gestor.telefone:
             try:
+                # B-38: assinatura real é (instancia_id, numero, texto)
                 await send_whatsapp_message(
-                    instancia_id=instancia_id,
-                    telefone=gestor.telefone,
-                    mensagem=template,
+                    instancia_id,
+                    gestor.telefone,
+                    template,
                 )
                 enviou = True
                 log.info(

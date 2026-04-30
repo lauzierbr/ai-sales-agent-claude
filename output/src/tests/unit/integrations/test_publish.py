@@ -28,7 +28,10 @@ def _make_product(tenant_id: str = "jmb", n: int = 1):
 
 @pytest.mark.unit
 async def test_publish_rollback_em_falha() -> None:
-    """A10: publish faz rollback total quando um INSERT falha."""
+    """B-36: publish faz rollback total quando um UPSERT falha.
+
+    Nota: após B-36, não há mais DELETEs — o 1º execute é o 1º UPSERT.
+    """
     from src.integrations.connectors.efos_backup.publish import publish
 
     mock_session = AsyncMock()
@@ -37,8 +40,8 @@ async def test_publish_rollback_em_falha() -> None:
     async def mock_execute(query, params=None):
         nonlocal execute_count
         execute_count += 1
-        # Falha na 4ª chamada (após 3 DELETEs + 1 INSERT)
-        if execute_count == 4:
+        # B-36: sem DELETEs agora — falha no 1º UPSERT (produto)
+        if execute_count == 1:
             raise RuntimeError("Erro simulado de INSERT")
         return MagicMock()
 
@@ -102,7 +105,11 @@ async def test_publish_retorna_total_rows() -> None:
 
 @pytest.mark.unit
 async def test_publish_filtra_por_tenant_id() -> None:
-    """publish executa DELETE WHERE tenant_id para cada tabela commerce_*."""
+    """B-36: publish usa UPSERT com ON CONFLICT — sem DELETEs — idempotente.
+
+    Após B-36, não há mais DELETE+INSERT. Todas as tabelas usam ON CONFLICT DO UPDATE.
+    Verifica que nenhuma query DELETE é emitida.
+    """
     from src.integrations.connectors.efos_backup.publish import publish
 
     mock_session = AsyncMock()
@@ -128,15 +135,9 @@ async def test_publish_filtra_por_tenant_id() -> None:
         session=mock_session,
     )
 
-    # E8 DT-2: commerce_products usa UPSERT agora (não DELETE+INSERT)
-    # Verifica que os DELETEs foram executados para as 6 tabelas restantes
+    # B-36: após correção, não deve haver DELETEs — tudo via UPSERT
     delete_queries = [q for q in executed_queries if "DELETE" in q.upper()]
-    assert len(delete_queries) >= 6, (
-        "Devem existir DELETEs para 6 tabelas commerce_* "
-        "(commerce_products usa UPSERT — DT-2 E8)"
-    )
-    # Verifica que commerce_products NÃO é deletado
-    products_delete = [q for q in delete_queries if "commerce_products" in q.lower()]
-    assert len(products_delete) == 0, (
-        "commerce_products não deve ter DELETE (preserva embedding via UPSERT — DT-2)"
+    assert len(delete_queries) == 0, (
+        f"B-36: publish não deve emitir DELETEs após correção — "
+        f"encontrado: {delete_queries}"
     )

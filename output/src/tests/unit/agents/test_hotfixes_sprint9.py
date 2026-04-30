@@ -286,8 +286,9 @@ def test_kpis_usa_janela_mensal() -> None:
     import inspect
     from src.dashboard.ui import _get_kpis
     source = inspect.getsource(_get_kpis)
-    assert "mes_inicio" in source and "now.replace(day=1" in source, (
-        "_get_kpis deve agregar pelo mês corrente (day=1)"
+    # B-39: usa BRT para mes_inicio — verificar variável mes_inicio_brt ou mes_inicio
+    assert "mes_inicio" in source and (".replace(day=1" in source), (
+        "_get_kpis deve agregar pelo mês corrente (day=1) em BRT"
     )
     assert "sync_runs" in source and "status = 'success'" in source, (
         "_get_kpis deve usar último sync_runs success como timestamp 'atualizado em'"

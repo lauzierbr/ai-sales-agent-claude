@@ -1,7 +1,8 @@
 """Módulo de publicação: insere dados normalizados nas tabelas commerce_*.
 
-Executa em transação única: DELETE WHERE tenant_id + INSERT.
-Rollback total se qualquer INSERT falhar.
+B-36: Todas as tabelas usam UPSERT (ON CONFLICT DO UPDATE) em vez de
+DELETE+INSERT para evitar UniqueViolationError em caso de re-sync ou
+falha parcial. Commerce_products preserva embedding existente (DT-2).
 """
 
 from __future__ import annotations
@@ -59,31 +60,21 @@ async def publish(
         Exception: qualquer erro causa rollback total da transação.
     """
     try:
-        # E8 DT-2: commerce_products usa UPSERT (não DELETE+INSERT) para preservar embedding.
-        # As demais tabelas continuam com DELETE+INSERT.
-        for table in [
-            "commerce_accounts_b2b",
-            "commerce_order_items",
-            "commerce_orders",
-            "commerce_inventory",
-            "commerce_sales_history",
-            "commerce_vendedores",
-        ]:
-            await session.execute(
-                text(f"DELETE FROM {table} WHERE tenant_id = :tenant_id"),  # noqa: S608
-                {"tenant_id": tenant_id},
-            )
+        # B-36: removido DELETE+INSERT. Todas as tabelas usam UPSERT para idempotência.
+        # commerce_products preserva embedding (DT-2).
+        # As demais tabelas atualizam todos os campos ERP exceto campos não-ERP (embedding).
 
         total = 0
 
-        # UPSERT para products — preserva embedding existente
+        # UPSERT para products — preserva embedding existente (DT-2)
         total += await _upsert_products(products, session)
-        total += await _insert_accounts(accounts, session)
-        total += await _insert_orders(orders, session)
-        total += await _insert_order_items(order_items, session)
-        total += await _insert_inventory(inventory, session)
-        total += await _insert_sales_history(sales_history, session)
-        total += await _insert_vendedores(vendedores, session)
+        # UPSERT para as demais tabelas — idempotente, sem UniqueViolation
+        total += await _upsert_accounts(accounts, session)
+        total += await _upsert_orders(orders, session)
+        total += await _upsert_order_items(order_items, session)
+        total += await _upsert_inventory(inventory, session)
+        total += await _upsert_sales_history(sales_history, session)
+        total += await _upsert_vendedores(vendedores, session)
 
         await session.commit()
         log.info("publish_concluido", tenant_id=tenant_id, total_rows=total)
@@ -136,10 +127,11 @@ async def _upsert_products(rows: list[CommerceProduct], session: AsyncSession) -
     return len(rows)
 
 
-async def _insert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession) -> int:
-    """Insere lista de CommerceAccountB2B na tabela commerce_accounts_b2b.
+async def _upsert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession) -> int:
+    """UPSERT de CommerceAccountB2B — idempotente, sem UniqueViolationError (B-36).
 
     E8 (D030): inclui os 6 novos campos de contato do EFOS.
+    ON CONFLICT (tenant_id, external_id) atualiza todos os campos ERP.
     """
     for row in rows:
         await session.execute(
@@ -154,6 +146,22 @@ async def _insert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession
                      :cidade, :uf, :situacao_cliente, :vendedor_codigo,
                      :contato_padrao, :telefone, :telefone_celular, :email, :nome_fantasia, :dataultimacompra,
                      NOW(), :snapshot_checksum)
+                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                    codigo             = EXCLUDED.codigo,
+                    nome               = EXCLUDED.nome,
+                    cnpj               = EXCLUDED.cnpj,
+                    cidade             = EXCLUDED.cidade,
+                    uf                 = EXCLUDED.uf,
+                    situacao_cliente   = EXCLUDED.situacao_cliente,
+                    vendedor_codigo    = EXCLUDED.vendedor_codigo,
+                    contato_padrao     = EXCLUDED.contato_padrao,
+                    telefone           = EXCLUDED.telefone,
+                    telefone_celular   = EXCLUDED.telefone_celular,
+                    email              = EXCLUDED.email,
+                    nome_fantasia      = EXCLUDED.nome_fantasia,
+                    dataultimacompra   = EXCLUDED.dataultimacompra,
+                    synced_at          = EXCLUDED.synced_at,
+                    snapshot_checksum  = EXCLUDED.snapshot_checksum
             """),
             {
                 "tenant_id": row.tenant_id,
@@ -177,8 +185,8 @@ async def _insert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession
     return len(rows)
 
 
-async def _insert_orders(rows: list[CommerceOrder], session: AsyncSession) -> int:
-    """Insere lista de CommerceOrder na tabela commerce_orders."""
+async def _upsert_orders(rows: list[CommerceOrder], session: AsyncSession) -> int:
+    """UPSERT de CommerceOrder — idempotente (B-36)."""
     for row in rows:
         await session.execute(
             text("""
@@ -190,6 +198,18 @@ async def _insert_orders(rows: list[CommerceOrder], session: AsyncSession) -> in
                     (:tenant_id, 'efos', :external_id, :numero_pedido, :cliente_codigo,
                      :cliente_nome, :vendedor_codigo, :data_pedido, :total, :status,
                      :mes, :ano, NOW(), :snapshot_checksum)
+                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                    numero_pedido     = EXCLUDED.numero_pedido,
+                    cliente_codigo    = EXCLUDED.cliente_codigo,
+                    cliente_nome      = EXCLUDED.cliente_nome,
+                    vendedor_codigo   = EXCLUDED.vendedor_codigo,
+                    data_pedido       = EXCLUDED.data_pedido,
+                    total             = EXCLUDED.total,
+                    status            = EXCLUDED.status,
+                    mes               = EXCLUDED.mes,
+                    ano               = EXCLUDED.ano,
+                    synced_at         = EXCLUDED.synced_at,
+                    snapshot_checksum = EXCLUDED.snapshot_checksum
             """),
             {
                 "tenant_id": row.tenant_id,
@@ -209,8 +229,8 @@ async def _insert_orders(rows: list[CommerceOrder], session: AsyncSession) -> in
     return len(rows)
 
 
-async def _insert_order_items(rows: list[CommerceOrderItem], session: AsyncSession) -> int:
-    """Insere lista de CommerceOrderItem na tabela commerce_order_items."""
+async def _upsert_order_items(rows: list[CommerceOrderItem], session: AsyncSession) -> int:
+    """UPSERT de CommerceOrderItem — idempotente (B-36)."""
     for row in rows:
         await session.execute(
             text("""
@@ -222,6 +242,15 @@ async def _insert_order_items(rows: list[CommerceOrderItem], session: AsyncSessi
                     (:tenant_id, 'efos', :external_id, :order_external_id,
                      :produto_codigo, :produto_nome, :quantidade, :preco_unitario,
                      :total, NOW(), :snapshot_checksum)
+                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                    order_external_id = EXCLUDED.order_external_id,
+                    produto_codigo    = EXCLUDED.produto_codigo,
+                    produto_nome      = EXCLUDED.produto_nome,
+                    quantidade        = EXCLUDED.quantidade,
+                    preco_unitario    = EXCLUDED.preco_unitario,
+                    total             = EXCLUDED.total,
+                    synced_at         = EXCLUDED.synced_at,
+                    snapshot_checksum = EXCLUDED.snapshot_checksum
             """),
             {
                 "tenant_id": row.tenant_id,
@@ -238,8 +267,8 @@ async def _insert_order_items(rows: list[CommerceOrderItem], session: AsyncSessi
     return len(rows)
 
 
-async def _insert_inventory(rows: list[CommerceInventory], session: AsyncSession) -> int:
-    """Insere lista de CommerceInventory na tabela commerce_inventory."""
+async def _upsert_inventory(rows: list[CommerceInventory], session: AsyncSession) -> int:
+    """UPSERT de CommerceInventory — idempotente (B-36)."""
     for row in rows:
         await session.execute(
             text("""
@@ -249,6 +278,13 @@ async def _insert_inventory(rows: list[CommerceInventory], session: AsyncSession
                 VALUES
                     (:tenant_id, 'efos', :external_id, :produto_codigo,
                      :produto_nome, :saldo, :deposito, NOW(), :snapshot_checksum)
+                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                    produto_codigo    = EXCLUDED.produto_codigo,
+                    produto_nome      = EXCLUDED.produto_nome,
+                    saldo             = EXCLUDED.saldo,
+                    deposito          = EXCLUDED.deposito,
+                    synced_at         = EXCLUDED.synced_at,
+                    snapshot_checksum = EXCLUDED.snapshot_checksum
             """),
             {
                 "tenant_id": row.tenant_id,
@@ -263,8 +299,8 @@ async def _insert_inventory(rows: list[CommerceInventory], session: AsyncSession
     return len(rows)
 
 
-async def _insert_sales_history(rows: list[CommerceSalesHistory], session: AsyncSession) -> int:
-    """Insere lista de CommerceSalesHistory na tabela commerce_sales_history."""
+async def _upsert_sales_history(rows: list[CommerceSalesHistory], session: AsyncSession) -> int:
+    """UPSERT de CommerceSalesHistory — idempotente (B-36)."""
     for row in rows:
         await session.execute(
             text("""
@@ -276,6 +312,16 @@ async def _insert_sales_history(rows: list[CommerceSalesHistory], session: Async
                     (:tenant_id, 'efos', :external_id, :cliente_codigo,
                      :produto_codigo, :quantidade, :total, :data_venda,
                      :mes, :ano, NOW(), :snapshot_checksum)
+                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                    cliente_codigo    = EXCLUDED.cliente_codigo,
+                    produto_codigo    = EXCLUDED.produto_codigo,
+                    quantidade        = EXCLUDED.quantidade,
+                    total             = EXCLUDED.total,
+                    data_venda        = EXCLUDED.data_venda,
+                    mes               = EXCLUDED.mes,
+                    ano               = EXCLUDED.ano,
+                    synced_at         = EXCLUDED.synced_at,
+                    snapshot_checksum = EXCLUDED.snapshot_checksum
             """),
             {
                 "tenant_id": row.tenant_id,
@@ -293,8 +339,8 @@ async def _insert_sales_history(rows: list[CommerceSalesHistory], session: Async
     return len(rows)
 
 
-async def _insert_vendedores(rows: list[CommerceVendedor], session: AsyncSession) -> int:
-    """Insere lista de CommerceVendedor na tabela commerce_vendedores."""
+async def _upsert_vendedores(rows: list[CommerceVendedor], session: AsyncSession) -> int:
+    """UPSERT de CommerceVendedor — idempotente (B-36)."""
     for row in rows:
         await session.execute(
             text("""
@@ -304,6 +350,11 @@ async def _insert_vendedores(rows: list[CommerceVendedor], session: AsyncSession
                 VALUES
                     (:tenant_id, 'efos', :external_id, :ve_codigo, :ve_nome,
                      NOW(), :snapshot_checksum)
+                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                    ve_codigo         = EXCLUDED.ve_codigo,
+                    ve_nome           = EXCLUDED.ve_nome,
+                    synced_at         = EXCLUDED.synced_at,
+                    snapshot_checksum = EXCLUDED.snapshot_checksum
             """),
             {
                 "tenant_id": row.tenant_id,

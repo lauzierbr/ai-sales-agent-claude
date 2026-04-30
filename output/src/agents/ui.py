@@ -327,10 +327,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     else:
                         # E5 (B-24a): falha de transcrição vai direto, sem passar pelo LLM
                         _fallback_audio = "Recebi seu audio, mas nao consegui transcrever. Por favor, envie como texto."
+                        # B-38: assinatura real é (instancia_id, numero, texto) — não usar kwargs renomeados
                         await send_whatsapp_message(
-                            instancia_id=instancia_id,
-                            telefone=mensagem.de,
-                            mensagem=_fallback_audio,
+                            instancia_id,
+                            mensagem.de,
+                            _fallback_audio,
                         )
                         log.info("audio_transcricao_vazia_fallback_direto", tenant_id=tenant_id)
                         return
@@ -338,19 +339,21 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     log.error("audio_transcricao_falhou", tenant_id=tenant_id, error=str(exc))
                     # E5 (B-24a): falha vai direto via send_whatsapp_message, sem LLM
                     _fallback_audio = "Recebi seu audio, mas houve uma falha na transcricao. Por favor, envie como texto."
+                    # B-38: assinatura real é (instancia_id, numero, texto)
                     await send_whatsapp_message(
-                        instancia_id=instancia_id,
-                        telefone=mensagem.de,
-                        mensagem=_fallback_audio,
+                        instancia_id,
+                        mensagem.de,
+                        _fallback_audio,
                     )
                     return
             else:
                 log.warning("audio_sem_conteudo", tenant_id=tenant_id)
                 _fallback_audio = "Nao consegui receber seu audio. Por favor, envie como texto."
+                # B-38: assinatura real é (instancia_id, numero, texto)
                 await send_whatsapp_message(
-                    instancia_id=instancia_id,
-                    telefone=mensagem.de,
-                    mensagem=_fallback_audio,
+                    instancia_id,
+                    mensagem.de,
+                    _fallback_audio,
                 )
                 return
 
@@ -441,10 +444,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         )
                         await session.commit()
                         if autorizado:
+                            # B-38: assinatura real é (instancia_id, numero, texto)
                             await send_whatsapp_message(
-                                instancia_id=payload.instance,
-                                telefone=mensagem.de,
-                                mensagem=f"Contato {numero_autorizar} autorizado com sucesso.",
+                                payload.instance,
+                                mensagem.de,
+                                f"Contato {numero_autorizar} autorizado com sucesso.",
                             )
                             log.info(
                                 "contato_autorizado_via_whatsapp",
@@ -453,10 +457,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                                 numero=numero_autorizar[-4:],
                             )
                         else:
+                            # B-38: assinatura real é (instancia_id, numero, texto)
                             await send_whatsapp_message(
-                                instancia_id=payload.instance,
-                                telefone=mensagem.de,
-                                mensagem=f"Contato {numero_autorizar} nao encontrado. Verifique o numero.",
+                                payload.instance,
+                                mensagem.de,
+                                f"Contato {numero_autorizar} nao encontrado. Verifique o numero.",
                             )
                         return
 
@@ -561,10 +566,11 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                         log.warning("contact_self_registered_erro", error=str(exc_sr))
 
                     # Responder ao usuário imediatamente
+                    # B-38: assinatura real é (instancia_id, numero, texto)
                     await send_whatsapp_message(
-                        instancia_id=payload.instance,
-                        telefone=mensagem.de,
-                        mensagem=(
+                        payload.instance,
+                        mensagem.de,
+                        (
                             "Ola! Sua mensagem foi recebida. "
                             "Vou avisar o gestor para te autorizar. Aguarde!"
                         ),

@@ -578,6 +578,14 @@
 
 | ID   | Descrição                                                     | Sprint fix    | Data       |
 |------|---------------------------------------------------------------|---------------|------------|
+| B-33 | INSERT contacts mistura `:channels::jsonb` — fixado com `CAST(:channels AS JSONB)` em `ContactRepo.create_self_registered` e `dashboard/ui.py` POST contatos/novo | Hotfix v0.10.3 | 2026-04-30 |
+| B-34 | Backend rejeitava perfil capitalizado — normalizado com `.lower()` no POST handler | Hotfix v0.10.3 | 2026-04-30 |
+| B-35 | `perfil=cliente` sem `cliente_b2b_id` passava pelo guard — guard explícito adicionado | Hotfix v0.10.3 | 2026-04-30 |
+| B-36 | UniqueViolation no sync — todos os INSERTs de `publish.py` convertidos para UPSERT `ON CONFLICT (tenant_id, external_id) DO UPDATE SET`; embedding preservado (DT-2) | Hotfix v0.10.3 | 2026-04-30 |
+| B-37 | "Rodar Agora" travava handler — `asyncio.create_task` + verificação prévia do Redis lock; redirect 303 imediato | Hotfix v0.10.3 | 2026-04-30 |
+| B-38 | 6 call sites de `send_whatsapp_message` com kwargs errados (`telefone=`, `mensagem=`) — todos corrigidos para args posicionais `(instancia_id, numero, texto)` em `agents/ui.py` e `agents/service.py` | Hotfix v0.10.3 | 2026-04-30 |
+| B-39 | GMV mês corrente reportava Maio em 30/abr — `_get_kpis` agora usa BRT (UTC-3) para calcular `mes_inicio` e gerar o `mes_label` | Hotfix v0.10.3 | 2026-04-30 |
+| B-40 | IdentityRouter ignorava tabela `contacts` — etapa de consulta ao `ContactRepo.get_by_channel` adicionada antes de retornar DESCONHECIDO; contact autorizado → CLIENTE_B2B | Hotfix v0.10.3 | 2026-04-30 |
 | B-02 | Typing indicator continuava aparecendo após mensagem chegar   | Hotfix v0.6.1 | 2026-04-21 |
 | B-03 | Catálogo do gestor não carregava (query sem tenant_id)        | Hotfix v0.6.1 | 2026-04-21 |
 | B-04 | Feedback marcado como positivo mesmo em respostas de erro     | Hotfix v0.6.1 | 2026-04-21 |

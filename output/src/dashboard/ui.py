@@ -490,7 +490,8 @@ async def contatos_novo_post(request: Request) -> Any:
         return RedirectResponse(url="/dashboard/login", status_code=302)
     tenant_id = session_data["tenant_id"]
     form = await request.form()
-    perfil = str(form.get("perfil", "")).strip()
+    # B-34: normalizar perfil para lowercase — template pode enviar "Gestor"/"Representante"/"Cliente"
+    perfil = str(form.get("perfil", "")).strip().lower()
     nome = str(form.get("nome", "")).strip()
     telefone = str(form.get("telefone", "")).strip()
     cliente_b2b_id = str(form.get("cliente_b2b_id", "")).strip()
@@ -512,15 +513,20 @@ async def contatos_novo_post(request: Request) -> Any:
                 )
             elif perfil == "cliente":
                 # E11 (B-27): INSERT em contacts, não UPDATE em clientes_b2b
+                # B-35: validação explícita — cliente sem cliente_b2b_id é inválido
+                if not cliente_b2b_id:
+                    raise ValueError("Selecione um cliente B2B para vincular ao contato.")
+                # B-33: usar CAST(:channels AS JSONB) em vez de :channels::jsonb
+                # para evitar ambiguidade no parser do SQLAlchemy text()
                 channels = _json.dumps([{"kind": "whatsapp", "identifier": telefone, "verified": False}]) if telefone else "[]"
-                account_external_id = cliente_b2b_id if cliente_b2b_id else None
+                account_external_id = cliente_b2b_id
                 await session.execute(
                     text("""
                         INSERT INTO contacts
                             (tenant_id, nome, papel, authorized, channels, origin,
                              account_external_id, criado_em, atualizado_em)
                         VALUES
-                            (:tenant_id, :nome, 'comprador', true, :channels::jsonb,
+                            (:tenant_id, :nome, 'comprador', true, CAST(:channels AS JSONB),
                              'manual', :account_external_id, NOW(), NOW())
                     """),
                     {
@@ -826,20 +832,24 @@ async def sync_admin_post(request: Request) -> Any:
     action = str(form.get("action", "save")).strip()
 
     if action == "run_now":
-        # Disparar sync imediato via APScheduler
+        # B-37: disparar sync como background task — não bloquear o request handler
+        import asyncio as _asyncio
         try:
             from src.integrations.runtime.scheduler import run_now
             efos_scheduler = request.app.state.efos_scheduler
             session_factory = request.app.state.session_factory
             redis_client = request.app.state.redis_client
-            disparou = await run_now(
-                scheduler=efos_scheduler,
-                tenant_id=tenant_id,
-                connector_kind="efos_backup",
-                session_factory=session_factory,
-                redis_client=redis_client,
-            )
-            if not disparou:
+
+            # Verificar lock Redis antes de agendar (para retornar 409 se já em andamento)
+            lock_key = f"sync:efos_backup:{tenant_id}:running"
+            lock_ativo = False
+            if redis_client is not None:
+                try:
+                    lock_ativo = bool(await redis_client.get(lock_key))
+                except Exception:
+                    pass
+
+            if lock_ativo:
                 from fastapi.responses import HTMLResponse as _Html
                 schedule = await _get_sync_schedule(tenant_id)
                 ultimas_runs = await _get_ultimas_sync_runs(tenant_id)
@@ -859,9 +869,20 @@ async def sync_admin_post(request: Request) -> Any:
                     ),
                     status_code=409,
                 )
+
+            # Disparar como background task — retorna imediatamente
+            _asyncio.create_task(
+                run_now(
+                    scheduler=efos_scheduler,
+                    tenant_id=tenant_id,
+                    connector_kind="efos_backup",
+                    session_factory=session_factory,
+                    redis_client=redis_client,
+                )
+            )
         except Exception as exc:
             log.error("dashboard_sync_run_now_erro", error=str(exc))
-        return RedirectResponse(url="/dashboard/sync", status_code=302)
+        return RedirectResponse(url="/dashboard/sync?triggered=1", status_code=303)
 
     # action == "save" — salvar preset
     preset = str(form.get("preset", "diario")).strip()
@@ -1010,15 +1031,20 @@ async def _get_kpis(tenant_id: str) -> dict[str, Any]:
     não a hora atual do servidor (essa info iludiria o gestor).
     """
     try:
-        from datetime import timedelta as _timedelta
+        from datetime import timedelta as _timedelta, timezone as _tz
         from sqlalchemy import text
 
         from src.providers.db import get_session_factory
 
         factory = get_session_factory()
+        # B-39: usar BRT (UTC-3) para calcular o mês corrente — evita off-by-one
+        # na virada de mês (ex: 30/abr 22:00 UTC = 30/abr 19:00 BRT, não maio)
+        _BRT = _tz(offset=_timedelta(hours=-3))
+        now_brt = datetime.now(_BRT)
+        # Primeiro dia do mês corrente em BRT, 00:00 BRT (convertido para UTC para query)
+        mes_inicio_brt = now_brt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        mes_inicio = mes_inicio_brt.astimezone(timezone.utc)
         now = datetime.now(timezone.utc)
-        # Primeiro dia do mês corrente, 00:00 UTC
-        mes_inicio = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         async with factory() as session:
             # Pedidos do bot no mês (não fictícios)
@@ -1078,7 +1104,8 @@ async def _get_kpis(tenant_id: str) -> dict[str, Any]:
             else:
                 atualizado_em = "aguardando primeira sincronização"
 
-            mes_label = f"{_MESES_PT[mes_inicio.month]}/{mes_inicio.year}"
+            # B-39: usar mês BRT para o label (mes_inicio_brt é o primeiro dia do mês em BRT)
+            mes_label = f"{_MESES_PT[mes_inicio_brt.month]}/{mes_inicio_brt.year}"
 
             return {
                 "total_gmv": gmv,
