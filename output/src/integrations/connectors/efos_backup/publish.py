@@ -89,7 +89,7 @@ async def publish(
 async def _upsert_products(rows: list[CommerceProduct], session: AsyncSession) -> int:
     """UPSERT de CommerceProduct preservando embedding existente (DT-2, E8).
 
-    ON CONFLICT (tenant_id, external_id) atualiza todos os campos EXCETO embedding.
+    ON CONFLICT (tenant_id, source_system, external_id) atualiza todos os campos EXCETO embedding.
     embedding só é sobrescrito se a linha existente não tiver (COALESCE).
     """
     for row in rows:
@@ -101,7 +101,7 @@ async def _upsert_products(rows: list[CommerceProduct], session: AsyncSession) -
                 VALUES
                     (:tenant_id, 'efos', :external_id, :codigo, :nome, :descricao,
                      :unidade, :preco_padrao, :ativo, NOW(), :snapshot_checksum)
-                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                ON CONFLICT (tenant_id, source_system, external_id) DO UPDATE SET
                     codigo            = EXCLUDED.codigo,
                     nome              = EXCLUDED.nome,
                     descricao         = EXCLUDED.descricao,
@@ -131,7 +131,7 @@ async def _upsert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession
     """UPSERT de CommerceAccountB2B — idempotente, sem UniqueViolationError (B-36).
 
     E8 (D030): inclui os 6 novos campos de contato do EFOS.
-    ON CONFLICT (tenant_id, external_id) atualiza todos os campos ERP.
+    ON CONFLICT (tenant_id, source_system, external_id) atualiza todos os campos ERP.
     """
     for row in rows:
         await session.execute(
@@ -146,7 +146,7 @@ async def _upsert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession
                      :cidade, :uf, :situacao_cliente, :vendedor_codigo,
                      :contato_padrao, :telefone, :telefone_celular, :email, :nome_fantasia, :dataultimacompra,
                      NOW(), :snapshot_checksum)
-                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                ON CONFLICT (tenant_id, source_system, external_id) DO UPDATE SET
                     codigo             = EXCLUDED.codigo,
                     nome               = EXCLUDED.nome,
                     cnpj               = EXCLUDED.cnpj,
@@ -198,7 +198,7 @@ async def _upsert_orders(rows: list[CommerceOrder], session: AsyncSession) -> in
                     (:tenant_id, 'efos', :external_id, :numero_pedido, :cliente_codigo,
                      :cliente_nome, :vendedor_codigo, :data_pedido, :total, :status,
                      :mes, :ano, NOW(), :snapshot_checksum)
-                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                ON CONFLICT (tenant_id, source_system, external_id) DO UPDATE SET
                     numero_pedido     = EXCLUDED.numero_pedido,
                     cliente_codigo    = EXCLUDED.cliente_codigo,
                     cliente_nome      = EXCLUDED.cliente_nome,
@@ -242,7 +242,7 @@ async def _upsert_order_items(rows: list[CommerceOrderItem], session: AsyncSessi
                     (:tenant_id, 'efos', :external_id, :order_external_id,
                      :produto_codigo, :produto_nome, :quantidade, :preco_unitario,
                      :total, NOW(), :snapshot_checksum)
-                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                ON CONFLICT (tenant_id, source_system, external_id) DO UPDATE SET
                     order_external_id = EXCLUDED.order_external_id,
                     produto_codigo    = EXCLUDED.produto_codigo,
                     produto_nome      = EXCLUDED.produto_nome,
@@ -278,7 +278,7 @@ async def _upsert_inventory(rows: list[CommerceInventory], session: AsyncSession
                 VALUES
                     (:tenant_id, 'efos', :external_id, :produto_codigo,
                      :produto_nome, :saldo, :deposito, NOW(), :snapshot_checksum)
-                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                ON CONFLICT (tenant_id, source_system, external_id) DO UPDATE SET
                     produto_codigo    = EXCLUDED.produto_codigo,
                     produto_nome      = EXCLUDED.produto_nome,
                     saldo             = EXCLUDED.saldo,
@@ -312,7 +312,7 @@ async def _upsert_sales_history(rows: list[CommerceSalesHistory], session: Async
                     (:tenant_id, 'efos', :external_id, :cliente_codigo,
                      :produto_codigo, :quantidade, :total, :data_venda,
                      :mes, :ano, NOW(), :snapshot_checksum)
-                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                ON CONFLICT (tenant_id, source_system, external_id) DO UPDATE SET
                     cliente_codigo    = EXCLUDED.cliente_codigo,
                     produto_codigo    = EXCLUDED.produto_codigo,
                     quantidade        = EXCLUDED.quantidade,
@@ -350,7 +350,7 @@ async def _upsert_vendedores(rows: list[CommerceVendedor], session: AsyncSession
                 VALUES
                     (:tenant_id, 'efos', :external_id, :ve_codigo, :ve_nome,
                      NOW(), :snapshot_checksum)
-                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                ON CONFLICT (tenant_id, source_system, external_id) DO UPDATE SET
                     ve_codigo         = EXCLUDED.ve_codigo,
                     ve_nome           = EXCLUDED.ve_nome,
                     synced_at         = EXCLUDED.synced_at,
