@@ -2,7 +2,11 @@
 {% block title %}Contatos{% endblock %}
 {% block content %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-  <h1 style="margin-bottom:0">Contatos</h1>
+  <h1 style="margin-bottom:0">Contatos
+    {% if pendentes and pendentes > 0 %}
+    <span class="badge badge-pending" title="{{ pendentes }} pendente(s) de autorização">{{ pendentes }}</span>
+    {% endif %}
+  </h1>
   <a href="/dashboard/contatos/novo" class="btn btn-primary">+ Novo Contato</a>
 </div>
 <div class="card">

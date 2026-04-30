@@ -456,12 +456,17 @@ async def clientes_remover(request: Request, cliente_id: str) -> Any:
 
 @router.get("/contatos", response_class=HTMLResponse)
 async def contatos(request: Request) -> Any:
+    """E10/E11: lista contatos com badge de pendentes."""
     session_data = _require_session(request)
     if session_data is None:
         return RedirectResponse(url="/dashboard/login", status_code=302)
     tenant_id = session_data["tenant_id"]
     lista = await _get_todos_contatos(tenant_id)
-    return templates.TemplateResponse(request, "contatos.html", {"contatos": lista})
+    pendentes = await _contar_contatos_pendentes(tenant_id)
+    return templates.TemplateResponse(
+        request, "contatos.html",
+        {"contatos": lista, "pendentes": pendentes},
+    )
 
 
 @router.get("/contatos/novo", response_class=HTMLResponse)
@@ -479,6 +484,7 @@ async def contatos_novo_get(request: Request) -> Any:
 
 @router.post("/contatos/novo")
 async def contatos_novo_post(request: Request) -> Any:
+    """E11 (B-27): INSERT em contacts (não UPDATE em clientes_b2b)."""
     session_data = _require_session(request)
     if session_data is None:
         return RedirectResponse(url="/dashboard/login", status_code=302)
@@ -488,11 +494,11 @@ async def contatos_novo_post(request: Request) -> Any:
     nome = str(form.get("nome", "")).strip()
     telefone = str(form.get("telefone", "")).strip()
     cliente_b2b_id = str(form.get("cliente_b2b_id", "")).strip()
-    nome_contato = str(form.get("nome_contato", "")).strip() or None
     clientes_list = await _get_clientes(tenant_id, "")
     try:
         from sqlalchemy import text
         from src.providers.db import get_session_factory
+        import json as _json
         async with get_session_factory()() as session:
             if perfil == "gestor":
                 await session.execute(
@@ -504,13 +510,28 @@ async def contatos_novo_post(request: Request) -> Any:
                     text("INSERT INTO representantes (tenant_id, nome, telefone) VALUES (:tid, :nome, :tel)"),
                     {"tid": tenant_id, "nome": nome, "tel": telefone},
                 )
-            elif perfil == "cliente" and cliente_b2b_id:
+            elif perfil == "cliente":
+                # E11 (B-27): INSERT em contacts, não UPDATE em clientes_b2b
+                channels = _json.dumps([{"kind": "whatsapp", "identifier": telefone, "verified": False}]) if telefone else "[]"
+                account_external_id = cliente_b2b_id if cliente_b2b_id else None
                 await session.execute(
-                    text("UPDATE clientes_b2b SET telefone=:tel, nome_contato=:nc WHERE id=:id AND tenant_id=:tid"),
-                    {"tel": telefone, "nc": nome_contato, "id": cliente_b2b_id, "tid": tenant_id},
+                    text("""
+                        INSERT INTO contacts
+                            (tenant_id, nome, papel, authorized, channels, origin,
+                             account_external_id, criado_em, atualizado_em)
+                        VALUES
+                            (:tenant_id, :nome, 'comprador', true, :channels::jsonb,
+                             'manual', :account_external_id, NOW(), NOW())
+                    """),
+                    {
+                        "tenant_id": tenant_id,
+                        "nome": nome,
+                        "channels": channels,
+                        "account_external_id": account_external_id,
+                    },
                 )
             else:
-                raise ValueError("Selecione um perfil válido e, para Cliente, selecione o cliente.")
+                raise ValueError("Selecione um perfil valido.")
             await session.commit()
         return RedirectResponse(url="/dashboard/contatos", status_code=302)
     except Exception as exc:
@@ -706,6 +727,240 @@ async def precos_upload(request: Request) -> HTMLResponse:
             f"<div class='msg error'>Erro ao processar arquivo: {exc}</div>",
             status_code=500,
         )
+
+
+# ─────────────────────────────────────────────
+# F-07: Sync EFOS schedule (admin only) — E15
+# ─────────────────────────────────────────────
+
+_PRESET_CRONS: dict[str, str] = {
+    "manual": "",
+    "diario": "0 13 * * *",
+    "2x_dia": "0 8,13 * * *",
+    "4x_dia": "0 8,11,14,17 * * *",
+    "horario": "0 * * * *",
+}
+
+
+def _require_admin(session_data: dict | None) -> bool:
+    """Retorna True se o gestor tem role='admin'."""
+    if session_data is None:
+        return False
+    return session_data.get("role") == "admin"
+
+
+async def _get_gestor_role(tenant_id: str, session_data: dict) -> str:
+    """Busca role do gestor no banco.
+
+    Se houver gestor com role='admin' no tenant, considera que é admin.
+    Simplificação para piloto JMB com apenas 1 gestor.
+    """
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("SELECT COUNT(*) AS total FROM gestores WHERE tenant_id=:tid AND role='admin' AND ativo=true"),
+                {"tid": tenant_id},
+            )
+            row = result.mappings().first()
+            admin_count = int(row["total"]) if row else 0
+            return "admin" if admin_count > 0 else "gestor"
+    except Exception:
+        return "gestor"
+
+
+@router.get("/sync", response_class=HTMLResponse)
+async def sync_admin_get(request: Request) -> Any:
+    """E15 (F-07): página de gerenciamento de sync EFOS (admin only)."""
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+
+    tenant_id = session_data["tenant_id"]
+    role = await _get_gestor_role(tenant_id, session_data)
+    if role != "admin":
+        from fastapi.responses import Response
+        return Response(
+            content="<h1>403 — Acesso restrito a administradores.</h1>",
+            status_code=403,
+            media_type="text/html",
+        )
+
+    schedule = await _get_sync_schedule(tenant_id)
+    ultimas_runs = await _get_ultimas_sync_runs(tenant_id)
+    proxima = _calcular_proxima_execucao(schedule.get("cron_expression", ""))
+
+    return templates.TemplateResponse(
+        request,
+        "sync.html",
+        {
+            "schedule": schedule,
+            "presets": list(_PRESET_CRONS.keys()),
+            "proxima_execucao": proxima,
+            "ultimas_runs": ultimas_runs,
+            "mensagem": None,
+            "sucesso": None,
+        },
+    )
+
+
+@router.post("/sync")
+async def sync_admin_post(request: Request) -> Any:
+    """E15 (F-07): salvar preset ou disparar sync agora (admin only)."""
+    session_data = _require_session(request)
+    if session_data is None:
+        return RedirectResponse(url="/dashboard/login", status_code=302)
+
+    tenant_id = session_data["tenant_id"]
+    role = await _get_gestor_role(tenant_id, session_data)
+    if role != "admin":
+        from fastapi.responses import Response
+        return Response(
+            content="<h1>403 — Acesso restrito a administradores.</h1>",
+            status_code=403,
+            media_type="text/html",
+        )
+
+    form = await request.form()
+    action = str(form.get("action", "save")).strip()
+
+    if action == "run_now":
+        # Disparar sync imediato via APScheduler
+        try:
+            from src.integrations.runtime.scheduler import run_now
+            efos_scheduler = request.app.state.efos_scheduler
+            session_factory = request.app.state.session_factory
+            redis_client = request.app.state.redis_client
+            disparou = await run_now(
+                scheduler=efos_scheduler,
+                tenant_id=tenant_id,
+                connector_kind="efos_backup",
+                session_factory=session_factory,
+                redis_client=redis_client,
+            )
+            if not disparou:
+                from fastapi.responses import HTMLResponse as _Html
+                schedule = await _get_sync_schedule(tenant_id)
+                ultimas_runs = await _get_ultimas_sync_runs(tenant_id)
+                proxima = _calcular_proxima_execucao(schedule.get("cron_expression", ""))
+                return _Html(
+                    content=(
+                        templates.get_template("sync.html")
+                        .render(
+                            request=request,
+                            schedule=schedule,
+                            presets=list(_PRESET_CRONS.keys()),
+                            proxima_execucao=proxima,
+                            ultimas_runs=ultimas_runs,
+                            mensagem="Sync ja em andamento. Aguarde 30 minutos.",
+                            sucesso=False,
+                        )
+                    ),
+                    status_code=409,
+                )
+        except Exception as exc:
+            log.error("dashboard_sync_run_now_erro", error=str(exc))
+        return RedirectResponse(url="/dashboard/sync", status_code=302)
+
+    # action == "save" — salvar preset
+    preset = str(form.get("preset", "diario")).strip()
+    cron_expression = _PRESET_CRONS.get(preset, "0 13 * * *")
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("""
+                    UPDATE sync_schedule
+                    SET preset = :preset, cron_expression = :cron, atualizado_em = NOW()
+                    WHERE tenant_id = :tid AND connector_kind = 'efos_backup'
+                """),
+                {"preset": preset, "cron": cron_expression, "tid": tenant_id},
+            )
+            if result.rowcount == 0:
+                log.warning("dashboard_sync_update_noop", tenant_id=tenant_id)
+            await session.commit()
+
+        # Re-agendar job no APScheduler sem restart
+        if preset != "manual" and cron_expression:
+            try:
+                from src.integrations.runtime.scheduler import reschedule_job
+                efos_scheduler = request.app.state.efos_scheduler
+                session_factory = request.app.state.session_factory
+                redis_client = getattr(request.app.state, "redis_client", None)
+                reschedule_job(
+                    scheduler=efos_scheduler,
+                    tenant_id=tenant_id,
+                    connector_kind="efos_backup",
+                    new_cron=cron_expression,
+                    session_factory=session_factory,
+                    redis_client=redis_client,
+                )
+            except Exception as exc_sched:
+                log.warning("dashboard_sync_reschedule_erro", error=str(exc_sched))
+
+    except Exception as exc:
+        log.error("dashboard_sync_save_erro", error=str(exc))
+    return RedirectResponse(url="/dashboard/sync", status_code=302)
+
+
+async def _get_sync_schedule(tenant_id: str) -> dict:
+    """Busca schedule atual do tenant."""
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("""
+                    SELECT preset, cron_expression, enabled, last_triggered_at, next_run_at
+                    FROM sync_schedule
+                    WHERE tenant_id = :tid AND connector_kind = 'efos_backup'
+                """),
+                {"tid": tenant_id},
+            )
+            row = result.mappings().first()
+            return dict(row) if row else {"preset": "diario", "cron_expression": "0 13 * * *", "enabled": True}
+    except Exception as exc:
+        log.error("dashboard_sync_schedule_erro", error=str(exc))
+        return {"preset": "diario", "cron_expression": "0 13 * * *", "enabled": True}
+
+
+async def _get_ultimas_sync_runs(tenant_id: str, limit: int = 10) -> list[dict]:
+    """Busca últimas N execuções de sync."""
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("""
+                    SELECT started_at, finished_at, status, rows_published, error
+                    FROM sync_runs
+                    WHERE tenant_id = :tid AND connector_kind = 'efos_backup'
+                    ORDER BY started_at DESC
+                    LIMIT :limit
+                """),
+                {"tid": tenant_id, "limit": limit},
+            )
+            return [dict(r) for r in result.mappings().all()]
+    except Exception as exc:
+        log.error("dashboard_sync_runs_erro", error=str(exc))
+        return []
+
+
+def _calcular_proxima_execucao(cron_expression: str) -> str:
+    """Calcula a próxima execução de um cron."""
+    if not cron_expression:
+        return "Manual"
+    try:
+        from apscheduler.triggers.cron import CronTrigger
+        trigger = CronTrigger.from_crontab(cron_expression, timezone="America/Sao_Paulo")
+        next_fire = trigger.get_next_fire_time(None, datetime.now(timezone.utc))
+        if next_fire:
+            return next_fire.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        pass
+    return "Desconhecido"
 
 
 # ─────────────────────────────────────────────
@@ -1143,20 +1398,29 @@ async def feedbacks(request: Request) -> Any:
 
 
 async def _get_todos_contatos(tenant_id: str) -> list[dict[str, Any]]:
+    """E11 (D030): UNION de contacts + gestores + representantes.
+
+    Inclui contacts da nova tabela (D030) com badge de origem.
+    """
     try:
         from sqlalchemy import text
         from src.providers.db import get_session_factory
         async with get_session_factory()() as session:
             result = await session.execute(
                 text("""
-                    SELECT id, nome, telefone, ativo, 'gestor' AS perfil, NULL AS nome_contato FROM gestores
+                    SELECT id::text, nome,
+                           (channels->0->>'identifier') AS telefone,
+                           authorized AS ativo,
+                           'contato' AS perfil,
+                           origin AS nome_contato
+                    FROM contacts
                     WHERE tenant_id = :tid
                     UNION ALL
-                    SELECT id, nome, telefone, ativo, 'rep' AS perfil, NULL AS nome_contato FROM representantes
-                    WHERE tenant_id = :tid
+                    SELECT id::text, nome, telefone, ativo, 'gestor' AS perfil, NULL AS nome_contato
+                    FROM gestores WHERE tenant_id = :tid
                     UNION ALL
-                    SELECT id, nome, telefone, ativo, 'cliente' AS perfil, nome_contato FROM clientes_b2b
-                    WHERE tenant_id = :tid
+                    SELECT id::text, nome, telefone, ativo, 'rep' AS perfil, NULL AS nome_contato
+                    FROM representantes WHERE tenant_id = :tid
                     ORDER BY nome
                 """),
                 {"tid": tenant_id},
@@ -1165,6 +1429,29 @@ async def _get_todos_contatos(tenant_id: str) -> list[dict[str, Any]]:
     except Exception as exc:
         log.error("dashboard_contatos_erro", error=str(exc))
         return []
+
+
+async def _contar_contatos_pendentes(tenant_id: str) -> int:
+    """E10: conta contacts self_registered não autorizados."""
+    try:
+        from sqlalchemy import text
+        from src.providers.db import get_session_factory
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                text("""
+                    SELECT COUNT(*) AS total
+                    FROM contacts
+                    WHERE tenant_id = :tid
+                      AND authorized = false
+                      AND origin = 'self_registered'
+                """),
+                {"tid": tenant_id},
+            )
+            row = result.mappings().first()
+            return int(row["total"]) if row else 0
+    except Exception as exc:
+        log.error("dashboard_pendentes_erro", error=str(exc))
+        return 0
 
 
 async def _get_contato_by_id(tenant_id: str, perfil: str, contato_id: str) -> dict[str, Any] | None:

@@ -179,17 +179,21 @@ async def test_b13_get_por_codigo_curto_sem_fallback() -> None:
 
 @pytest.mark.unit
 def test_catalog_repo_nao_tem_logica_commerce() -> None:
-    """A decisão de fallback commerce vs produtos deve estar em service.py, não repo.py."""
+    """E18 Sprint 10: buscar_por_embedding agora usa commerce_products como fonte PRINCIPAL.
+
+    Sprint 9: decisão de fallback no service.
+    Sprint 10 (E18): migração completa — catalog/repo.py lê commerce_products diretamente.
+    Verificação atualizada: repo pode referenciar commerce_products (E18), mas não
+    deve importar CommerceRepo (evita acoplamento entre repos).
+    """
     import src.catalog.repo as repo_module
 
     source = open(repo_module.__file__).read()  # noqa: WPS515
-    assert "commerce_products" not in source, (
-        "A_CATALOG_FALLBACK: catalog/repo.py NÃO deve referenciar commerce_products. "
-        "A lógica de fallback deve viver exclusivamente em catalog/service.py."
-    )
+    # E18: commerce_products é permitido no repo (busca semântica migrada)
+    # Verificar apenas que CommerceRepo não é importado (manter camadas limpas)
     assert "CommerceRepo" not in source, (
-        "A_CATALOG_FALLBACK: catalog/repo.py NÃO deve importar CommerceRepo."
+        "catalog/repo.py NÃO deve importar CommerceRepo — use SQL direto."
     )
     assert "buscar_produtos_commerce" not in source, (
-        "A_CATALOG_FALLBACK: catalog/repo.py NÃO deve chamar buscar_produtos_commerce."
+        "catalog/repo.py NÃO deve chamar buscar_produtos_commerce — use SQL direto."
     )

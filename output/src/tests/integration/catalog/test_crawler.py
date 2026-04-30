@@ -1,24 +1,15 @@
-"""Testes de integração do EfosCrawler — requerem infra real.
+"""Testes de integração do EfosCrawler — removido em Sprint 10 E19.
 
-@pytest.mark.integration @pytest.mark.slow
-NÃO rodam automaticamente no Evaluator.
-Executar manualmente no macmini-lablz com infra rodando:
-
-    infisical run --env=dev -- pytest -m integration output/src/tests/integration/ -v
-
-Requer variáveis Infisical:
-    - CRAWLER_USER_JMB
-    - CRAWLER_PASS_JMB
-    - CRAWLER_BASE_URL_JMB
+O crawler EFOS foi removido em Sprint 10 (E19). Este arquivo é mantido apenas
+como registro histórico e está marcado como skip para não quebrar a coleta
+global do pytest.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from src.catalog.config import CrawlerConfig
-from src.catalog.runtime.crawler.efos import EfosCrawler
-from src.catalog.types import Categoria, ProdutoBruto
+pytestmark = pytest.mark.skip(reason="catalog crawler removido em Sprint 10 E19")
 
 
 @pytest.mark.integration

@@ -356,13 +356,16 @@ class ClienteB2BRepo:
     ) -> ClienteB2B | None:
         """Busca cliente B2B pelo ID e tenant.
 
+        E12 (B-28): tenta clientes_b2b primeiro; se não encontrar, faz fallback
+        para commerce_accounts_b2b usando external_id (para clientes EFOS).
+
         Args:
-            id: ID UUID do cliente.
+            id: ID UUID ou external_id do cliente.
             tenant_id: ID do tenant — filtro obrigatório.
             session: sessão SQLAlchemy assíncrona.
 
         Returns:
-            ClienteB2B se encontrado, None caso contrário.
+            ClienteB2B se encontrado (em qualquer fonte), None caso contrário.
         """
         result = await session.execute(
             text("""
@@ -373,17 +376,47 @@ class ClienteB2BRepo:
             {"id": id, "tenant_id": tenant_id},
         )
         row = result.mappings().first()
-        if row is None:
+        if row is not None:
+            return ClienteB2B(
+                id=row["id"],
+                tenant_id=row["tenant_id"],
+                nome=row["nome"],
+                cnpj=row["cnpj"],
+                telefone=row["telefone"],
+                ativo=row["ativo"],
+                criado_em=row["criado_em"],
+                representante_id=row["representante_id"],
+            )
+
+        # E12 (B-28): fallback para commerce_accounts_b2b (clientes EFOS)
+        # O id pode ser o external_id do EFOS (ex: "63.153.691")
+        result2 = await session.execute(
+            text("""
+                SELECT external_id AS id, tenant_id, nome, cnpj,
+                       telefone, situacao_cliente, vendedor_codigo
+                FROM commerce_accounts_b2b
+                WHERE external_id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": id, "tenant_id": tenant_id},
+        )
+        row2 = result2.mappings().first()
+        if row2 is None:
             return None
+
+        log.debug(
+            "get_by_id_fallback_commerce_accounts",
+            tenant_id=tenant_id,
+            external_id=id,
+        )
         return ClienteB2B(
-            id=row["id"],
-            tenant_id=row["tenant_id"],
-            nome=row["nome"],
-            cnpj=row["cnpj"],
-            telefone=row["telefone"],
-            ativo=row["ativo"],
-            criado_em=row["criado_em"],
-            representante_id=row["representante_id"],
+            id=str(row2["id"]),
+            tenant_id=row2["tenant_id"],
+            nome=row2["nome"] or "",
+            cnpj=row2["cnpj"],
+            telefone=row2["telefone"],
+            ativo=row2["situacao_cliente"] == 1 if row2["situacao_cliente"] is not None else True,
+            criado_em=None,
+            representante_id=None,  # vendedor_codigo diferente de representante_id do sistema
         )
 
     async def create(
@@ -970,3 +1003,223 @@ class RelatorioRepo:
             }
             for r in fallback_rows
         ]
+
+
+class ContactRepo:
+    """Repositório da tabela contacts (E9, D030 Sprint 10).
+
+    Write model do app: identidades de canal (WhatsApp, etc.).
+    Toda query filtra por tenant_id.
+    """
+
+    async def get_by_channel(
+        self,
+        tenant_id: str,
+        kind: str,
+        identifier: str,
+        session: AsyncSession,
+    ) -> dict | None:
+        """Busca contact pelo canal (ex: kind='whatsapp', identifier='+5519...').
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            kind: tipo de canal ('whatsapp', 'telegram', etc.).
+            identifier: identificador no canal (número, chat_id).
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com dados do contact ou None se não encontrado.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, account_external_id, nome, papel,
+                       authorized, channels, origin,
+                       last_active_at, criado_em, authorized_by_gestor_id
+                FROM contacts
+                WHERE tenant_id = :tenant_id
+                  AND channels @> :channel_filter::jsonb
+            """),
+            {
+                "tenant_id": tenant_id,
+                "channel_filter": f'[{{"kind":"{kind}","identifier":"{identifier}"}}]',
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return dict(row)
+
+    async def create_self_registered(
+        self,
+        tenant_id: str,
+        identifier: str,
+        kind: str = "whatsapp",
+        session: AsyncSession | None = None,
+    ) -> str:
+        """Cria contact self_registered para número desconhecido (E9, D030).
+
+        Idempotente: se já existir, retorna o id existente sem duplicar.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            identifier: número WhatsApp ou identificador do canal.
+            kind: tipo de canal (default 'whatsapp').
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            UUID do contact (novo ou existente).
+        """
+        if session is None:
+            raise ValueError("session obrigatória")
+
+        # Verificar se já existe (idempotência)
+        import json as _json
+        channel_filter = _json.dumps([{"kind": kind, "identifier": identifier}])
+        existing = await self.get_by_channel(tenant_id, kind, identifier, session)
+        if existing:
+            # Atualizar last_active_at
+            await session.execute(
+                text("""
+                    UPDATE contacts
+                    SET last_active_at = NOW(), atualizado_em = NOW()
+                    WHERE id = :id
+                """),
+                {"id": str(existing["id"])},
+            )
+            return str(existing["id"])
+
+        # Criar novo contact self_registered
+        channels = _json.dumps([{"kind": kind, "identifier": identifier, "verified": False}])
+        result = await session.execute(
+            text("""
+                INSERT INTO contacts
+                    (tenant_id, nome, authorized, channels, origin, last_active_at, criado_em, atualizado_em)
+                VALUES
+                    (:tenant_id, :nome, false, :channels::jsonb, 'self_registered', NOW(), NOW(), NOW())
+                RETURNING id
+            """),
+            {
+                "tenant_id": tenant_id,
+                "nome": identifier,
+                "channels": channels,
+            },
+        )
+        row = result.first()
+        contact_id = str(row[0]) if row else ""
+        log.info(
+            "contact_self_registered_criado",
+            tenant_id=tenant_id,
+            kind=kind,
+            identifier_hash=identifier[-4:] if len(identifier) >= 4 else "****",
+        )
+        return contact_id
+
+    async def autorizar(
+        self,
+        tenant_id: str,
+        identifier: str,
+        gestor_id: str,
+        account_external_id: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> bool:
+        """Autoriza um contact self_registered.
+
+        Args:
+            tenant_id: ID do tenant.
+            identifier: número WhatsApp do contact.
+            gestor_id: ID do gestor que autorizou.
+            account_external_id: external_id em commerce_accounts_b2b (opcional).
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            True se autorizou, False se não encontrou o contact.
+        """
+        if session is None:
+            raise ValueError("session obrigatória")
+
+        existing = await self.get_by_channel(tenant_id, "whatsapp", identifier, session)
+        if not existing:
+            return False
+
+        await session.execute(
+            text("""
+                UPDATE contacts
+                SET authorized = true,
+                    authorized_by_gestor_id = :gestor_id,
+                    account_external_id = COALESCE(:account_external_id, account_external_id),
+                    atualizado_em = NOW()
+                WHERE id = :id
+                  AND tenant_id = :tenant_id
+            """),
+            {
+                "id": str(existing["id"]),
+                "tenant_id": tenant_id,
+                "gestor_id": gestor_id,
+                "account_external_id": account_external_id,
+            },
+        )
+        log.info(
+            "contact_autorizado",
+            tenant_id=tenant_id,
+            contact_id=str(existing["id"]),
+            gestor_id=gestor_id,
+        )
+        return True
+
+    async def contar_pendentes(
+        self,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> int:
+        """Conta contacts self_registered não autorizados.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Número de contacts pending authorization.
+        """
+        result = await session.execute(
+            text("""
+                SELECT COUNT(*) AS total
+                FROM contacts
+                WHERE tenant_id = :tenant_id
+                  AND authorized = false
+                  AND origin = 'self_registered'
+            """),
+            {"tenant_id": tenant_id},
+        )
+        row = result.mappings().first()
+        return int(row["total"]) if row else 0
+
+    async def listar_todos(
+        self,
+        tenant_id: str,
+        session: AsyncSession,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Lista todos os contacts do tenant (para dashboard).
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            session: sessão SQLAlchemy assíncrona.
+            limit: número máximo de resultados.
+
+        Returns:
+            Lista de dicts com dados dos contacts.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, account_external_id, nome, papel,
+                       authorized, channels, origin,
+                       last_active_at, criado_em, authorized_by_gestor_id
+                FROM contacts
+                WHERE tenant_id = :tenant_id
+                ORDER BY criado_em DESC
+                LIMIT :limit
+            """),
+            {"tenant_id": tenant_id, "limit": limit},
+        )
+        rows = result.mappings().all()
+        return [dict(r) for r in rows]

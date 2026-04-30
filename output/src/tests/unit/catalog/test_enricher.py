@@ -1,5 +1,7 @@
 """Testes unitários do EnricherAgent (Claude Haiku).
 
+NOTE (Sprint 10 E19): EnricherAgent removido — todos os testes marcados como skip.
+
 Anthropic SDK é mockado — sem chamadas reais à API.
 """
 
@@ -9,9 +11,8 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from anthropic.types import TextBlock
 
-from src.catalog.types import ProdutoBruto, ProdutoEnriquecido
+pytestmark = pytest.mark.skip(reason="E19 Sprint 10: EnricherAgent removido")
 
 
 RESPOSTA_HAIKU_VALIDA = json.dumps({

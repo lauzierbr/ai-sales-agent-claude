@@ -59,9 +59,9 @@ async def publish(
         Exception: qualquer erro causa rollback total da transação.
     """
     try:
-        # Limpa snapshot anterior para o tenant
+        # E8 DT-2: commerce_products usa UPSERT (não DELETE+INSERT) para preservar embedding.
+        # As demais tabelas continuam com DELETE+INSERT.
         for table in [
-            "commerce_products",
             "commerce_accounts_b2b",
             "commerce_order_items",
             "commerce_orders",
@@ -76,7 +76,8 @@ async def publish(
 
         total = 0
 
-        total += await _insert_products(products, session)
+        # UPSERT para products — preserva embedding existente
+        total += await _upsert_products(products, session)
         total += await _insert_accounts(accounts, session)
         total += await _insert_orders(orders, session)
         total += await _insert_order_items(order_items, session)
@@ -94,8 +95,12 @@ async def publish(
         raise
 
 
-async def _insert_products(rows: list[CommerceProduct], session: AsyncSession) -> int:
-    """Insere lista de CommerceProduct na tabela commerce_products."""
+async def _upsert_products(rows: list[CommerceProduct], session: AsyncSession) -> int:
+    """UPSERT de CommerceProduct preservando embedding existente (DT-2, E8).
+
+    ON CONFLICT (tenant_id, external_id) atualiza todos os campos EXCETO embedding.
+    embedding só é sobrescrito se a linha existente não tiver (COALESCE).
+    """
     for row in rows:
         await session.execute(
             text("""
@@ -105,6 +110,16 @@ async def _insert_products(rows: list[CommerceProduct], session: AsyncSession) -
                 VALUES
                     (:tenant_id, 'efos', :external_id, :codigo, :nome, :descricao,
                      :unidade, :preco_padrao, :ativo, NOW(), :snapshot_checksum)
+                ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+                    codigo            = EXCLUDED.codigo,
+                    nome              = EXCLUDED.nome,
+                    descricao         = EXCLUDED.descricao,
+                    unidade           = EXCLUDED.unidade,
+                    preco_padrao      = EXCLUDED.preco_padrao,
+                    ativo             = EXCLUDED.ativo,
+                    synced_at         = EXCLUDED.synced_at,
+                    snapshot_checksum = EXCLUDED.snapshot_checksum
+                    -- embedding NÃO atualizado aqui: preservado de sincronizações anteriores
             """),
             {
                 "tenant_id": row.tenant_id,
@@ -122,16 +137,23 @@ async def _insert_products(rows: list[CommerceProduct], session: AsyncSession) -
 
 
 async def _insert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession) -> int:
-    """Insere lista de CommerceAccountB2B na tabela commerce_accounts_b2b."""
+    """Insere lista de CommerceAccountB2B na tabela commerce_accounts_b2b.
+
+    E8 (D030): inclui os 6 novos campos de contato do EFOS.
+    """
     for row in rows:
         await session.execute(
             text("""
                 INSERT INTO commerce_accounts_b2b
                     (tenant_id, source_system, external_id, codigo, nome, cnpj,
-                     cidade, uf, situacao_cliente, vendedor_codigo, synced_at, snapshot_checksum)
+                     cidade, uf, situacao_cliente, vendedor_codigo,
+                     contato_padrao, telefone, telefone_celular, email, nome_fantasia, dataultimacompra,
+                     synced_at, snapshot_checksum)
                 VALUES
                     (:tenant_id, 'efos', :external_id, :codigo, :nome, :cnpj,
-                     :cidade, :uf, :situacao_cliente, :vendedor_codigo, NOW(), :snapshot_checksum)
+                     :cidade, :uf, :situacao_cliente, :vendedor_codigo,
+                     :contato_padrao, :telefone, :telefone_celular, :email, :nome_fantasia, :dataultimacompra,
+                     NOW(), :snapshot_checksum)
             """),
             {
                 "tenant_id": row.tenant_id,
@@ -143,6 +165,12 @@ async def _insert_accounts(rows: list[CommerceAccountB2B], session: AsyncSession
                 "uf": row.uf,
                 "situacao_cliente": row.situacao_cliente,
                 "vendedor_codigo": row.vendedor_codigo,
+                "contato_padrao": row.contato_padrao,
+                "telefone": row.telefone,
+                "telefone_celular": row.telefone_celular,
+                "email": row.email,
+                "nome_fantasia": row.nome_fantasia,
+                "dataultimacompra": row.dataultimacompra,
                 "snapshot_checksum": row.snapshot_checksum,
             },
         )

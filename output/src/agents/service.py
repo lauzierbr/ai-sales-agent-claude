@@ -21,7 +21,7 @@ from opentelemetry import trace
 from opentelemetry.metrics import get_meter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents.repo import ClienteB2BRepo, GestorRepo, RepresentanteRepo, WhatsappInstanciaRepo
+from src.agents.repo import ClienteB2BRepo, ContactRepo, GestorRepo, RepresentanteRepo, WhatsappInstanciaRepo
 from src.agents.types import Mensagem, Persona, WebhookPayload, WhatsappInstancia
 
 log = structlog.get_logger(__name__)
@@ -473,3 +473,127 @@ async def send_whatsapp_media(
         )
     except Exception as exc:
         log.error("evolution_api_media_timeout", instancia_id=instancia_id, error=str(exc))
+
+
+async def notify_gestor_pendente(
+    tenant_id: str,
+    numero_desconhecido: str,
+    mensagem_original: str,
+    instancia_id: str,
+    session: AsyncSession,
+    redis_client: object | None = None,
+) -> bool:
+    """Notifica gestores ativos sobre contato pendente de autorização (E10, D030).
+
+    Throttle: 1 notificação por número por 6h (via Redis key).
+    Template: "[CONTATO PENDENTE] +55... mandou: '...'. Responda AUTORIZAR {numero} ou abra o painel."
+
+    Args:
+        tenant_id: ID do tenant — filtro obrigatório.
+        numero_desconhecido: número WhatsApp do contato desconhecido.
+        mensagem_original: primeira mensagem enviada (para contexto).
+        instancia_id: ID da instância Evolution API.
+        session: sessão SQLAlchemy assíncrona.
+        redis_client: cliente Redis para throttle (opcional; sem throttle se None).
+
+    Returns:
+        True se notificação foi enviada, False se throttled.
+    """
+    # Throttle: verificar se já notificamos sobre este número nas últimas 6h
+    throttle_key = f"notify_gestor_pendente:{tenant_id}:{numero_desconhecido}"
+    throttle_ttl = 6 * 60 * 60  # 6 horas em segundos
+
+    if redis_client is not None:
+        try:
+            already_sent = await redis_client.get(throttle_key)  # type: ignore[attr-defined]
+            if already_sent:
+                log.info(
+                    "notify_gestor_throttle",
+                    tenant_id=tenant_id,
+                    numero_hash=numero_desconhecido[-4:] if len(numero_desconhecido) >= 4 else "****",
+                )
+                return False
+        except Exception as exc:
+            log.warning("notify_gestor_redis_check_erro", error=str(exc))
+
+    # Buscar candidato em commerce_accounts_b2b por telefone
+    candidato_nome = ""
+    candidato_cnpj = ""
+    try:
+        from sqlalchemy import text as _text
+        numero_limpo = numero_desconhecido.lstrip("+").lstrip("55")
+        result = await session.execute(
+            _text("""
+                SELECT nome, cnpj, nome_fantasia
+                FROM commerce_accounts_b2b
+                WHERE tenant_id = :tenant_id
+                  AND (
+                    telefone LIKE :numero_sufixo
+                    OR telefone_celular LIKE :numero_sufixo
+                  )
+                LIMIT 1
+            """),
+            {
+                "tenant_id": tenant_id,
+                "numero_sufixo": f"%{numero_limpo[-8:]}",
+            },
+        )
+        row = result.mappings().first()
+        if row:
+            candidato_nome = row["nome_fantasia"] or row["nome"] or ""
+            candidato_cnpj = row["cnpj"] or ""
+    except Exception as exc:
+        log.warning("notify_gestor_candidato_lookup_erro", error=str(exc))
+
+    # Montar template da notificação
+    msg_preview = mensagem_original[:50] + ("..." if len(mensagem_original) > 50 else "")
+    if candidato_nome:
+        cnpj_fmt = candidato_cnpj
+        # Formatar CNPJ: "12345678000199" → "12.345.678/0001-99"
+        if candidato_cnpj and len(candidato_cnpj.replace(".", "").replace("/", "").replace("-", "")) == 14:
+            raw = candidato_cnpj.replace(".", "").replace("/", "").replace("-", "")
+            cnpj_fmt = f"{raw[:2]}.{raw[2:5]}.{raw[5:8]}/{raw[8:12]}-{raw[12:14]}"
+        template = (
+            f"[CONTATO PENDENTE] {numero_desconhecido} mandou: \"{msg_preview}\". "
+            f"Possivel cliente: {candidato_nome} (CNPJ {cnpj_fmt}). "
+            f"Responda AUTORIZAR {numero_desconhecido} ou abra o painel."
+        )
+    else:
+        template = (
+            f"[CONTATO PENDENTE] {numero_desconhecido} mandou: \"{msg_preview}\". "
+            f"Responda AUTORIZAR {numero_desconhecido} ou abra o painel."
+        )
+
+    # Buscar gestores ativos e notificar
+    gestor_repo = GestorRepo()
+    gestores = await gestor_repo.listar_ativos_por_tenant(tenant_id=tenant_id, session=session)
+    enviou = False
+    for gestor in gestores:
+        if gestor.telefone:
+            try:
+                await send_whatsapp_message(
+                    instancia_id=instancia_id,
+                    telefone=gestor.telefone,
+                    mensagem=template,
+                )
+                enviou = True
+                log.info(
+                    "notify_gestor_enviado",
+                    tenant_id=tenant_id,
+                    gestor_id=gestor.id,
+                )
+            except Exception as exc:
+                log.warning(
+                    "notify_gestor_send_erro",
+                    tenant_id=tenant_id,
+                    error=str(exc),
+                )
+
+    # Registrar throttle no Redis
+    if enviou and redis_client is not None:
+        try:
+            await redis_client.set(throttle_key, "1", ex=throttle_ttl)  # type: ignore[attr-defined]
+        except Exception as exc:
+            log.warning("notify_gestor_redis_set_erro", error=str(exc))
+
+    return enviou

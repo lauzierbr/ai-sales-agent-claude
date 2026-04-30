@@ -128,6 +128,15 @@ async def test_publish_filtra_por_tenant_id() -> None:
         session=mock_session,
     )
 
-    # Verifica que os DELETEs foram executados
+    # E8 DT-2: commerce_products usa UPSERT agora (não DELETE+INSERT)
+    # Verifica que os DELETEs foram executados para as 6 tabelas restantes
     delete_queries = [q for q in executed_queries if "DELETE" in q.upper()]
-    assert len(delete_queries) >= 7, "Devem existir DELETEs para todas as tabelas commerce_*"
+    assert len(delete_queries) >= 6, (
+        "Devem existir DELETEs para 6 tabelas commerce_* "
+        "(commerce_products usa UPSERT — DT-2 E8)"
+    )
+    # Verifica que commerce_products NÃO é deletado
+    products_delete = [q for q in delete_queries if "commerce_products" in q.lower()]
+    assert len(products_delete) == 0, (
+        "commerce_products não deve ter DELETE (preserva embedding via UPSERT — DT-2)"
+    )

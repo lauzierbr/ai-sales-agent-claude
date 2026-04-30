@@ -2,6 +2,9 @@
 
 Usa httpx.AsyncClient com ASGITransport e dependency_overrides para mock.
 Todos os testes são @pytest.mark.unit — sem I/O real.
+
+NOTE (Sprint 10 E19): Testes de rotas legadas (/crawl, /painel, /produtos/{id}/aprovar)
+marcados como skip — rotas removidas em E19.
 """
 
 from __future__ import annotations
@@ -49,15 +52,16 @@ def patch_tenant_middleware() -> Generator[None, None, None]:
 
 
 def make_mock_service(produto_fixture: Produto) -> AsyncMock:
-    """Cria mock de CatalogService para uso nos testes de UI."""
+    """Cria mock de CatalogService para uso nos testes de UI.
+
+    E19 (Sprint 10): aprovar_produto e rejeitar_produto removidos do service.
+    """
     mock = AsyncMock(spec=CatalogService)
     mock.listar_produtos.return_value = [produto_fixture]
     mock.get_produto.return_value = produto_fixture
     mock.buscar_semantico.return_value = [
         ResultadoBusca(produto=produto_fixture, distancia=0.15)
     ]
-    mock.aprovar_produto.return_value = produto_fixture
-    mock.rejeitar_produto.return_value = produto_fixture
     mock.processar_excel_precos.return_value = ExcelUploadResult(
         linhas_processadas=4,
         inseridos=3,
@@ -78,6 +82,7 @@ def make_client() -> AsyncClient:
 
 
 @pytest.mark.unit
+@pytest.mark.skip(reason="E19 Sprint 10: rota /catalog/produtos removida")
 async def test_listar_produtos_retorna_200(
     produto_fixture: Produto,
     tenant_id: str,
@@ -229,6 +234,7 @@ async def test_upload_precos_excel_retorna_resultado(
 
 
 @pytest.mark.unit
+@pytest.mark.skip(reason="E19 Sprint 10: rota /catalog/painel removida")
 async def test_painel_retorna_html(
     produto_fixture: Produto,
 ) -> None:
@@ -268,6 +274,7 @@ async def test_painel_retorna_html(
 
 
 @pytest.mark.unit
+@pytest.mark.skip(reason="E19 Sprint 10: rota /catalog/produtos/{id}/aprovar removida")
 async def test_aprovar_produto_retorna_produto(
     produto_fixture: Produto,
     tenant_id: str,
@@ -297,6 +304,7 @@ async def test_aprovar_produto_retorna_produto(
 
 
 @pytest.mark.unit
+@pytest.mark.skip(reason="E19 Sprint 10: rota /catalog/crawl removida")
 async def test_crawl_sem_jwt_retorna_401(
     produto_fixture: Produto,
     tenant_id: str,
@@ -324,6 +332,7 @@ async def test_crawl_sem_jwt_retorna_401(
 
 
 @pytest.mark.unit
+@pytest.mark.skip(reason="E19 Sprint 10: rota /catalog/crawl removida")
 async def test_crawl_role_cliente_retorna_403(
     produto_fixture: Produto,
     tenant_id: str,

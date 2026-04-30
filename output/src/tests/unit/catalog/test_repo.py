@@ -132,10 +132,11 @@ def test_sql_get_produto_contem_tenant_id_filter() -> None:
     )
 
 
+@pytest.mark.skip(reason="update_status removido em Sprint 10 E19 — pipeline enricher depreciado")
 @pytest.mark.unit
 def test_sql_update_status_contem_tenant_id_filter() -> None:
     """O SQL de update_status deve conter filtro tenant_id = :tenant_id."""
-    source = inspect.getsource(CatalogRepo.update_status)
+    source = inspect.getsource(CatalogRepo.update_status)  # type: ignore[attr-defined]
     assert "tenant_id = :tenant_id" in source or "tenant_id=:tenant_id" in source, (
         "update_status não filtra por tenant_id no SQL"
     )
@@ -209,7 +210,8 @@ def test_row_to_produto_com_meta_agente_json_string() -> None:
     assert produto.meta_agente == {"unidade": "ml", "quantidade": 300}
     assert produto.preco_padrao == Decimal("29.90")
     assert produto.tags == ["t1", "t2"]
-    assert produto.status_enriquecimento == StatusEnriquecimento.ENRIQUECIDO
+    # E18: _row_to_produto sempre retorna ATIVO para produtos de commerce_products
+    assert produto.status_enriquecimento == StatusEnriquecimento.ATIVO
 
 
 # ─────────────────────────────────────────────
@@ -217,6 +219,7 @@ def test_row_to_produto_com_meta_agente_json_string() -> None:
 # ─────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="upsert_produto_bruto removido em Sprint 10 E19 — pipeline enricher depreciado")
 @pytest.mark.unit
 async def test_upsert_produto_bruto_retorna_produto() -> None:
     """upsert_produto_bruto deve executar SQL e retornar Produto."""
@@ -240,6 +243,7 @@ async def test_upsert_produto_bruto_retorna_produto() -> None:
     mock_session.commit.assert_called_once()
 
 
+@pytest.mark.skip(reason="update_produto_enriquecido removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_update_produto_enriquecido_retorna_produto_atualizado() -> None:
     """update_produto_enriquecido deve atualizar campos e retornar Produto."""
@@ -269,6 +273,7 @@ async def test_update_produto_enriquecido_retorna_produto_atualizado() -> None:
     mock_session.commit.assert_called_once()
 
 
+@pytest.mark.skip(reason="update_produto_enriquecido removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_update_produto_enriquecido_nao_encontrado_levanta_value_error() -> None:
     """update_produto_enriquecido deve levantar ValueError se row for None."""
@@ -290,6 +295,7 @@ async def test_update_produto_enriquecido_nao_encontrado_levanta_value_error() -
         await repo.update_produto_enriquecido("jmb", "INEXISTENTE", enriquecido)
 
 
+@pytest.mark.skip(reason="update_embedding removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_update_embedding_executa_sql() -> None:
     """update_embedding deve executar SQL com o vetor formatado."""
@@ -309,6 +315,7 @@ async def test_update_embedding_executa_sql() -> None:
     assert call_params["tenant_id"] == "jmb"
 
 
+@pytest.mark.skip(reason="update_status removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_update_status_retorna_produto_com_novo_status() -> None:
     """update_status deve atualizar e retornar produto."""
@@ -324,6 +331,7 @@ async def test_update_status_retorna_produto_com_novo_status() -> None:
     mock_session.commit.assert_called_once()
 
 
+@pytest.mark.skip(reason="update_status removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_update_status_nao_encontrado_levanta_value_error() -> None:
     """update_status deve levantar ValueError se produto não existir."""
@@ -333,7 +341,7 @@ async def test_update_status_nao_encontrado_levanta_value_error() -> None:
     produto_id = UUID("00000000-0000-0000-0000-000000000099")
 
     with pytest.raises(ValueError, match="Produto não encontrado"):
-        await repo.update_status("jmb", produto_id, StatusEnriquecimento.ATIVO)
+        await repo.update_status("jmb", produto_id, StatusEnriquecimento.ATIVO)  # type: ignore[attr-defined]
 
 
 @pytest.mark.unit
@@ -380,7 +388,12 @@ async def test_listar_produtos_sem_filtro_retorna_lista() -> None:
 
 @pytest.mark.unit
 async def test_listar_produtos_com_filtro_status() -> None:
-    """listar_produtos com status deve executar SQL com filtro adicional."""
+    """listar_produtos com status aceita o parâmetro sem quebrar (E18: status ignorado).
+
+    E18: commerce_products não tem coluna status — todos os produtos são tratados como
+    ATIVO. O parâmetro `status` é aceito na assinatura por compatibilidade mas não é
+    usado como bind param no SQL.
+    """
     row = _make_row(status_enriquecimento="enriquecido")
     mock_factory, mock_session = _make_session_factory(fetchall_result=[row])
 
@@ -390,12 +403,13 @@ async def test_listar_produtos_com_filtro_status() -> None:
     )
 
     assert len(resultado) == 1
-    # Verifica que o parâmetro status foi passado
+    # E18: status não é bind param — SQL não usa filtro de status
     call_params = mock_session.execute.call_args[0][1]
-    assert call_params["status"] == "enriquecido"
     assert call_params["tenant_id"] == "jmb"
+    assert "status" not in call_params
 
 
+@pytest.mark.skip(reason="listar_produtos_sem_embedding removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_listar_produtos_sem_embedding_retorna_lista() -> None:
     """listar_produtos_sem_embedding deve retornar produtos sem vetor."""
@@ -403,7 +417,7 @@ async def test_listar_produtos_sem_embedding_retorna_lista() -> None:
     mock_factory, _ = _make_session_factory(fetchall_result=rows)
 
     repo = CatalogRepo(mock_factory)
-    resultado = await repo.listar_produtos_sem_embedding("jmb", limit=10)
+    resultado = await repo.listar_produtos_sem_embedding("jmb", limit=10)  # type: ignore[attr-defined]
 
     assert len(resultado) == 1
 

@@ -3,12 +3,14 @@
 Camada Service: importa apenas src.catalog.types, src.catalog.config e src.catalog.repo.
 NÃO importa nada de src.catalog.runtime — injeção via EnricherProtocol.
 Toda função pública tem OTel span e structlog.
+
+E18/E19 (Sprint 10): métodos do pipeline de enriquecimento removidos (código morto
+após remoção do enricher em E19). Fonte de dados: commerce_products exclusivamente.
 """
 
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
@@ -17,15 +19,11 @@ import pandas as pd
 import structlog
 from opentelemetry import trace
 
-from src.catalog.config import EnrichmentConfig
 from src.catalog.repo import CatalogRepo
 from src.catalog.types import (
-    CrawlStatus,
-    EnricherProtocol,
+    CommerceProduct,
     ExcelUploadResult,
-    Produto,
     PrecoDiferenciado,
-    ProdutoBruto,
     ResultadoBusca,
     StatusEnriquecimento,
 )
@@ -39,176 +37,30 @@ tracer = trace.get_tracer(__name__)
 class CatalogService:
     """Serviço de catálogo de produtos.
 
-    Orquestra: enriquecimento, embeddings, busca semântica e preços diferenciados.
-    O EnricherAgent é injetado como EnricherProtocol para preservar a camada de arquitetura.
+    Orquestra: busca semântica, busca por código e preços diferenciados.
+    Fonte de dados: commerce_products (E18 — produtos legado removido em E20).
     O cliente OpenAI é injetado para permitir mock nos testes unitários.
     """
 
     def __init__(
         self,
         repo: CatalogRepo,
-        enricher: EnricherProtocol,
+        enricher: Any,  # aceita None — enricher removido em E19; mantido por compat de callers
         embedding_client: Any,  # AsyncOpenAI — tipado como Any para evitar import externo
         commerce_repo: Any | None = None,  # CommerceRepo — opcional, injetado em runtime
     ) -> None:
         """Inicializa o serviço com dependências injetadas.
 
         Args:
-            repo: repositório de catálogo (legado — tabela produtos).
-            enricher: agente de enriquecimento (implementa EnricherProtocol).
+            repo: repositório de catálogo.
+            enricher: obsoleto (removido em E19) — ignorado; aceito por compat de callers.
             embedding_client: cliente OpenAI assíncrono para geração de embeddings.
             commerce_repo: CommerceRepo para busca em commerce_products (E1a, opcional).
-                Quando fornecido e commerce_products tem dados, busca por código/nome
-                é redirecionada para commerce_products. Busca semântica pgvector
-                permanece em catalog.produtos independentemente.
         """
         self._repo = repo
-        self._enricher = enricher
         self._embedding_client: Any = embedding_client
         self._embedding_model = "text-embedding-3-small"
         self._commerce_repo: Any | None = commerce_repo
-
-    # ─────────────────────────────────────────────
-    # Persistência de produto bruto
-    # ─────────────────────────────────────────────
-
-    async def salvar_produto_bruto(
-        self,
-        tenant_id: str,
-        produto: ProdutoBruto,
-    ) -> Produto:
-        """Persiste produto bruto extraído pelo crawler.
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto: produto bruto do crawler.
-
-        Returns:
-            Produto persistido no banco de dados.
-        """
-        with tracer.start_as_current_span("catalog.salvar_produto_bruto") as span:
-            span.set_attribute("tenant_id", tenant_id)
-            span.set_attribute("codigo_externo", produto.codigo_externo)
-
-            result = await self._repo.upsert_produto_bruto(tenant_id, produto)
-            log.info(
-                "produto_bruto_salvo",
-                tenant_id=tenant_id,
-                codigo_externo=produto.codigo_externo,
-                produto_id=str(result.id),
-            )
-            return result
-
-    # ─────────────────────────────────────────────
-    # Pipeline de enriquecimento
-    # ─────────────────────────────────────────────
-
-    async def enriquecer_produto(
-        self, tenant_id: str, produto_id: UUID
-    ) -> Produto:
-        """Enriquece um produto existente via Claude Haiku e gera embedding.
-
-        Fluxo:
-        1. Busca produto no banco
-        2. Chama enricher (Claude Haiku)
-        3. Persiste resultado de enriquecimento
-        4. Gera e salva embedding (OpenAI)
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto_id: UUID do produto a enriquecer.
-
-        Returns:
-            Produto enriquecido e com embedding gerado.
-
-        Raises:
-            ValueError: se produto não encontrado.
-        """
-        with tracer.start_as_current_span("catalog.enriquecer_produto") as span:
-            span.set_attribute("tenant_id", tenant_id)
-            span.set_attribute("produto_id", str(produto_id))
-
-            produto = await self._repo.get_produto(tenant_id, produto_id)
-            if produto is None:
-                raise ValueError(
-                    f"Produto não encontrado: tenant={tenant_id}, id={produto_id}"
-                )
-
-            produto_bruto = ProdutoBruto(
-                codigo_externo=produto.codigo_externo,
-                nome_bruto=produto.nome_bruto,
-                tenant_id=tenant_id,
-                descricao_bruta=produto.texto_rag,
-                categoria=produto.categoria,
-            )
-
-            log.info(
-                "enriquecimento_iniciado",
-                tenant_id=tenant_id,
-                produto_id=str(produto_id),
-                codigo_externo=produto.codigo_externo,
-            )
-
-            enriquecido = await self._enricher.enriquecer(produto_bruto)
-            produto_atualizado = await self._repo.update_produto_enriquecido(
-                tenant_id, produto.codigo_externo, enriquecido
-            )
-
-            # Gera embedding após enriquecimento (texto_rag agora disponível)
-            await self.gerar_e_salvar_embedding(tenant_id, produto_id)
-
-            log.info(
-                "enriquecimento_concluido",
-                tenant_id=tenant_id,
-                produto_id=str(produto_id),
-                nome=enriquecido.nome,
-            )
-
-            return produto_atualizado
-
-    async def gerar_e_salvar_embedding(
-        self, tenant_id: str, produto_id: UUID
-    ) -> None:
-        """Gera embedding OpenAI para o texto_rag do produto e persiste.
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto_id: UUID do produto.
-
-        Raises:
-            ValueError: se produto não encontrado ou sem texto_rag.
-        """
-        with tracer.start_as_current_span("catalog.gerar_e_salvar_embedding") as span:
-            span.set_attribute("tenant_id", tenant_id)
-            span.set_attribute("produto_id", str(produto_id))
-
-            produto = await self._repo.get_produto(tenant_id, produto_id)
-            if produto is None:
-                raise ValueError(
-                    f"Produto não encontrado: tenant={tenant_id}, id={produto_id}"
-                )
-
-            if not produto.texto_rag:
-                log.warning(
-                    "embedding_sem_texto_rag",
-                    tenant_id=tenant_id,
-                    produto_id=str(produto_id),
-                )
-                return
-
-            response = await self._embedding_client.embeddings.create(                model=self._embedding_model,
-                input=produto.texto_rag,
-            )
-            embedding: list[float] = response.data[0].embedding
-
-            await self._repo.update_embedding(tenant_id, produto_id, embedding)
-
-            log.debug(
-                "embedding_gerado",
-                tenant_id=tenant_id,
-                produto_id=str(produto_id),
-                dimensoes=len(embedding),
-            )
 
     async def get_por_codigo(
         self, tenant_id: str, codigo_externo: str
@@ -303,7 +155,7 @@ class CatalogService:
         for row in rows:
             # Gera UUID determinístico a partir do external_id (namespace DNS)
             produto_uuid = _uuid.uuid5(_uuid.NAMESPACE_DNS, f"{tenant_id}:{row['external_id']}")
-            produto = Produto(
+            produto = CommerceProduct(
                 id=produto_uuid,
                 tenant_id=tenant_id,
                 codigo_externo=row.get("codigo") or row["external_id"],
@@ -491,60 +343,8 @@ class CatalogService:
             return result
 
     # ─────────────────────────────────────────────
-    # Revisão de produtos (painel)
+    # Listagem de produtos (compat com catalog/ui)
     # ─────────────────────────────────────────────
-
-    async def aprovar_produto(
-        self, tenant_id: str, produto_id: UUID
-    ) -> Produto:
-        """Aprova um produto enriquecido — status → ATIVO.
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto_id: UUID do produto.
-
-        Returns:
-            Produto com status ATIVO.
-        """
-        with tracer.start_as_current_span("catalog.aprovar_produto") as span:
-            span.set_attribute("tenant_id", tenant_id)
-            span.set_attribute("produto_id", str(produto_id))
-
-            result = await self._repo.update_status(
-                tenant_id, produto_id, StatusEnriquecimento.ATIVO
-            )
-            log.info(
-                "produto_aprovado",
-                tenant_id=tenant_id,
-                produto_id=str(produto_id),
-            )
-            return result
-
-    async def rejeitar_produto(
-        self, tenant_id: str, produto_id: UUID
-    ) -> Produto:
-        """Rejeita um produto enriquecido — status → INATIVO.
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto_id: UUID do produto.
-
-        Returns:
-            Produto com status INATIVO.
-        """
-        with tracer.start_as_current_span("catalog.rejeitar_produto") as span:
-            span.set_attribute("tenant_id", tenant_id)
-            span.set_attribute("produto_id", str(produto_id))
-
-            result = await self._repo.update_status(
-                tenant_id, produto_id, StatusEnriquecimento.INATIVO
-            )
-            log.info(
-                "produto_rejeitado",
-                tenant_id=tenant_id,
-                produto_id=str(produto_id),
-            )
-            return result
 
     async def listar_produtos(
         self,
@@ -552,7 +352,7 @@ class CatalogService:
         status: StatusEnriquecimento | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[Produto]:
+    ) -> list[CommerceProduct]:
         """Lista produtos de um tenant com filtro opcional de status.
 
         Args:
@@ -577,7 +377,7 @@ class CatalogService:
 
     async def get_produto(
         self, tenant_id: str, produto_id: UUID
-    ) -> Produto | None:
+    ) -> CommerceProduct | None:
         """Busca produto por ID.
 
         Args:
@@ -585,7 +385,7 @@ class CatalogService:
             produto_id: UUID do produto.
 
         Returns:
-            Produto encontrado ou None.
+            CommerceProduct encontrado ou None.
         """
         with tracer.start_as_current_span("catalog.get_produto") as span:
             span.set_attribute("tenant_id", tenant_id)

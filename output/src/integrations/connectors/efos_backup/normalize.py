@@ -138,6 +138,15 @@ def normalize_accounts_b2b(rows: list[dict], *, tenant_id: str, checksum: str) -
         situacao = row.get("cl_situacaocliente") or row.get("cl_situacao") or row.get("situacao_cliente")
         # cl_vendedori = vendedor principal; cl_vendedorp = vendedor secundário
         vendedor = row.get("cl_vendedori") or row.get("cl_vendedor") or row.get("vendedor_codigo")
+        # E8 (D030): mapear campos de contato EFOS → commerce_accounts_b2b
+        # Campos: cl_contato → contato_padrao, cl_telefone → telefone, etc.
+        contato_padrao = str(row.get("cl_contato") or "").strip() or None
+        telefone = str(row.get("cl_telefone") or "").strip() or None
+        telefone_celular = str(row.get("cl_telefonecelular") or "").strip() or None
+        email = str(row.get("cl_email") or "").strip() or None
+        nome_fantasia = str(row.get("cl_nomefantasia") or "").strip() or None
+        dataultimacompra = _to_date(row.get("cl_dataultimacompra"))
+
         result.append(CommerceAccountB2B(
             tenant_id=tenant_id,
             external_id=external_id,
@@ -149,6 +158,13 @@ def normalize_accounts_b2b(rows: list[dict], *, tenant_id: str, checksum: str) -
             situacao_cliente=int(situacao) if situacao is not None else None,
             vendedor_codigo=str(vendedor) if vendedor else None,
             snapshot_checksum=checksum,
+            # Campos D030 (podem ser None se não suportados pelo type ainda)
+            contato_padrao=contato_padrao,
+            telefone=telefone,
+            telefone_celular=telefone_celular,
+            email=email,
+            nome_fantasia=nome_fantasia,
+            dataultimacompra=dataultimacompra,
         ))
     log.info("normalize_accounts_b2b_ok", tenant_id=tenant_id, count=len(result))
     return result

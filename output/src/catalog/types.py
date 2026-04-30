@@ -136,8 +136,11 @@ class ProdutoEnriquecido:
 # ─────────────────────────────────────────────
 
 
-class Produto:
-    """Produto completo — registro do banco de dados.
+class CommerceProduct:
+    """Produto completo mapeado de commerce_products — registro do banco de dados.
+
+    E18 (Sprint 10): renomeado de Produto para CommerceProduct para refletir a
+    tabela de origem (commerce_products, não mais produtos legado).
 
     O campo `embedding` (vector[1536]) não é incluído aqui para evitar
     carregar 1536 floats em respostas de lista. Fetched separadamente quando necessário.
@@ -220,7 +223,12 @@ class Produto:
         }
 
     def __repr__(self) -> str:
-        return f"Produto(id={self.id!s}, codigo={self.codigo_externo!r})"
+        return f"CommerceProduct(id={self.id!s}, codigo={self.codigo_externo!r})"
+
+
+# Alias de compatibilidade — permite que testes e callers legados importem Produto
+# sem quebrar. CommerceProduct foi o nome adotado em Sprint 10 (B-33).
+Produto = CommerceProduct
 
 
 # ─────────────────────────────────────────────
@@ -271,7 +279,7 @@ class ResultadoBusca:
 
     __slots__ = ("produto", "distancia", "score")
 
-    def __init__(self, produto: Produto, distancia: float) -> None:
+    def __init__(self, produto: CommerceProduct, distancia: float) -> None:
         self.produto = produto
         self.distancia = distancia
         self.score = round(1.0 - distancia, 4)  # cosine similarity

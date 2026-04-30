@@ -1,5 +1,7 @@
 """Testes unitários de catalog/runtime/scheduler_job.py e providers/scheduler.py.
 
+NOTE (Sprint 10 E19): scheduler_job.py removido — todos os testes marcados como skip.
+
 Todos os testes são @pytest.mark.unit — sem I/O externo.
 Critério A13: scheduler não inicia quando ENVIRONMENT=test.
 """
@@ -8,6 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+pytestmark = pytest.mark.skip(reason="E19 Sprint 10: catalog/runtime/scheduler_job.py removido")
 
 import pytest
 

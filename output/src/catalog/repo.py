@@ -3,12 +3,17 @@
 Camada Repo: importa apenas src.catalog.types, src.catalog.config e providers.db.
 Toda função pública recebe tenant_id como parâmetro obrigatório.
 Toda query filtra por tenant_id — isolamento de tenant garantido mecanicamente.
+
+E18 (Sprint 10): todos os métodos de leitura migrados de `produtos` legado
+para `commerce_products`. Métodos exclusivos do enricher (upsert_produto_bruto,
+update_produto_enriquecido, update_embedding, update_status,
+listar_produtos_sem_embedding) removidos — código morto após E19.
+Tipo renomeado de `Produto` para `CommerceProduct` (Sprint 10 B-33 fix).
 """
 
 from __future__ import annotations
 
 import structlog
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -17,9 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.catalog.types import (
-    Produto,
-    ProdutoBruto,
-    ProdutoEnriquecido,
+    CommerceProduct,
     PrecoDiferenciado,
     ResultadoBusca,
     StatusEnriquecimento,
@@ -27,12 +30,44 @@ from src.catalog.types import (
 
 log = structlog.get_logger(__name__)
 
+# Fragmento SQL reutilizável para SELECT de commerce_products mapeado para
+# as colunas esperadas por _row_to_produto.
+# Mapeamento de colunas commerce_products → alias Produto:
+#   external_id         → codigo_externo
+#   descricao           → texto_rag
+#   synced_at           → criado_em e atualizado_em
+#   NULL                → campos legados (nome_bruto, marca, categoria, tags,
+#                         meta_agente, url_imagem, imagem_local)
+#   'ativo'             → status_enriquecimento (fixo — todos os produtos
+#                         em commerce_products são considerados ativos)
+_COMMERCE_PRODUCTS_SELECT = """
+    SELECT
+        id::text                    AS id,
+        tenant_id,
+        COALESCE(codigo, external_id) AS codigo_externo,
+        nome                        AS nome_bruto,
+        nome,
+        NULL::text                  AS marca,
+        NULL::text                  AS categoria,
+        NULL::text[]                AS tags,
+        descricao                   AS texto_rag,
+        NULL::jsonb                 AS meta_agente,
+        preco_padrao,
+        NULL::text                  AS url_imagem,
+        NULL::text                  AS imagem_local,
+        'ativo'::text               AS status_enriquecimento,
+        synced_at                   AS criado_em,
+        synced_at                   AS atualizado_em
+    FROM commerce_products
+"""
+
 
 class CatalogRepo:
     """Repositório de produtos e preços diferenciados.
 
     Todas as operações são isoladas por tenant_id.
     Usa SQL raw para operações com pgvector (<=> operator).
+    Fonte de dados: commerce_products (E18 — produtos legado removido em E20).
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -44,250 +79,29 @@ class CatalogRepo:
         self._session_factory = session_factory
 
     # ─────────────────────────────────────────────
-    # Produtos — escrita
-    # ─────────────────────────────────────────────
-
-    async def upsert_produto_bruto(
-        self, tenant_id: str, produto: ProdutoBruto
-    ) -> Produto:
-        """Insere ou atualiza um produto bruto (ON CONFLICT UPDATE).
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto: dados brutos extraídos pelo crawler.
-
-        Returns:
-            Produto persistido com id e timestamps.
-        """
-        sql = text("""
-            INSERT INTO produtos (
-                tenant_id, codigo_externo, nome_bruto, preco_padrao,
-                url_imagem, imagem_local, categoria, status_enriquecimento
-            )
-            VALUES (
-                :tenant_id, :codigo_externo, :nome_bruto, :preco_padrao,
-                :url_imagem, :imagem_local, :categoria, 'pendente'
-            )
-            ON CONFLICT (tenant_id, codigo_externo) DO UPDATE SET
-                nome_bruto        = EXCLUDED.nome_bruto,
-                preco_padrao      = EXCLUDED.preco_padrao,
-                url_imagem        = EXCLUDED.url_imagem,
-                imagem_local      = COALESCE(EXCLUDED.imagem_local, produtos.imagem_local),
-                categoria         = EXCLUDED.categoria,
-                atualizado_em     = NOW()
-            RETURNING
-                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                status_enriquecimento, criado_em, atualizado_em
-        """)
-
-        async with self._session_factory() as session:
-            result = await session.execute(
-                sql,
-                {
-                    "tenant_id": tenant_id,
-                    "codigo_externo": produto.codigo_externo,
-                    "nome_bruto": produto.nome_bruto,
-                    "preco_padrao": str(produto.preco_padrao) if produto.preco_padrao else None,
-                    "url_imagem": produto.url_imagem,
-                    "imagem_local": produto.imagem_local,
-                    "categoria": produto.categoria,
-                },
-            )
-            await session.commit()
-            row = result.fetchone()
-
-        log.info(
-            "produto_upserted",
-            tenant_id=tenant_id,
-            codigo_externo=produto.codigo_externo,
-        )
-        return self._row_to_produto(row)
-
-    async def update_produto_enriquecido(
-        self,
-        tenant_id: str,
-        codigo_externo: str,
-        enriquecido: ProdutoEnriquecido,
-    ) -> Produto:
-        """Atualiza campos de enriquecimento de um produto.
-
-        Args:
-            tenant_id: identificador do tenant.
-            codigo_externo: código do produto no sistema do tenant.
-            enriquecido: dados enriquecidos pelo Haiku.
-
-        Returns:
-            Produto atualizado.
-
-        Raises:
-            ValueError: se produto não encontrado para este tenant.
-        """
-        sql = text("""
-            UPDATE produtos SET
-                nome                  = :nome,
-                marca                 = :marca,
-                categoria             = :categoria,
-                tags                  = :tags,
-                texto_rag             = :texto_rag,
-                meta_agente           = CAST(:meta_agente AS jsonb),
-                status_enriquecimento = 'enriquecido',
-                atualizado_em         = NOW()
-            WHERE tenant_id = :tenant_id
-              AND codigo_externo = :codigo_externo
-            RETURNING
-                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                status_enriquecimento, criado_em, atualizado_em
-        """)
-
-        import json
-
-        async with self._session_factory() as session:
-            result = await session.execute(
-                sql,
-                {
-                    "tenant_id": tenant_id,
-                    "codigo_externo": codigo_externo,
-                    "nome": enriquecido.nome,
-                    "marca": enriquecido.marca,
-                    "categoria": enriquecido.categoria,
-                    "tags": enriquecido.tags,
-                    "texto_rag": enriquecido.texto_rag,
-                    "meta_agente": json.dumps(enriquecido.meta_agente, ensure_ascii=False),
-                },
-            )
-            await session.commit()
-            row = result.fetchone()
-
-        if row is None:
-            raise ValueError(
-                f"Produto não encontrado: tenant={tenant_id}, codigo={codigo_externo}"
-            )
-
-        log.info(
-            "produto_enriquecido",
-            tenant_id=tenant_id,
-            codigo_externo=codigo_externo,
-        )
-        return self._row_to_produto(row)
-
-    async def update_embedding(
-        self,
-        tenant_id: str,
-        produto_id: UUID,
-        embedding: list[float],
-    ) -> None:
-        """Atualiza o embedding vetorial de um produto.
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto_id: UUID do produto.
-            embedding: lista de 1536 floats gerados pelo OpenAI.
-        """
-        # Formata como string de array PostgreSQL: '[0.1, 0.2, ...]'
-        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
-
-        sql = text("""
-            UPDATE produtos
-            SET embedding = CAST(:embedding AS vector),
-                atualizado_em = NOW()
-            WHERE tenant_id = :tenant_id
-              AND id = :produto_id
-        """)
-
-        async with self._session_factory() as session:
-            await session.execute(
-                sql,
-                {
-                    "tenant_id": tenant_id,
-                    "produto_id": str(produto_id),
-                    "embedding": vec_str,
-                },
-            )
-            await session.commit()
-
-        log.debug(
-            "embedding_atualizado",
-            tenant_id=tenant_id,
-            produto_id=str(produto_id),
-        )
-
-    async def update_status(
-        self,
-        tenant_id: str,
-        produto_id: UUID,
-        status: StatusEnriquecimento,
-    ) -> Produto:
-        """Atualiza status de enriquecimento de um produto.
-
-        Args:
-            tenant_id: identificador do tenant.
-            produto_id: UUID do produto.
-            status: novo status.
-
-        Returns:
-            Produto atualizado.
-
-        Raises:
-            ValueError: se produto não encontrado para este tenant.
-        """
-        sql = text("""
-            UPDATE produtos
-            SET status_enriquecimento = :status,
-                atualizado_em = NOW()
-            WHERE tenant_id = :tenant_id
-              AND id = :produto_id
-            RETURNING
-                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                status_enriquecimento, criado_em, atualizado_em
-        """)
-
-        async with self._session_factory() as session:
-            result = await session.execute(
-                sql,
-                {
-                    "tenant_id": tenant_id,
-                    "produto_id": str(produto_id),
-                    "status": status.value,
-                },
-            )
-            await session.commit()
-            row = result.fetchone()
-
-        if row is None:
-            raise ValueError(
-                f"Produto não encontrado: tenant={tenant_id}, id={produto_id}"
-            )
-
-        return self._row_to_produto(row)
-
-    # ─────────────────────────────────────────────
-    # Produtos — leitura
+    # Produtos — leitura (commerce_products)
     # ─────────────────────────────────────────────
 
     async def get_produto(
         self, tenant_id: str, produto_id: UUID
-    ) -> Produto | None:
+    ) -> CommerceProduct | None:
         """Busca produto por ID dentro do tenant.
+
+        E18: lê de commerce_products (não mais de produtos legado).
 
         Args:
             tenant_id: identificador do tenant.
             produto_id: UUID do produto.
 
         Returns:
-            Produto encontrado ou None.
+            CommerceProduct encontrado ou None.
         """
-        sql = text("""
-            SELECT
-                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                status_enriquecimento, criado_em, atualizado_em
-            FROM produtos
+        sql = text(
+            _COMMERCE_PRODUCTS_SELECT + """
             WHERE tenant_id = :tenant_id
-              AND id = :produto_id
-        """)
+              AND id = :produto_id::uuid
+        """
+        )
 
         async with self._session_factory() as session:
             result = await session.execute(
@@ -300,25 +114,26 @@ class CatalogRepo:
 
     async def get_produto_por_codigo(
         self, tenant_id: str, codigo_externo: str
-    ) -> Produto | None:
+    ) -> CommerceProduct | None:
         """Busca produto por código externo (lookup exato).
+
+        E18: lê de commerce_products. Verifica as colunas `codigo` e `external_id`
+        (COALESCE na seleção; filtro nos dois campos para compatibilidade).
 
         Args:
             tenant_id: identificador do tenant.
             codigo_externo: código do produto no ERP.
 
         Returns:
-            Produto encontrado ou None.
+            CommerceProduct encontrado ou None.
         """
-        sql = text("""
-            SELECT
-                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                status_enriquecimento, criado_em, atualizado_em
-            FROM produtos
+        sql = text(
+            _COMMERCE_PRODUCTS_SELECT + """
             WHERE tenant_id = :tenant_id
-              AND codigo_externo = :codigo_externo
-        """)
+              AND (codigo = :codigo_externo OR external_id = :codigo_externo)
+            LIMIT 1
+        """
+        )
 
         async with self._session_factory() as session:
             result = await session.execute(
@@ -335,84 +150,35 @@ class CatalogRepo:
         status: StatusEnriquecimento | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[Produto]:
+    ) -> list[CommerceProduct]:
         """Lista produtos de um tenant com filtro opcional de status.
+
+        E18: lê de commerce_products. O parâmetro `status` não afeta o resultado
+        (todos os produtos em commerce_products são considerados ativos); mantido
+        na assinatura para compatibilidade com callers existentes.
 
         Args:
             tenant_id: identificador do tenant.
-            status: filtra por status de enriquecimento (opcional).
+            status: ignorado (compat); todos os produtos são 'ativo'.
             limit: máximo de resultados (padrão 50).
             offset: paginação (padrão 0).
 
         Returns:
-            Lista de produtos ordenados por atualizado_em desc.
+            Lista de produtos ordenados por synced_at desc.
         """
-        if status is not None:
-            sql = text("""
-                SELECT
-                    id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                    tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                    status_enriquecimento, criado_em, atualizado_em
-                FROM produtos
-                WHERE tenant_id = :tenant_id
-                  AND status_enriquecimento = :status
-                ORDER BY atualizado_em DESC
-                LIMIT :limit OFFSET :offset
-            """)
-            params: dict[str, object] = {
-                "tenant_id": tenant_id,
-                "status": status.value,
-                "limit": limit,
-                "offset": offset,
-            }
-        else:
-            sql = text("""
-                SELECT
-                    id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                    tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                    status_enriquecimento, criado_em, atualizado_em
-                FROM produtos
-                WHERE tenant_id = :tenant_id
-                ORDER BY atualizado_em DESC
-                LIMIT :limit OFFSET :offset
-            """)
-            params = {"tenant_id": tenant_id, "limit": limit, "offset": offset}
-
-        async with self._session_factory() as session:
-            result = await session.execute(sql, params)
-            rows = result.fetchall()
-
-        return [self._row_to_produto(row) for row in rows]
-
-    async def listar_produtos_sem_embedding(
-        self, tenant_id: str, limit: int = 100
-    ) -> list[Produto]:
-        """Lista produtos com status 'enriquecido' sem embedding gerado.
-
-        Args:
-            tenant_id: identificador do tenant.
-            limit: máximo de resultados.
-
-        Returns:
-            Lista de produtos aguardando geração de embedding.
-        """
-        sql = text("""
-            SELECT
-                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                status_enriquecimento, criado_em, atualizado_em
-            FROM produtos
+        sql = text(
+            _COMMERCE_PRODUCTS_SELECT + """
             WHERE tenant_id = :tenant_id
-              AND status_enriquecimento = 'enriquecido'
-              AND embedding IS NULL
-              AND texto_rag IS NOT NULL
-            ORDER BY atualizado_em ASC
-            LIMIT :limit
-        """)
+              AND ativo = true
+            ORDER BY synced_at DESC
+            LIMIT :limit OFFSET :offset
+        """
+        )
 
         async with self._session_factory() as session:
             result = await session.execute(
-                sql, {"tenant_id": tenant_id, "limit": limit}
+                sql,
+                {"tenant_id": tenant_id, "limit": limit, "offset": offset},
             )
             rows = result.fetchall()
 
@@ -424,8 +190,10 @@ class CatalogRepo:
         embedding: list[float],
         limit: int = 10,
         distancia_maxima: float = 0.75,
-    ) -> list[tuple[Produto, float]]:
+    ) -> list[tuple[CommerceProduct, float]]:
         """Busca semântica por similaridade de embedding (cosine distance).
+
+        E18: fonte confirmada commerce_products (não mais produtos legado).
 
         Args:
             tenant_id: identificador do tenant — filtro obrigatório.
@@ -434,7 +202,7 @@ class CatalogRepo:
             distancia_maxima: distância cosine máxima (0 = idêntico, 1 = oposto).
 
         Returns:
-            Lista de (Produto, distancia) ordenada por similaridade crescente.
+            Lista de (CommerceProduct, distancia) ordenada por similaridade crescente.
         """
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
@@ -443,20 +211,30 @@ class CatalogRepo:
         #    não infere o tipo 'vector' automaticamente em prepared statements.
         # 2. ORDER BY com expressão vetorial em prepared statements asyncpg retorna
         #    silenciosamente 0 rows (bug confirmado por testes de isolamento).
-        # 3. LIMIT é aplicado em Python após sort, não no SQL — necessário porque
-        #    sem ORDER BY o LIMIT retorna rows em ordem física arbitrária, não
-        #    por similaridade. Busca todos os rows < distancia_maxima e pega os N mais
-        #    próximos. Em produção: catálogo JMB tem ~450 produtos, volume gerenciável.
+        # 3. LIMIT é aplicado em Python após sort — mesmo padrão do Sprint 9.
         sql = text(f"""
             SELECT
-                id, tenant_id, codigo_externo, nome_bruto, nome, marca, categoria,
-                tags, texto_rag, meta_agente, preco_padrao, url_imagem, imagem_local,
-                status_enriquecimento, criado_em, atualizado_em,
+                id::text                    AS id,
+                tenant_id,
+                COALESCE(codigo, external_id) AS codigo_externo,
+                nome                        AS nome_bruto,
+                nome,
+                NULL::text                  AS marca,
+                NULL::text                  AS categoria,
+                NULL::text[]                AS tags,
+                descricao                   AS texto_rag,
+                NULL::jsonb                 AS meta_agente,
+                preco_padrao,
+                NULL::text                  AS url_imagem,
+                NULL::text                  AS imagem_local,
+                'ativo'::text               AS status_enriquecimento,
+                synced_at                   AS criado_em,
+                synced_at                   AS atualizado_em,
                 embedding <=> '{vec_str}'::vector AS distancia
-            FROM produtos
+            FROM commerce_products
             WHERE tenant_id = :tenant_id
               AND embedding IS NOT NULL
-              AND status_enriquecimento IN ('enriquecido', 'ativo')
+              AND ativo = true
               AND embedding <=> '{vec_str}'::vector < :distancia_maxima
         """)
 
@@ -558,12 +336,17 @@ class CatalogRepo:
     # ─────────────────────────────────────────────
 
     @staticmethod
-    def _row_to_produto(row: Any) -> Produto:
-        """Converte row SQLAlchemy para objeto Produto."""
+    def _row_to_produto(row: Any) -> CommerceProduct:
+        """Converte row SQLAlchemy (commerce_products) para objeto CommerceProduct.
+
+        Campos ausentes em commerce_products (nome_bruto, marca, categoria,
+        tags, meta_agente, url_imagem, imagem_local) recebem valor padrão
+        compatível com o tipo CommerceProduct para não quebrar callers existentes.
+        status_enriquecimento fixado em StatusEnriquecimento.ATIVO.
+        """
         import json as _json
         from decimal import Decimal as _D
 
-        # row é um RowProxy — acesso por nome de coluna
         meta = row.meta_agente
         if isinstance(meta, str):
             meta = _json.loads(meta)
@@ -578,21 +361,24 @@ class CatalogRepo:
 
         imagem_local: str | None = getattr(row, "imagem_local", None)
 
-        return Produto(
+        # nome_bruto: commerce_products não tem campo dedicado; usa nome como fallback
+        nome_bruto: str = row.nome_bruto or row.nome or ""
+
+        return CommerceProduct(
             id=UUID(str(row.id)),
             tenant_id=row.tenant_id,
             codigo_externo=row.codigo_externo,
-            nome_bruto=row.nome_bruto,
+            nome_bruto=nome_bruto,
             nome=row.nome,
-            marca=row.marca,
-            categoria=row.categoria,
+            marca=getattr(row, "marca", None),
+            categoria=getattr(row, "categoria", None),
             tags=list(tags),
-            texto_rag=row.texto_rag,
+            texto_rag=getattr(row, "texto_rag", None),
             meta_agente=meta,
             preco_padrao=preco,
-            url_imagem=row.url_imagem,
+            url_imagem=getattr(row, "url_imagem", None),
             imagem_local=imagem_local,
-            status_enriquecimento=StatusEnriquecimento(row.status_enriquecimento),
+            status_enriquecimento=StatusEnriquecimento.ATIVO,
             criado_em=row.criado_em,
             atualizado_em=row.atualizado_em,
         )

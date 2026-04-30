@@ -67,10 +67,12 @@ if not _LANGFUSE_ENABLED:
 
 from src.agents.config import AgentGestorConfig
 from src.agents.repo import ClienteB2BRepo, ConversaRepo, RelatorioRepo
+from src.agents.runtime._history import repair_history, truncate_preserving_pairs
 from src.agents.runtime._retry import call_with_overload_retry
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import Gestor, Mensagem, Persona
 from src.commerce.repo import CommerceRepo
+from src.observability.langfuse_anthropic import call_anthropic_with_langfuse
 from src.orders.repo import OrderRepo
 from src.orders.service import OrderService
 from src.orders.types import CriarPedidoInput, ItemPedidoInput
@@ -348,6 +350,34 @@ _TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "ranking_vendedores_efos",
+        "description": (
+            "Retorna o ranking dos melhores vendedores de um mes/ano em uma unica query. "
+            "PREFIRA esta tool a chamadas multiplas de relatorio_vendas_representante_efos. "
+            "Use quando o gestor perguntar sobre o melhor vendedor, top vendedores, "
+            "ranking de representantes ou comparacao de performance."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mes": {
+                    "type": "integer",
+                    "description": "Mes (1-12). Obrigatorio.",
+                },
+                "ano": {
+                    "type": "integer",
+                    "description": "Ano (ex: 2026). Padrao: ano corrente.",
+                },
+                "top_n": {
+                    "type": "integer",
+                    "description": "Numero de vendedores no ranking. Padrao: 10.",
+                    "default": 10,
+                },
+            },
+            "required": ["mes"],
+        },
+    },
+    {
         "name": "registrar_feedback",
         "description": (
             "Registra feedback do gestor sobre uma resposta do assistente. "
@@ -468,6 +498,7 @@ class AgentGestor:
             system_prompt = self._config.system_prompt_template.format(
                 tenant_nome=tenant.nome,
                 gestor_nome=self._gestor.nome,
+                ano_corrente=datetime.now(timezone.utc).year,
             )
 
             resposta_final: str | None = None
@@ -475,9 +506,10 @@ class AgentGestor:
 
             for iteration in range(self._config.max_iterations):
                 try:
-                    response = await call_with_overload_retry(
-                        client.messages.create,
+                    response = await call_anthropic_with_langfuse(
+                        client,
                         agent_name="gestor",
+                        session_id=str(conversa.id),
                         model=self._config.model,
                         max_tokens=self._config.max_tokens,
                         system=system_prompt,
@@ -492,11 +524,15 @@ class AgentGestor:
                             tenant_id=tenant.id,
                             error=err_str[:120],
                         )
-                        await self._limpar_historico_redis(tenant.id, numero)
-                        messages = [{"role": "user", "content": mensagem.texto}]
-                        response = await call_with_overload_retry(
-                            client.messages.create,
+                        # E1 (B-26): usar repair_history em vez de limpar tudo
+                        messages = repair_history(messages)
+                        if not messages:
+                            messages = [{"role": "user", "content": mensagem.texto}]
+                        await self._salvar_historico_redis(tenant.id, numero, messages)
+                        response = await call_anthropic_with_langfuse(
+                            client,
                             agent_name="gestor",
+                            session_id=str(conversa.id),
                             model=self._config.model,
                             max_tokens=self._config.max_tokens,
                             system=system_prompt,
@@ -661,11 +697,20 @@ class AgentGestor:
                 session=session,
             )
 
+        if tool_name == "ranking_vendedores_efos":
+            return await self._ranking_vendedores_efos(
+                mes=tool_input.get("mes", 0),
+                ano=tool_input.get("ano"),
+                top_n=int(tool_input.get("top_n", 10)),
+                tenant_id=tenant.id,
+                session=session,
+            )
+
         if tool_name == "relatorio_vendas_representante_efos":
             return await self._relatorio_vendas_representante_efos(
                 nome_rep=tool_input.get("nome_rep", ""),
                 mes=tool_input.get("mes", 0),
-                ano=tool_input.get("ano", 0),
+                ano=tool_input.get("ano"),
                 tenant_id=tenant.id,
                 session=session,
             )
@@ -1192,6 +1237,56 @@ class AgentGestor:
         )
         return None
 
+    async def _ranking_vendedores_efos(
+        self,
+        mes: object,
+        ano: object,
+        top_n: int,
+        tenant_id: str,
+        session: AsyncSession,
+    ) -> dict:
+        """Ranking de vendedores por GMV via SQL agregada (E6, B-25a).
+
+        Args:
+            mes: mês (string ou int).
+            ano: ano (int ou None = ano atual).
+            top_n: número de vendedores no ranking.
+            tenant_id: ID do tenant.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com {mes, ano, ranking: list[{posicao, vendedor_nome, total_vendido, qtde_pedidos}]}.
+        """
+        try:
+            mes_int = self._normalizar_mes(mes)
+        except ValueError as exc:
+            return {"erro": str(exc)}
+
+        ano_int = int(ano) if ano else datetime.now(timezone.utc).year
+
+        ranking = await self._commerce_repo.ranking_vendedores(
+            tenant_id=tenant_id,
+            mes=mes_int,
+            ano=ano_int,
+            top_n=top_n,
+            session=session,
+        )
+
+        return {
+            "mes": mes_int,
+            "ano": ano_int,
+            "total_vendedores": len(ranking),
+            "ranking": [
+                {
+                    "posicao": i + 1,
+                    "vendedor_nome": item["vendedor_nome"],
+                    "total_vendido": str(item["total_vendido"]),
+                    "qtde_pedidos": item["qtde_pedidos"],
+                }
+                for i, item in enumerate(ranking)
+            ],
+        }
+
     async def _relatorio_vendas_representante_efos(
         self,
         nome_rep: str,
@@ -1307,22 +1402,20 @@ class AgentGestor:
         )
 
     def _get_anthropic_client(self, session_id: str = "") -> Any:
-        """Retorna cliente Anthropic com wrapper Langfuse e session_id.
+        """Retorna cliente AsyncAnthropic (injetado em testes ou criado aqui).
+
+        Chamadas Anthropic passam por `call_anthropic_with_langfuse` que
+        registra generations no Langfuse (B-30 fix).
 
         Args:
-            session_id: ID da conversa para rastreamento no Langfuse.
+            session_id: mantido por compatibilidade; Langfuse via wrapper.
 
         Returns:
-            AsyncAnthropic com wrapper Langfuse ou injetado em testes.
+            AsyncAnthropic — puro, sem wrapping de session aqui.
         """
         if self._anthropic is not None:
             return self._anthropic
         import anthropic
-        if _LANGFUSE_ENABLED and session_id:
-            try:
-                _lf_ctx.update_current_trace(session_id=session_id)
-            except Exception:
-                pass
         return anthropic.AsyncAnthropic()
 
     async def _carregar_historico_redis(
@@ -1349,8 +1442,8 @@ class AgentGestor:
             return
         try:
             key = f"hist:gestor:{tenant_id}:{numero}"
-            max_msgs = self._config.historico_max_msgs
-            trimmed = messages[-max_msgs:] if len(messages) > max_msgs else messages
+            # E1 (B-26): truncação preservando pares tool_use/tool_result
+            trimmed = truncate_preserving_pairs(messages, self._config.historico_max_msgs)
             await self._redis.set(key, json.dumps(trimmed, default=str), ex=self._config.redis_ttl)
         except Exception as exc:
             log.warning("agent_gestor_redis_save_erro", error=str(exc))

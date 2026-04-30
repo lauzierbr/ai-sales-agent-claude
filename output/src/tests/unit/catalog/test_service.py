@@ -49,6 +49,7 @@ def service(
 # ─────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="salvar_produto_bruto removido em Sprint 10 E19 — pipeline enricher depreciado")
 @pytest.mark.unit
 async def test_salvar_produto_bruto_chama_repo(
     service: CatalogService,
@@ -71,6 +72,7 @@ async def test_salvar_produto_bruto_chama_repo(
 # ─────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="enriquecer_produto removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_enriquecer_produto_fluxo_completo(
     service: CatalogService,
@@ -96,6 +98,7 @@ async def test_enriquecer_produto_fluxo_completo(
     assert result is not None
 
 
+@pytest.mark.skip(reason="enriquecer_produto removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_enriquecer_produto_nao_encontrado_levanta_valor_erro(
     service: CatalogService,
@@ -180,6 +183,7 @@ async def test_buscar_semantico_usa_embedding_correto(
 # ─────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="gerar_e_salvar_embedding removido em Sprint 10 E19")
 @pytest.mark.unit
 async def test_gerar_embedding_sem_texto_rag_nao_chama_openai(
     service: CatalogService,
@@ -277,6 +281,7 @@ async def test_processar_excel_precos_commit_chamado(tenant_id: str) -> None:
 # ─────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="aprovar_produto removido em Sprint 10 E19 — painel de revisão depreciado")
 @pytest.mark.unit
 async def test_aprovar_produto_muda_status_ativo(
     service: CatalogService,
@@ -288,13 +293,14 @@ async def test_aprovar_produto_muda_status_ativo(
     """aprovar_produto deve chamar repo.update_status com ATIVO."""
     mock_repo.update_status.return_value = produto_fixture
 
-    await service.aprovar_produto(tenant_id, produto_id)
+    await service.aprovar_produto(tenant_id, produto_id)  # type: ignore[attr-defined]
 
     mock_repo.update_status.assert_called_once_with(
         tenant_id, produto_id, StatusEnriquecimento.ATIVO
     )
 
 
+@pytest.mark.skip(reason="rejeitar_produto removido em Sprint 10 E19 — painel de revisão depreciado")
 @pytest.mark.unit
 async def test_rejeitar_produto_muda_status_inativo(
     service: CatalogService,
@@ -306,7 +312,7 @@ async def test_rejeitar_produto_muda_status_inativo(
     """rejeitar_produto deve chamar repo.update_status com INATIVO."""
     mock_repo.update_status.return_value = produto_fixture
 
-    await service.rejeitar_produto(tenant_id, produto_id)
+    await service.rejeitar_produto(tenant_id, produto_id)  # type: ignore[attr-defined]
 
     mock_repo.update_status.assert_called_once_with(
         tenant_id, produto_id, StatusEnriquecimento.INATIVO

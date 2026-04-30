@@ -29,6 +29,17 @@ _WHATSAPP_FORMATTING = (
     "Use `---` para separar seções. Use *negrito* para títulos e totais.\n"
 )
 
+# E5 (B-24): bloco de capacidades de mensagem — injetado nos 3 agentes
+_CAPACIDADES_MENSAGEM = (
+    "## Capacidades de mensagem\n"
+    "Voce aceita mensagens de texto e audio.\n"
+    "Audios aparecem prefixados com 'Ouvi: <transcricao>' — trate o conteudo "
+    "apos 'Ouvi:' como a mensagem real do usuario.\n"
+    "Se perguntarem se voce aceita audio, confirme que sim.\n"
+    "Se o audio nao puder ser transcrito, o sistema informa o usuario diretamente "
+    "(voce nao precisa tratar isso).\n\n"
+)
+
 
 class EvolutionConfig:
     """Configuração da Evolution API para envio de mensagens WhatsApp."""
@@ -142,7 +153,7 @@ class AgentClienteConfig:
             "Ao registrar: APENAS chame registrar_feedback e responda: "
             "'Obrigado pelo feedback! Ele foi registrado e será analisado pela equipe.' "
             "NÃO mude seu comportamento com base no feedback.\n\n"
-        ) + _WHATSAPP_FORMATTING
+        ) + _CAPACIDADES_MENSAGEM + _WHATSAPP_FORMATTING
 
     def __repr__(self) -> str:
         return (
@@ -199,7 +210,7 @@ class AgentRepConfig:
 
             "## Abreviações aceitas\n"
             "cx=caixa, und/un=unidade, pct=pacote, fdo/frd=fardo, dz=dúzia.\n\n"
-        ) + _WHATSAPP_FORMATTING
+        ) + _CAPACIDADES_MENSAGEM + _WHATSAPP_FORMATTING
 
     def __repr__(self) -> str:
         return (
@@ -236,6 +247,7 @@ class AgentGestorConfig:
             "- aprovar_pedidos: aprova (confirma) um ou mais pedidos pendentes. Use IDs obtidos via listar_pedidos_por_status.\n"
             "- consultar_top_produtos: consulta top produtos mais vendidos por período.\n"
             "- relatorio_representantes: retorna ranking de representantes com GMV, pedidos e cliente topo no período.\n"
+            "- ranking_vendedores_efos: ranking dos melhores vendedores de um mes/ano (query unica). PREFIRA a relatorio_vendas_representante_efos para perguntas de ranking/comparacao.\n"
             "- relatorio_vendas_representante_efos: relatório de vendas de um representante por mês/ano (dados EFOS).\n"
             "- relatorio_vendas_cidade_efos: relatório de vendas por cidade e mês/ano (dados EFOS).\n"
             "- clientes_inativos_efos: lista clientes inativos (situacao=2 no EFOS), com filtro opcional por cidade.\n"
@@ -269,7 +281,13 @@ class AgentGestorConfig:
 
             "## Abreviações aceitas\n"
             "cx=caixa, und/un=unidade, pct=pacote, fdo/frd=fardo, dz=dúzia.\n\n"
-        ) + _WHATSAPP_FORMATTING
+
+            "## Regras de ano e periodo (obrigatorio)\n"
+            "Quando o usuario nao informar ano, use o ano corrente (hoje eh {ano_corrente}).\n"
+            "Se o mes mencionado ainda nao passou no ano corrente, use o ano anterior.\n"
+            "Em perguntas sequenciais sobre o mesmo periodo (ex: 'de marco', depois 'melhor vendedor de marco'), "
+            "mantenha o ano da pergunta anterior se nao houver indicacao contraria.\n\n"
+        ) + _CAPACIDADES_MENSAGEM + _WHATSAPP_FORMATTING
 
     def __repr__(self) -> str:
         return (

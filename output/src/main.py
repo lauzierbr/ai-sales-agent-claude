@@ -51,9 +51,10 @@ def _validate_secrets() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Gerencia ciclo de vida da aplicação — inicia e encerra scheduler."""
-    from src.providers.db import get_session_factory
+    """Gerencia ciclo de vida da aplicação — inicia e encerra schedulers."""
+    from src.providers.db import get_redis, get_session_factory
     from src.providers.scheduler import create_scheduler, start_scheduler_from_db
+    from src.integrations.runtime.scheduler import create_efos_scheduler, start_efos_scheduler
 
     _validate_secrets()
 
@@ -62,11 +63,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Path(pdf_storage_path).mkdir(parents=True, exist_ok=True)
     log.info("pdf_storage_pronto", path=pdf_storage_path)
 
+    # Scheduler legado (catalog crawl — permanece durante deprecação E19)
     scheduler = create_scheduler()
     await start_scheduler_from_db(scheduler, get_session_factory())
 
+    # E14 (F-07): APScheduler para sync EFOS via sync_schedule table
+    redis_client = get_redis()
+    efos_scheduler = create_efos_scheduler()
+    await start_efos_scheduler(efos_scheduler, get_session_factory(), redis_client)
+
+    # Expor scheduler no estado da app para rotas de dashboard
+    app.state.efos_scheduler = efos_scheduler
+    app.state.session_factory = get_session_factory()
+    app.state.redis_client = redis_client
+
     log.info("app_iniciada", versao=APP_VERSION)
     yield
+
+    if efos_scheduler.running:
+        efos_scheduler.shutdown(wait=False)
+        log.info("efos_scheduler_encerrado")
 
     if scheduler.running:
         scheduler.shutdown(wait=False)

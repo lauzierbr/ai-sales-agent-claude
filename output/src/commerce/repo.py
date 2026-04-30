@@ -362,6 +362,67 @@ class CommerceRepo:
             for row in rows
         ]
 
+    async def ranking_vendedores(
+        self,
+        tenant_id: str,
+        mes: int,
+        ano: int,
+        top_n: int,
+        session: AsyncSession,
+    ) -> list[dict]:
+        """Ranking de vendedores por GMV em um mês/ano via SQL agregada.
+
+        E6 (B-25a): query única em vez de 24 chamadas seriais.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            mes: mês (1–12).
+            ano: ano (ex: 2026).
+            top_n: número de vendedores a retornar.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de {vendedor_nome, ve_codigo, total_vendido, qtde_pedidos}
+            ordenada por total_vendido DESC.
+        """
+        result = await session.execute(
+            text("""
+                SELECT
+                    COALESCE(v.ve_nome, o.vendedor_codigo) AS vendedor_nome,
+                    o.vendedor_codigo                       AS ve_codigo,
+                    COALESCE(SUM(o.total), 0)               AS total_vendido,
+                    COUNT(*)                                AS qtde_pedidos
+                FROM commerce_orders o
+                LEFT JOIN commerce_vendedores v
+                    ON v.tenant_id = o.tenant_id
+                   AND v.ve_codigo = o.vendedor_codigo
+                WHERE o.tenant_id = :tenant_id
+                  AND o.mes = :mes
+                  AND o.ano = :ano
+                  AND o.vendedor_codigo IS NOT NULL
+                  AND o.vendedor_codigo != ''
+                GROUP BY o.vendedor_codigo, v.ve_nome
+                ORDER BY total_vendido DESC
+                LIMIT :top_n
+            """),
+            {
+                "tenant_id": tenant_id,
+                "mes": mes,
+                "ano": ano,
+                "top_n": top_n,
+            },
+        )
+        rows = result.mappings().all()
+        return [
+            {
+                "vendedor_nome": row["vendedor_nome"] or "Desconhecido",
+                "ve_codigo": row["ve_codigo"],
+                "total_vendido": Decimal(str(row["total_vendido"] or 0)),
+                "qtde_pedidos": int(row["qtde_pedidos"] or 0),
+            }
+            for row in rows
+        ]
+
     async def listar_clientes_inativos(
         self,
         tenant_id: str,

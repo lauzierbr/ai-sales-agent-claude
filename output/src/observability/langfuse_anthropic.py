@@ -1,0 +1,153 @@
+"""Wrapper Langfuse para chamadas Anthropic (B-30 / E3).
+
+Implementa a Opção A do BUGS.md: context manager manual em torno de
+`client.messages.create()` que registra um generation no Langfuse com
+input_tokens e output_tokens reais.
+
+Por que wrapper manual:
+  - Não existe integração nativa Langfuse-Anthropic (existe para OpenAI).
+  - `AsyncAnthropic()` puro é invisível ao Langfuse.
+  - Este módulo é o único ponto de chamada — os 3 agentes importam daqui.
+
+Camada: Service (observabilidade transversal — sem dependência de Repo/UI).
+"""
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import structlog
+
+log = structlog.get_logger()
+
+# Importado sob demanda para evitar circularidade de módulos
+# (observability não deve depender de agents.runtime na camada de módulo)
+def _get_retry_fn():  # type: ignore[return]
+    """Retorna call_with_overload_retry de forma lazy."""
+    from src.agents.runtime._retry import call_with_overload_retry
+    return call_with_overload_retry
+
+# Exposto para mock nos testes
+call_with_overload_retry = _get_retry_fn()
+
+# Langfuse é opcional — se não configurado, chamadas passam direto.
+_LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+_LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+_LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+_LANGFUSE_ENABLED = bool(_LANGFUSE_PUBLIC_KEY and _LANGFUSE_SECRET_KEY)
+
+_langfuse_client: Any = None
+
+
+def _get_langfuse() -> Any | None:
+    """Retorna instância Langfuse (lazy singleton) ou None se não configurado."""
+    global _langfuse_client
+    if not _LANGFUSE_ENABLED:
+        return None
+    if _langfuse_client is not None:
+        return _langfuse_client
+    try:
+        from langfuse import Langfuse
+        _langfuse_client = Langfuse(
+            public_key=_LANGFUSE_PUBLIC_KEY,
+            secret_key=_LANGFUSE_SECRET_KEY,
+            host=_LANGFUSE_HOST,
+        )
+        log.info("langfuse_inicializado", host=_LANGFUSE_HOST)
+    except ImportError:
+        log.warning("langfuse_nao_instalado")
+        return None
+    except Exception as exc:
+        log.warning("langfuse_init_erro", error=str(exc))
+        return None
+    return _langfuse_client
+
+
+async def call_anthropic_with_langfuse(
+    client: Any,
+    agent_name: str = "unknown",
+    trace_id: str | None = None,
+    session_id: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Chama `client.messages.create(**kwargs)` registrando generation no Langfuse.
+
+    Sempre retorna a resposta Anthropic — Langfuse é melhor-esforço.
+    Se Langfuse falhar, a chamada ao agente continua normalmente.
+    Internamente usa `call_with_overload_retry` para retry em 529 overload.
+
+    Args:
+        client: instância de `anthropic.AsyncAnthropic`.
+        agent_name: nome do agente para rastreabilidade (cliente/rep/gestor).
+        trace_id: ID do trace Langfuse existente (opcional).
+        session_id: ID de sessão para agrupar conversas (opcional).
+        **kwargs: argumentos passados diretamente a `client.messages.create`.
+
+    Returns:
+        Resposta da Anthropic API.
+    """
+    lf = _get_langfuse()
+    if not lf:
+        # Langfuse não configurado — chamada com retry apenas
+        return await call_with_overload_retry(
+            client.messages.create,
+            agent_name=agent_name,
+            **kwargs,
+        )
+
+    generation = None
+    try:
+        # Criar generation antes da chamada para capturar latência
+        generation = lf.generation(
+            name=f"anthropic_{agent_name}",
+            model=kwargs.get("model", "unknown"),
+            input=kwargs.get("messages", []),
+            trace_id=trace_id,
+            session_id=session_id,
+        )
+    except Exception as exc:
+        log.warning("langfuse_generation_create_erro", agent=agent_name, error=str(exc))
+
+    try:
+        response = await call_with_overload_retry(  # type: ignore[misc]
+            client.messages.create,
+            agent_name=agent_name,
+            **kwargs,
+        )
+    except Exception:
+        # Se a chamada Anthropic falhar, encerrar generation com erro e re-raise
+        if generation is not None:
+            try:
+                generation.update(level="ERROR")
+                generation.end()
+            except Exception:
+                pass
+        raise
+
+    # Atualizar generation com tokens reais
+    if generation is not None:
+        try:
+            output_content = None
+            if hasattr(response, "content"):
+                try:
+                    output_content = [b.model_dump() for b in response.content]
+                except Exception:
+                    output_content = str(response.content)
+
+            usage_data: dict[str, Any] = {}
+            if hasattr(response, "usage") and response.usage is not None:
+                usage_data = {
+                    "input": getattr(response.usage, "input_tokens", 0),
+                    "output": getattr(response.usage, "output_tokens", 0),
+                }
+
+            generation.update(
+                output=output_content,
+                usage=usage_data if usage_data else None,
+            )
+            generation.end()
+        except Exception as exc:
+            log.warning("langfuse_generation_update_erro", agent=agent_name, error=str(exc))
+
+    return response

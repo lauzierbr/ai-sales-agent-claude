@@ -51,9 +51,11 @@ if not _LANGFUSE_ENABLED:
 
 from src.agents.config import AgentClienteConfig
 from src.agents.repo import ConversaRepo, GestorRepo
+from src.agents.runtime._history import repair_history, truncate_preserving_pairs
 from src.agents.runtime._retry import call_with_overload_retry
 from src.agents.service import send_whatsapp_media, send_whatsapp_message
 from src.agents.types import IntentoPedido, ItemIntento, Mensagem, Persona
+from src.observability.langfuse_anthropic import call_anthropic_with_langfuse
 from src.orders.repo import OrderRepo
 from src.orders.service import OrderService
 from src.orders.types import CriarPedidoInput, ItemPedidoInput
@@ -285,9 +287,10 @@ class AgentCliente:
 
             for iteration in range(self._config.max_iterations):
                 try:
-                    response = await call_with_overload_retry(
-                        client.messages.create,
+                    response = await call_anthropic_with_langfuse(
+                        client,
                         agent_name="cliente",
+                        session_id=str(conversa.id),
                         model=self._config.model,
                         max_tokens=self._config.max_tokens,
                         system=system_prompt,
@@ -298,11 +301,15 @@ class AgentCliente:
                     err_str = str(api_exc)
                     if "400" in err_str and ("tool_use_id" in err_str or "tool_result" in err_str):
                         log.warning("agent_cliente_historico_corrompido_recovery", error=err_str[:120])
-                        await self._limpar_historico_redis(tenant.id, numero)
-                        messages = [{"role": "user", "content": mensagem.texto}]
-                        response = await call_with_overload_retry(
-                            client.messages.create,
+                        # E1 (B-26): usar repair_history em vez de limpar tudo
+                        messages = repair_history(messages)
+                        if not messages:
+                            messages = [{"role": "user", "content": mensagem.texto}]
+                        await self._salvar_historico_redis(tenant.id, numero, messages)
+                        response = await call_anthropic_with_langfuse(
+                            client,
                             agent_name="cliente",
+                            session_id=str(conversa.id),
                             model=self._config.model,
                             max_tokens=self._config.max_tokens,
                             system=system_prompt,
@@ -437,8 +444,8 @@ class AgentCliente:
             if data is None:
                 return []
             historico: list[dict[str, Any]] = json.loads(data)
-            # Limita ao máximo configurado
-            return historico[-self._config.historico_max_msgs:]
+            # E1 (B-26): truncação preservando pares ao carregar
+            return truncate_preserving_pairs(historico, self._config.historico_max_msgs)
         except Exception as exc:
             log.warning("redis_historico_erro", tenant_id=tenant_id, error=str(exc))
             return []
@@ -460,13 +467,8 @@ class AgentCliente:
             return
 
         key = f"conv:{tenant_id}:{telefone_normalizado}"
-        # Filtra apenas mensagens de texto simples (não tool_use/tool_result)
-        salvavel = [
-            m for m in messages
-            if isinstance(m.get("content"), str)
-        ]
-        # Limita ao máximo configurado
-        salvavel = salvavel[-self._config.historico_max_msgs:]
+        # E1 (B-26): truncação preservando pares tool_use/tool_result
+        salvavel = truncate_preserving_pairs(messages, self._config.historico_max_msgs)
 
         try:
             await self._redis.setex(

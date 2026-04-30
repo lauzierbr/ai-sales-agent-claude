@@ -211,3 +211,156 @@ class SyncArtifactRepo:
             checksum=artifact.artifact_checksum[:12],
         )
         return artifact
+
+
+class SyncScheduleRepo:
+    """Repositório de sync_schedule (E13/E14, F-07 Sprint 10).
+
+    Acesso à tabela sync_schedule para APScheduler gerenciar frequência do sync EFOS.
+    Toda query filtra por tenant_id.
+    """
+
+    async def get_by_tenant_connector(
+        self,
+        tenant_id: str,
+        connector_kind: str,
+        session: AsyncSession,
+    ) -> dict | None:
+        """Busca schedule de um tenant+connector.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            connector_kind: tipo do connector ('efos_backup', etc).
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Dict com dados do schedule ou None se não existe.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, connector_kind, preset, cron_expression,
+                       enabled, last_triggered_at, next_run_at, atualizado_em
+                FROM sync_schedule
+                WHERE tenant_id = :tenant_id
+                  AND connector_kind = :connector_kind
+            """),
+            {"tenant_id": tenant_id, "connector_kind": connector_kind},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def listar_enabled(
+        self, session: AsyncSession
+    ) -> list[dict]:
+        """Lista todos os schedules habilitados (para startup do APScheduler).
+
+        Returns:
+            Lista de dicts com tenant_id, connector_kind, cron_expression.
+        """
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, connector_kind, preset, cron_expression, enabled
+                FROM sync_schedule
+                WHERE enabled = true
+                ORDER BY tenant_id, connector_kind
+            """)
+        )
+        rows = result.mappings().all()
+        return [dict(r) for r in rows]
+
+    async def update_schedule(
+        self,
+        tenant_id: str,
+        connector_kind: str,
+        preset: str,
+        cron_expression: str,
+        session: AsyncSession,
+    ) -> bool:
+        """Atualiza preset e cron_expression de um schedule.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            connector_kind: tipo do connector.
+            preset: preset escolhido.
+            cron_expression: expressão cron correspondente.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            True se atualizou, False se não encontrou.
+        """
+        result = await session.execute(
+            text("""
+                UPDATE sync_schedule
+                SET preset = :preset,
+                    cron_expression = :cron_expression,
+                    atualizado_em = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND connector_kind = :connector_kind
+            """),
+            {
+                "tenant_id": tenant_id,
+                "connector_kind": connector_kind,
+                "preset": preset,
+                "cron_expression": cron_expression,
+            },
+        )
+        return result.rowcount > 0
+
+    async def update_last_triggered(
+        self,
+        tenant_id: str,
+        connector_kind: str,
+        session: AsyncSession,
+    ) -> None:
+        """Atualiza last_triggered_at do schedule.
+
+        Args:
+            tenant_id: ID do tenant.
+            connector_kind: tipo do connector.
+            session: sessão SQLAlchemy assíncrona.
+        """
+        await session.execute(
+            text("""
+                UPDATE sync_schedule
+                SET last_triggered_at = NOW(),
+                    atualizado_em = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND connector_kind = :connector_kind
+            """),
+            {"tenant_id": tenant_id, "connector_kind": connector_kind},
+        )
+
+    async def listar_ultimas_runs(
+        self,
+        tenant_id: str,
+        connector_kind: str,
+        limit: int = 10,
+        session: AsyncSession | None = None,
+    ) -> list[dict]:
+        """Lista as últimas N execuções de sync para o schedule.
+
+        Args:
+            tenant_id: ID do tenant — filtro obrigatório.
+            connector_kind: tipo do connector.
+            limit: número máximo de runs a retornar.
+            session: sessão SQLAlchemy assíncrona.
+
+        Returns:
+            Lista de dicts com dados das sync_runs.
+        """
+        if session is None:
+            return []
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, connector_kind, started_at, finished_at,
+                       status, rows_published, error
+                FROM sync_runs
+                WHERE tenant_id = :tenant_id
+                  AND connector_kind = :connector_kind
+                ORDER BY started_at DESC
+                LIMIT :limit
+            """),
+            {"tenant_id": tenant_id, "connector_kind": connector_kind, "limit": limit},
+        )
+        rows = result.mappings().all()
+        return [dict(r) for r in rows]

@@ -35,6 +35,9 @@ class CommerceAccountB2B:
 
     situacao_cliente: 1=ativo, 2=inativo, conforme enum EFOS.
     cidade armazenada em UPPERCASE (gotcha EFOS).
+
+    Campos D030 (Sprint 10 — E8): contato, telefone, email, nome_fantasia,
+    dataultimacompra mapeados de cl_contato, cl_telefone, etc.
     """
 
     tenant_id: str
@@ -47,6 +50,13 @@ class CommerceAccountB2B:
     situacao_cliente: int | None
     vendedor_codigo: str | None
     snapshot_checksum: str
+    # Campos D030 — opcionais (None quando ERP não fornece)
+    contato_padrao: str | None = None
+    telefone: str | None = None
+    telefone_celular: str | None = None
+    email: str | None = None
+    nome_fantasia: str | None = None
+    dataultimacompra: date | None = None
 
 
 @dataclass

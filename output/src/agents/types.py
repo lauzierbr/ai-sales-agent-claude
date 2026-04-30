@@ -63,10 +63,10 @@ class ClienteB2B(BaseModel):
     id: str
     tenant_id: str
     nome: str
-    cnpj: str
+    cnpj: str | None = None
     telefone: str | None = None  # E.164 digits; None = cliente sem WhatsApp (atendido via rep)
     ativo: bool = True
-    criado_em: datetime
+    criado_em: datetime | None = None  # None para clientes de commerce_accounts_b2b (E12)
     representante_id: str | None = None
 
 

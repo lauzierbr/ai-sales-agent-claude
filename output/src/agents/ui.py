@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 
 from src.agents.service import (
     mark_message_as_read,
+    send_whatsapp_message,
     show_typing_presence,
     validate_webhook_signature,
 )
@@ -276,40 +277,44 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             log.debug("webhook_mensagem_ignorada", tenant_id=tenant_id, instance=payload.instance)
             return
 
-        # 3b-E3. Transcrição de áudio quando tipo="audioMessage"
+        # 3b-E4 (B-23). Transcrição de áudio quando tipo="audioMessage"
+        # Usa Evolution API para obter áudio descriptografado (não URL direta WhatsApp E2E)
         if mensagem.tipo == "audioMessage":
             audio_bytes: bytes | None = None
             data = payload.data
+            _evo_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+            _evo_key = os.getenv("EVOLUTION_API_KEY", "")
+            instancia_id = payload.instance
 
-            # Tenta download via URL (campo url na mensagem de áudio)
-            audio_url = (
-                data.get("message", {}).get("audioMessage", {}).get("url")
-                or data.get("message", {}).get("pttMessage", {}).get("url")
-                or ""
-            )
-            if audio_url:
+            # Obtém key da mensagem para chamar getBase64FromMediaMessage
+            msg_key = data.get("key", {}) or {}
+
+            if msg_key and _evo_key:
                 try:
                     import httpx as _httpx
-                    async with _httpx.AsyncClient(timeout=15.0) as _client:
-                        resp = await _client.get(audio_url)
+                    async with _httpx.AsyncClient(timeout=20.0) as _client:
+                        resp = await _client.post(
+                            f"{_evo_url}/chat/getBase64FromMediaMessage/{instancia_id}",
+                            json={"message": {"key": msg_key}},
+                            headers={"apikey": _evo_key},
+                        )
                         if resp.status_code == 200:
-                            audio_bytes = resp.content
+                            resp_data = resp.json()
+                            b64_raw = resp_data.get("base64") or ""
+                            if b64_raw:
+                                import base64 as _b64
+                                audio_bytes = _b64.b64decode(b64_raw)
+                                log.info("audio_evolution_base64_ok", tenant_id=tenant_id)
+                        else:
+                            log.warning(
+                                "audio_evolution_api_falhou",
+                                tenant_id=tenant_id,
+                                status=resp.status_code,
+                            )
                 except Exception as exc:
-                    log.warning("audio_download_url_falhou", tenant_id=tenant_id, error=str(exc))
-
-            # Fallback: base64 embutido no payload (Evolution API frequentemente não envia URL)
-            if not audio_bytes:
-                b64_data = (
-                    data.get("message", {}).get("audioMessage", {}).get("base64")
-                    or data.get("message", {}).get("pttMessage", {}).get("base64")
-                    or ""
-                )
-                if b64_data:
-                    try:
-                        import base64 as _b64
-                        audio_bytes = _b64.b64decode(b64_data)
-                    except Exception as exc:
-                        log.warning("audio_base64_decode_falhou", tenant_id=tenant_id, error=str(exc))
+                    log.warning("audio_evolution_request_falhou", tenant_id=tenant_id, error=str(exc))
+            else:
+                log.warning("audio_evolution_sem_key_ou_apikey", tenant_id=tenant_id)
 
             if audio_bytes:
                 try:
@@ -317,22 +322,37 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     if transcricao:
                         # Substitui o texto vazio pelo texto transcrito com prefixo
                         mensagem = mensagem.model_copy(
-                            update={"texto": f"🎤 Ouvi: {transcricao}\n\n{transcricao}"}
+                            update={"texto": f"Ouvi: {transcricao}\n\n{transcricao}"}
                         )
                     else:
-                        mensagem = mensagem.model_copy(
-                            update={"texto": "Recebi seu áudio, mas não consegui transcrever. Por favor, envie como texto."}
+                        # E5 (B-24a): falha de transcrição vai direto, sem passar pelo LLM
+                        _fallback_audio = "Recebi seu audio, mas nao consegui transcrever. Por favor, envie como texto."
+                        await send_whatsapp_message(
+                            instancia_id=instancia_id,
+                            telefone=mensagem.de,
+                            mensagem=_fallback_audio,
                         )
+                        log.info("audio_transcricao_vazia_fallback_direto", tenant_id=tenant_id)
+                        return
                 except Exception as exc:
                     log.error("audio_transcricao_falhou", tenant_id=tenant_id, error=str(exc))
-                    mensagem = mensagem.model_copy(
-                        update={"texto": "Recebi seu áudio, mas houve uma falha na transcrição. Por favor, envie como texto."}
+                    # E5 (B-24a): falha vai direto via send_whatsapp_message, sem LLM
+                    _fallback_audio = "Recebi seu audio, mas houve uma falha na transcricao. Por favor, envie como texto."
+                    await send_whatsapp_message(
+                        instancia_id=instancia_id,
+                        telefone=mensagem.de,
+                        mensagem=_fallback_audio,
                     )
+                    return
             else:
                 log.warning("audio_sem_conteudo", tenant_id=tenant_id)
-                mensagem = mensagem.model_copy(
-                    update={"texto": "Não consegui receber seu áudio. Por favor, envie como texto."}
+                _fallback_audio = "Nao consegui receber seu audio. Por favor, envie como texto."
+                await send_whatsapp_message(
+                    instancia_id=instancia_id,
+                    telefone=mensagem.de,
+                    mensagem=_fallback_audio,
                 )
+                return
 
         # 3d. Feedback visual: marca como lido (✓✓ azul) imediatamente
         await mark_message_as_read(
@@ -352,11 +372,17 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
             persona_key = f"persona:{tenant_id}:{numero_norm}"
             try:
                 persona_anterior = await _redis.get(persona_key)
-                if persona_anterior is not None and persona_anterior.decode() != persona.value:
+                # E2 (B-29): redis-py >= 5.0 com decode_responses=True retorna str diretamente
+                persona_anterior_str = (
+                    persona_anterior.decode()
+                    if isinstance(persona_anterior, bytes)
+                    else persona_anterior
+                )
+                if persona_anterior_str is not None and persona_anterior_str != persona.value:
                     log.info(
                         "identity_router_troca_persona",
                         tenant_id=tenant_id,
-                        persona_anterior=persona_anterior.decode(),
+                        persona_anterior=persona_anterior_str,
                         persona_nova=persona.value,
                     )
                     await _invalidar_redis_conversa(_redis, tenant_id, numero_norm)
@@ -398,6 +424,40 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                             tenant_id=tenant_id,
                             telefone_hash=hashlib.sha256(telefone_norm_gestor.encode()).hexdigest(),
                         )
+                        return
+
+                    # E10 (D030): Interceptar comando AUTORIZAR antes de passar ao agente
+                    texto_gestor = (mensagem.texto or "").strip()
+                    if texto_gestor.upper().startswith("AUTORIZAR "):
+                        numero_autorizar = texto_gestor.split(" ", 1)[1].strip()
+                        # Normalizar número (remover +55, espaços)
+                        from src.agents.repo import ContactRepo as _ContactRepo
+                        contact_repo = _ContactRepo()
+                        autorizado = await contact_repo.autorizar(
+                            tenant_id=tenant_id,
+                            identifier=numero_autorizar,
+                            gestor_id=str(gestor.id),
+                            session=session,
+                        )
+                        await session.commit()
+                        if autorizado:
+                            await send_whatsapp_message(
+                                instancia_id=payload.instance,
+                                telefone=mensagem.de,
+                                mensagem=f"Contato {numero_autorizar} autorizado com sucesso.",
+                            )
+                            log.info(
+                                "contato_autorizado_via_whatsapp",
+                                tenant_id=tenant_id,
+                                gestor_id=str(gestor.id),
+                                numero=numero_autorizar[-4:],
+                            )
+                        else:
+                            await send_whatsapp_message(
+                                instancia_id=payload.instance,
+                                telefone=mensagem.de,
+                                mensagem=f"Contato {numero_autorizar} nao encontrado. Verifique o numero.",
+                            )
                         return
 
                     from src.commerce.repo import CommerceRepo as _CommerceRepo
@@ -484,7 +544,44 @@ async def _process_message(payload_dict: dict[str, Any]) -> None:
                     )
 
                 else:
-                    await AgentDesconhecido().responder(mensagem, tenant, session)
+                    # E9 (D030): criar contact self_registered e notificar gestor
+                    numero_desconhecido = mensagem.de.split("@")[0]
+                    from src.agents.repo import ContactRepo as _ContactRepo
+                    from src.agents.service import notify_gestor_pendente
+                    contact_repo = _ContactRepo()
+                    try:
+                        await contact_repo.create_self_registered(
+                            tenant_id=tenant_id,
+                            identifier=numero_desconhecido,
+                            kind="whatsapp",
+                            session=session,
+                        )
+                        await session.commit()
+                    except Exception as exc_sr:
+                        log.warning("contact_self_registered_erro", error=str(exc_sr))
+
+                    # Responder ao usuário imediatamente
+                    await send_whatsapp_message(
+                        instancia_id=payload.instance,
+                        telefone=mensagem.de,
+                        mensagem=(
+                            "Ola! Sua mensagem foi recebida. "
+                            "Vou avisar o gestor para te autorizar. Aguarde!"
+                        ),
+                    )
+
+                    # Notificar gestores com throttle 6h
+                    try:
+                        await notify_gestor_pendente(
+                            tenant_id=tenant_id,
+                            numero_desconhecido=numero_desconhecido,
+                            mensagem_original=mensagem.texto or "",
+                            instancia_id=payload.instance,
+                            session=session,
+                            redis_client=_redis,
+                        )
+                    except Exception as exc_ng:
+                        log.warning("notify_gestor_erro", error=str(exc_ng))
 
         except Exception as exc:
             # O context manager já garantiu 'paused' antes desta linha.
