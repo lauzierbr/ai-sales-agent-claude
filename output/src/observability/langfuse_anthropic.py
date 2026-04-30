@@ -98,14 +98,27 @@ async def call_anthropic_with_langfuse(
 
     generation = None
     try:
-        # Criar generation antes da chamada para capturar latência
-        generation = lf.generation(
-            name=f"anthropic_{agent_name}",
-            model=kwargs.get("model", "unknown"),
-            input=kwargs.get("messages", []),
-            trace_id=trace_id,
-            session_id=session_id,
-        )
+        # session_id precisa ir no TRACE, não na generation standalone.
+        # lf.generation(session_id=...) é ignorado pelo SDK — só lf.trace(session_id=...) propaga.
+        if session_id:
+            trace = lf.trace(
+                name=f"anthropic_{agent_name}",
+                session_id=session_id,
+                id=trace_id,  # None se não fornecido — Langfuse gera UUID
+            )
+            generation = trace.generation(
+                name=f"anthropic_{agent_name}",
+                model=kwargs.get("model", "unknown"),
+                input=kwargs.get("messages", []),
+            )
+        else:
+            # Sem session — generation standalone (trace_id externo opcional)
+            generation = lf.generation(
+                name=f"anthropic_{agent_name}",
+                model=kwargs.get("model", "unknown"),
+                input=kwargs.get("messages", []),
+                trace_id=trace_id,
+            )
     except Exception as exc:
         log.warning("langfuse_generation_create_erro", agent=agent_name, error=str(exc))
 
