@@ -870,3 +870,24 @@ Quando o usuário rejeitar um sprint:
   padrão de migração superficial)
 - Proponha mudança de processo, não só fix de código
 - Documente como lição em `docs/RETROSPECTIVES/sprint-N.md` antes de continuar
+
+---
+
+## Regras adicionais pós-Sprint 10
+
+6. **Mock = realidade do servidor real, não suposição.** Antes de mockar resposta
+   de API externa (HTTP, banco, fila), verificar status code real, formato de body
+   e edge cases via curl/SDK contra staging ou doc oficial. Se não tem como
+   verificar, **escalar ao usuário** antes de mockar 200/sucesso. (B-23 Evolution
+   responde 201, B-30 Langfuse não tem wrapper Anthropic nativo)
+
+7. **POST real é a única evidência de POST.** Quando entrega altera form/POST
+   handler ou schema, escrever script `scripts/post_smoke_sprint_N.sh` que
+   submete cada form via `curl` ou `httpx` com payload realista, contra staging,
+   e parseia o redirect/erro. Não basta navegação GET ou unit com mock.
+
+8. **Grep exaustivo do PADRÃO antes de declarar fix.** Quando corrige bug de
+   query SQL/builder/template, fazer grep do MESMO padrão (não só do arquivo
+   onde apareceu) e listar **todos** os hits no handoff. Para cada hit, declarar
+   migrar/manter/justificar. (B-33 fixou só INSERT, deixou SELECT idêntico
+   quebrado em outro arquivo; recorrência expôs depois.)

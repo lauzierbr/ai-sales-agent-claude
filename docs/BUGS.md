@@ -9,9 +9,6 @@
 | B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |
 | B-12 | Instrumentação Langfuse incompleta — output null, zero tokens/custo, sem generations nem sessions | Média | Piloto | 2026-04-24 |
 | B-13 | Busca de produto por EAN falha — bot não mapeia últimos 6 dígitos do EAN para código interno JMB | Alta | Piloto | 2026-04-27 |
-| B-28 | Criar pedido em nome de cliente EFOS falha — get_by_id sem fallback commerce + LLM alucina "instabilidade de ID" | Crítica | Homologação Sprint 9 | 2026-04-29 |
-| B-29 | Logs poluídos com "'str' object has no attribute 'decode'" em persona_key_redis_erro — fix B-11 quebra com redis-py >= 5.0 (decode_responses já retorna str) | Baixa | Homologação Sprint 9 | 2026-04-29 |
-| B-30 | B-12 só parcialmente resolvido — Langfuse continua sem tokens/custo. `_get_anthropic_client` tem docstring mentindo: não wrappa o cliente, só seta session_id no trace. Generations nunca são criadas | Média | Homologação Sprint 9 | 2026-04-29 |
 | B-31 | Valores monetários no dashboard em formato americano ("R$ 2106925.14" em vez de "R$ 2.106.925,14") — corrigido em v0.9.2 com filter Jinja `\|brl` central em providers/format.py | Média | Homologação Sprint 9 | 2026-04-29 |
 | B-32 | KPIs "GMV HOJE / PEDIDOS HOJE" mostravam total histórico EFOS (2592 pedidos, R$ 2.1M) quando não há pedidos hoje — fallback de 3 níveis caía em "efos_total" sem mudar label. Corrigido em v0.9.3 — KPIs zeram quando hoje vazio; total histórico vai pro bloco sync. | Alta | Homologação Sprint 9 | 2026-04-29 |
 
@@ -129,14 +126,6 @@
 > - Mas bloqueia observabilidade — sem custo por conversa, não dá para
 >   monitorar gasto de tokens (importante para governance)
 > - Sem generations não dá para fazer evals de qualidade no Langfuse
-| B-23 | Áudio WhatsApp (H-20/F-02a) não funciona — Whisper rejeita 400 "Invalid file format" porque audioMessage.url retorna conteúdo criptografado E2E | Alta | Homologação Sprint 9 | 2026-04-29 |
-| B-24 | Bot nega capacidade de áudio em vez de admitir falha temporária — fallback injeta texto que confunde o LLM + system prompt não menciona a capacidade | Alta | Homologação Sprint 9 | 2026-04-29 |
-| B-25 | Inconsistência de ano em relatórios + ausência de tool de ranking — agente faz 24 chamadas seriais e escolhe ano default diferente da pergunta anterior | Alta | Homologação Sprint 9 | 2026-04-29 |
-| B-26 | Truncação cega do histórico Redis quebra pares tool_use/tool_result, dispara erro 400 e "recovery destrutivo" que apaga TODO o contexto conversacional | Crítica | Homologação Sprint 9 | 2026-04-29 |
-| B-27 | Criar contato com perfil "cliente" via dashboard é NO-OP silencioso — UPDATE em clientes_b2b com ID do EFOS (commerce_accounts_b2b) acerta 0 rows e redireciona como sucesso | Crítica | Homologação Sprint 9 | 2026-04-29 |
-
-| B-28 | Criar pedido em nome de cliente EFOS falha — get_by_id sem fallback commerce_accounts_b2b + LLM aluciena erro técnico ("continua retornando o mesmo ID") | Crítica | Homologação Sprint 9 | 2026-04-29 |
-
 > **B-28 detalhe (showstopper do fluxo de pedido pelo gestor):**
 >
 > Caso real 29/04 10:02-10:03. Gestor pediu pedido para "Lauzier Pereira", bot
@@ -578,7 +567,15 @@
 
 | ID   | Descrição                                                     | Sprint fix    | Data       |
 |------|---------------------------------------------------------------|---------------|------------|
-| B-33 | INSERT contacts mistura `:channels::jsonb` — fixado com `CAST(:channels AS JSONB)` em `ContactRepo.create_self_registered` e `dashboard/ui.py` POST contatos/novo | Hotfix v0.10.3 | 2026-04-30 |
+| B-23 | Áudio WhatsApp falha — Whisper rejeita conteúdo criptografado E2E. Fix: usar endpoint Evolution `getBase64FromMediaMessage` (aceita HTTP 201) | Hotfix v0.10.1 | 2026-04-30 |
+| B-24 | Bot negava capacidade de áudio — system prompt atualizado declarando capacidade + fallback de erro envia mensagem direto sem passar pelo LLM | Sprint 10 v0.10.0 | 2026-04-30 |
+| B-25 | Sem tool de ranking + ano default inconsistente — adicionada tool `ranking_vendedores_efos` + regras de ano default no system prompt do gestor | Sprint 10 v0.10.0 | 2026-04-30 |
+| B-26 | Truncação cega + recovery destrutivo do histórico — `truncate_preserving_pairs` + repair não-destrutivo aplicado nos 3 agentes | Sprint 10 v0.10.0 | 2026-04-30 |
+| B-27 | NO-OP silencioso ao criar contato cliente — resolvido estruturalmente via D030 (tabela `contacts` + commerce_accounts) | Sprint 10 v0.10.0 | 2026-04-30 |
+| B-28 | Pedido em nome de cliente EFOS falha — D030 ERP adapter + `pedidos.account_external_id` (migration 0025) + INSERT atualizado com coluna `observacao` | Hotfix v0.10.2 | 2026-04-30 |
+| B-29 | Log noise `'str' object has no attribute 'decode'` em redis-py >= 5.0 — removido `.decode()` redundante (decode_responses já retorna str) | Sprint 10 v0.10.0 | 2026-04-30 |
+| B-30 | Langfuse sem tokens/custo — wrapper manual `call_anthropic_with_langfuse` (Opção A) aplicado nos 3 agentes; generations criadas com usage real | Sprint 10 v0.10.0 | 2026-04-30 |
+| B-33 | INSERT contacts mistura `:channels::jsonb` — fixado com `CAST(:channels AS JSONB)` em `ContactRepo.create_self_registered` e `dashboard/ui.py` POST contatos/novo. SELECT em `get_by_channel` também corrigido em v0.10.5 | Hotfix v0.10.3 + v0.10.5 | 2026-04-30 |
 | B-34 | Backend rejeitava perfil capitalizado — normalizado com `.lower()` no POST handler | Hotfix v0.10.3 | 2026-04-30 |
 | B-35 | `perfil=cliente` sem `cliente_b2b_id` passava pelo guard — guard explícito adicionado | Hotfix v0.10.3 | 2026-04-30 |
 | B-36 | UniqueViolation no sync — todos os INSERTs de `publish.py` convertidos para UPSERT `ON CONFLICT (tenant_id, external_id) DO UPDATE SET`; embedding preservado (DT-2) | Hotfix v0.10.3 | 2026-04-30 |

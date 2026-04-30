@@ -716,3 +716,42 @@ que enumera explicitamente:
 O Evaluator verifica que `artifacts/pre_homolog_review_sprint_N.md` existe e
 tem todos os itens em PASS. Se algum item está em FAIL, sprint é REPROVADO.
 Se o arquivo não existe, sprint é REPROVADO sem necessidade de outras checagens.
+
+---
+
+## Lição aprendida — Sprint 10 (2026-04-30)
+
+Sprint 10 foi APROVADO pelo Evaluator com 418 unit tests + lint + smoke 9/12 +
+pre-homolog "navegação". Em 2h de homologação humana, **13 bugs comportamentais**
+exigiram 5 hotfixes consecutivos (v0.10.1 a v0.10.5). Todos do mesmo padrão:
+
+- **Mock que não bate com servidor real** (B-23: HTTP 200 vs 201 da Evolution API)
+- **Unit teste em cima do mock do repo** sem exercitar SQL real (B-28: `pedidos.observacao` ausente)
+- **Pre-homolog "navegou" rotas** sem submeter forms (B-33: `:channels::jsonb`)
+- **Helper compartilhado fixado parcialmente** (B-33 fixou INSERT, esqueceu SELECT)
+- **Validação de schema vs código ausente** (coluna referenciada em código nunca criada por migration)
+
+### Critérios obrigatórios a partir do Sprint 11
+
+**A_E2E_FORMS** (sprints que mudam schema OU adicionam/alteram POST):
+Script que faz **submit real** de cada form alterado, com payload válido,
+contra staging. Falha = sprint não pronto. Não basta navegação por GET.
+
+**A_REAL_TURN** (sprints conversacionais):
+Script que dispara **webhook simulado HMAC** ao endpoint real, em sequência
+multi-turn (≥ 5 turnos), persona variada (cliente, rep, gestor). Verifica
+zero erros em logs (`agent_*_erro`, `*_lookup_erro`, `historico_corrompido`)
+e pelo menos 1 generation Langfuse com tokens > 0.
+
+**A_SCHEMA_DRIFT_GUARD** (todo sprint):
+Diff entre colunas referenciadas em código (grep `INSERT INTO X (a, b, c)` +
+ORM models) vs colunas existentes em migrations. Falha = código sem migration.
+
+**Rejeitar smoke de "existência"**: `curl /health` 200, `SELECT COUNT > 0`,
+`/dashboard/X 200` NÃO contam como evidência de comportamento. Um critério
+A_BEHAVIORAL precisa exibir um **POST** com payload realista que muda estado
+verificável no banco.
+
+**Helper compartilhado sob suspeita**: quando um bug é fix de "INSERT/SELECT/UPDATE
+com query template", auditar TODOS os pontos do mesmo helper que usam o mesmo
+padrão. Generator pode fixar 1 e esquecer N (regressão B-33 confirmou).

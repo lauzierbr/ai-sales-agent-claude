@@ -12,109 +12,75 @@ em 30 segundos de uso real, com smoke gate verde e Evaluator aprovado.
 
 ---
 
-## Parte 1 — Dashboard (Chrome DevTools MCP / Playwright / Preview MCP)
+## Parte 1 — Dashboard via Playwright/Chrome DevTools MCP (executável)
 
-### Pré-requisitos
+**Princípio:** cada cenário tem `click → fill → submit → assert URL → assert DB`.
+**Sem submit, não conta.**
 
-- App rodando em staging com versão correta no `/health`
-- Credenciais de staging:
-  - `DASHBOARD_TENANT_ID` (lido via Infisical)
-  - `DASHBOARD_SECRET` (lido via Infisical)
-- BD com dados não-triviais (`commerce_*` populado, contatos cadastrados)
+### Cenários por sprint
 
-### Rotas a navegar (sempre todas — sem cherry-picking)
+Para cada rota com POST handler **alterado ou criado no sprint**:
 
-Login em `/dashboard/login` com `DASHBOARD_SECRET`, depois navegar:
+| Cenário | Pré | Ação MCP | Assert URL | Assert DB |
+|---------|-----|----------|------------|-----------|
+| Cliente novo | login | navigate /X/novo → fill perfil=Cliente, cliente=<EFOS>, telefone=5519... → submit | redirect 302/303 (não 400, não erro inline) | SELECT count(*) FROM target WHERE ... = 1 |
+| (etc) | | | | |
 
-| # | Rota | O que verificar |
-|---|------|-----------------|
-| 1 | `/dashboard/home` | KPIs (GMV, pedidos, ticket) refletem dados reais; bloco "Última sync EFOS" mostra timestamp real (não "Nunca sincronizado" se há sync_runs success); pedidos recentes; conversas ativas |
-| 2 | `/dashboard/pedidos` | Listagem com pedidos do banco — se `commerce_orders` tem N rows, listagem deve mostrar N (ou paginação correta). Se `pedidos` estiver vazia mas `commerce_orders` populada, exibir os EFOS |
-| 3 | `/dashboard/conversas` | Conversas dos últimos 24h aparecem; persona, telefone, status corretos |
-| 4 | `/dashboard/contatos` | Listagem de gestores/reps cadastrados; coluna CONTATO não pode ser sempre "—" |
-| 5 | `/dashboard/clientes` | Listagem mostra clientes — se `clientes_b2b` vazia mas `commerce_accounts_b2b` populada (ex: 614), exibir os EFOS |
-| 6 | `/dashboard/precos` | UI de upload Excel renderiza |
-| 7 | `/dashboard/feedbacks` | Listagem de feedbacks por perfil |
-| 8 | `/dashboard/top-produtos` | Top N produtos vendidos — se `pedidos`/`itens_pedido` vazios mas `commerce_sales_history` ou `commerce_order_items` populadas, exibir agregação dos EFOS |
-| 9 | `/dashboard/representantes` | Listagem de reps com GMV — fallback para `commerce_vendedores` + `commerce_orders` quando `pedidos` vazio. **Verificar se a rota está no menu de navegação principal** — se existe mas não está na nav, é bug |
-| 10 | `/dashboard/configuracoes` | Tenant info; campos preenchidos |
+Para rotas com listagem (GET) inalteradas, manter checklist atual de
+COUNT(*) DB vs visível.
 
-### Critério de PASS por rota
+**Output:** `artifacts/pre_homolog_review_sprint_N.md` com tabela de
+PASS/FAIL **por cenário**, screenshot anexado.
 
-Para cada rota com listagem (1, 2, 4, 5, 7, 8, 9):
-- Se o banco tem dados (verificar via `SELECT COUNT(*)` na tabela canônica),
-  a página NÃO pode mostrar "Nenhum X encontrado"
-- Comparar count do banco vs count visível na página (ou paginação)
-- Capturar screenshot e snapshot a11y
+### Critério de PASS
 
-Para cada rota com KPIs/dashboards (1):
-- KPIs não podem ser todos zero quando há dados no banco
-- Bloco de status (sync_runs, conexões, etc) deve refletir dados reais
+Cada POST do sprint exercitado com payload realista, redirect 302/303 (ou 400
+com mensagem amigável), DB confirma efeito esperado.
 
-### Output esperado
+## Parte 2 — Bot via webhook simulado HMAC (executável)
 
-`artifacts/pre_homolog_review_sprint_N.md` com tabela:
+**Princípio:** webhook real ao endpoint, multi-turn, log inspection.
 
-```markdown
-| Rota | Esperado | Observado | Status |
-|------|----------|-----------|--------|
-| /dashboard/home | GMV>0, sync=27/04, pedidos>0 | GMV=0, sync="Nunca", pedidos=0 | FAIL — B-18, B-19 |
-| /dashboard/pedidos | 2592 itens (commerce_orders) | "Nenhum pedido" | FAIL — B-17 |
-| ... | ... | ... | ... |
-```
+Helper canônico: `scripts/sim_webhook.py <numero> "<texto>"` — assina HMAC
+com `EVOLUTION_WEBHOOK_SECRET`, posta para `/webhook/whatsapp`.
 
----
+### Cenários obrigatórios por persona (sprint conversacional)
 
-## Parte 2 — Bot (POST /webhook simulado OU revisão de conversa real)
+**Cliente:** mensagem texto → produto buscado, áudio (se sprint mexeu) →
+transcrito, EAN completo (B-13), conversa de 6 turnos (B-26).
 
-### Pré-requisitos
+**Rep:** "meus clientes", "fazer pedido para X", relatório.
 
-- `EVOLUTION_WEBHOOK_SECRET` para HMAC-SHA256
-- Endpoint `POST /webhook/whatsapp` (header `X-Evolution-Signature`)
-- Conta de teste em `gestores`/`representantes`/`clientes_b2b` ou usar números mockados
+**Gestor:** áudio (B-23/24), pedido em nome de cliente EFOS-only (B-28),
+ranking (B-25), AUTORIZAR (D030), 6 turnos seguidos.
 
-### Cenários por persona
+**Self_registered:** número desconhecido manda mensagem → criação contact +
+notificação dual + AUTORIZAR + segunda mensagem roteada como cliente
+(D030 fluxo completo).
 
-**Cliente** (5+ perguntas):
-- "oi" — saudação básica → resposta amigável, sem erro
-- "quero ver o catálogo" → lista de produtos do `commerce_products` (ou `produtos` se for fallback)
-- "busca [nome de produto real]" → match por nome
-- "busca [EAN completo, ex: 7898923148571]" → match via `query[-6:]` em `codigo_externo`
-- "quero comprar [N] de [produto]" → fluxo de pedido inicia
-- "confirma" → pedido confirmado, PDF gerado, gestor notificado
+### Critério de PASS
 
-**Representante** (3+ perguntas):
-- "quem são meus clientes?" → lista da carteira (filtra por `representante_id`)
-- "fazer pedido para [nome de cliente da carteira]" → fluxo inicia
-- "relatório de vendas do mês" → totais reais (não zerado)
+Para cada cenário:
+- Webhook HTTP 200 (recebido)
+- Log `agent_*_respondeu` ≥ 1 com `resposta_len > 50`
+- **Zero linhas** `agent_*_erro`, `*_lookup_erro`, `historico_corrompido_recovery`
+- DB tem efeito esperado (contact criado, pedido inserido, etc.)
+- Langfuse trace mais recente: ≥ 1 generation com `usage.input_tokens > 0`
+- (Para multi-turn) Conversação preservou contexto (LLM responde fazendo
+  referência à mensagem anterior)
 
-**Gestor** (5+ perguntas — onde mais bugs aparecem por causa das tools EFOS):
-- "lista de clientes inativos" → ≥ 1 resultado se `commerce_accounts_b2b` tem `situacao_cliente=2`
-- "lista de clientes inativos na cidade de Itupeva" → resultados de cidade=ITUPEVA
-- "quais os representantes do sistema?" → lista de `commerce_vendedores` (24 reps no caso JMB), não inferência de pedidos
-- "relatório de vendas do representante [nome]" → fuzzy match + dados de `commerce_orders`
-- "lista de pedidos pendentes" → busca em `pedidos` E `commerce_orders`
+**Output:** `artifacts/sweep_bot_sprint_N.md` com tabela.
 
-### Critério de PASS por cenário
+## Quem executa
 
-Para cada pergunta enviada:
-- Resposta NÃO contém: "nenhum cliente", "nenhum pedido", "não encontrei",
-  "sem dados", "no momento não tenho" — quando o banco tem dados
-- Resposta contém ao menos 1 valor real do banco (nome, número, valor)
-- Sem erro 500 / sem mensagem técnica vazada
-- Sem violação de feedback histórico (ex: "Não usar emojis" do feedback 20/04)
-
-### Output esperado
-
-`artifacts/pre_homolog_review_sprint_N.md` seção "Bot":
-
-```markdown
-| Persona | Pergunta | Resposta (excerpt) | Esperado | Status |
-|---------|----------|--------------------|----------|--------|
-| Gestor | "lista clientes inativos Itupeva" | "Nenhum inativo em Itupeva" | ≥ 1 cliente (banco tem 8) | FAIL — B-15 |
-| Cliente | "EAN 7898923148571" | "Não encontrei produto" | produto 148571 | FAIL — B-13 |
-| ... | ... | ... | ... | ... |
-```
+- **Generator** ANTES de declarar pronto. Sprint não pode receber Evaluator final
+  sem ambos `pre_homolog_review_sprint_N.md` (Parte 1) e `sweep_bot_sprint_N.md`
+  (Parte 2) com PASS em **todos** os cenários do sprint.
+- **Evaluator** verifica que ambos artefatos existem, têm PASS, e contêm
+  evidência de POST/webhook real (não navegação solo). Pode pedir re-execução
+  se cenário foi marcado PASS sem o submit/webhook visível.
+- **Lauzier** valida apenas se o pipeline mecânico passou — se algo escapar,
+  é bug do próximo sprint, não rejeição do atual.
 
 ---
 
@@ -127,13 +93,6 @@ Para cada feedback histórico ativo do gestor (ex: "Não usar emojis"), verifica
 no system prompt e em respostas reais.
 
 ---
-
-## Quem executa este protocolo
-
-- **Generator** executa antes de declarar sprint pronto, anexa o artefato
-- **Evaluator** verifica que o artefato existe e tem PASS antes de aprovar
-- **Lauzier** valida apenas se o protocolo passou — se algo escapar, é bug
-  para o próximo sprint, não rejeição do atual
 
 ## O que NÃO é este protocolo
 
