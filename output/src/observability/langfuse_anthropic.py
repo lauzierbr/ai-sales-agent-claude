@@ -97,22 +97,35 @@ async def call_anthropic_with_langfuse(
         )
 
     generation = None
+    _trace_obj = None
+    # Última mensagem do usuário como resumo de input para o trace (evita payload gigante)
+    _last_user_msg = ""
+    try:
+        msgs = kwargs.get("messages", [])
+        for m in reversed(msgs):
+            if isinstance(m, dict) and m.get("role") == "user":
+                c = m.get("content", "")
+                _last_user_msg = c if isinstance(c, str) else str(c)[:300]
+                break
+    except Exception:
+        pass
+
     try:
         # session_id precisa ir no TRACE, não na generation standalone.
-        # lf.generation(session_id=...) é ignorado pelo SDK — só lf.trace(session_id=...) propaga.
+        # input/output no trace aparece na UI de Sessions; generation filha tem detalhe.
         if session_id:
-            trace = lf.trace(
+            _trace_obj = lf.trace(
                 name=f"anthropic_{agent_name}",
                 session_id=session_id,
-                id=trace_id,  # None se não fornecido — Langfuse gera UUID
+                id=trace_id,
+                input=_last_user_msg or None,
             )
-            generation = trace.generation(
+            generation = _trace_obj.generation(
                 name=f"anthropic_{agent_name}",
                 model=kwargs.get("model", "unknown"),
                 input=kwargs.get("messages", []),
             )
         else:
-            # Sem session — generation standalone (trace_id externo opcional)
             generation = lf.generation(
                 name=f"anthropic_{agent_name}",
                 model=kwargs.get("model", "unknown"),
@@ -142,11 +155,19 @@ async def call_anthropic_with_langfuse(
     if generation is not None:
         try:
             output_content = None
+            output_text = None  # texto plano para o trace (mais legível na UI)
             if hasattr(response, "content"):
                 try:
                     output_content = [b.model_dump() for b in response.content]
+                    # Extrair texto das partes text para o trace
+                    text_parts = [
+                        b.get("text", "") for b in output_content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    ]
+                    output_text = " ".join(text_parts).strip() or None
                 except Exception:
                     output_content = str(response.content)
+                    output_text = output_content
 
             usage_data: dict[str, Any] = {}
             if hasattr(response, "usage") and response.usage is not None:
@@ -160,6 +181,13 @@ async def call_anthropic_with_langfuse(
                 usage=usage_data if usage_data else None,
             )
             generation.end()
+
+            # Atualizar o trace com output legível — aparece na UI de Sessions
+            if _trace_obj is not None and output_text:
+                try:
+                    _trace_obj.update(output=output_text)
+                except Exception:
+                    pass
         except Exception as exc:
             log.warning("langfuse_generation_update_erro", agent=agent_name, error=str(exc))
 

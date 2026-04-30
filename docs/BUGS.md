@@ -600,3 +600,5 @@
 | B-07 | Redis history corruption — orphaned tool_result causava 400   | Sprint 4      | 2026-04-20 |
 | B-08 | Agentes anunciavam ferramentas que não existiam               | Sprint 4      | 2026-04-20 |
 | B-09 | Período hardcoded 30 dias no SQL — ignorava pedido do usuário | Sprint 4      | 2026-04-20 |
+
+> **TD-Sprint10-2:** Whisper (`_transcrever_audio` em `agents/ui.py:38`) não aparece no Langfuse — custo por minuto de áudio não rastreado. Instrumentar com span Langfuse antes/depois da chamada. Pricing: `REQUESTS` a $0.006/req (média de 1min) ou `SECONDS` com duração medida antes do envio. Sprint 11.
