@@ -491,7 +491,10 @@ async def contatos_novo_post(request: Request) -> Any:
     tenant_id = session_data["tenant_id"]
     form = await request.form()
     # B-34: normalizar perfil para lowercase — template pode enviar "Gestor"/"Representante"/"Cliente"
+    # Mapear "representante" → "rep" (backend usa código curto)
     perfil = str(form.get("perfil", "")).strip().lower()
+    if perfil == "representante":
+        perfil = "rep"
     nome = str(form.get("nome", "")).strip()
     telefone = str(form.get("telefone", "")).strip()
     cliente_b2b_id = str(form.get("cliente_b2b_id", "")).strip()
