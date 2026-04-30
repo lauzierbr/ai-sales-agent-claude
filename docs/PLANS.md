@@ -20,7 +20,8 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 7 | ✅ | Produto | Notificação gestor (TD-08) — v0.7.0, homologado em conjunto com Sprint 9 (29/04/2026) |
 | Sprint 8 | ✅ | Produto | Hotfixes piloto (B-10/B-11/B-12) + integração EFOS via backup diário SSH/pg_restore + 3 tools relatório AgentGestor — v0.8.0, homologado com Sprint 9 (29/04/2026) |
 | Sprint 9 | ✅ | Produto | Hotfix B-13 + leituras commerce_* + dashboard sync + áudio Whisper + 4 hotfixes pós-homologação (B-14 a B-22, B-31, B-32, formato BR, KPIs mensais) — v0.9.4, homologado 29/04/2026 com 11 bugs abertos para Sprint 10 |
-| Sprint 10 | 🔄 | Produto | **Em planejamento** — spec gerado em `artifacts/spec.md` (29/04). 4 workstreams: W1 hotfixes (B-23 a B-30), W2 foundations D030 (`contacts`, dashboard refeito, auto-criação `self_registered`, notificação dual), W3 F-07 (sync EFOS schedule admin), W4 deprecação catalog legado (com migração de embeddings). v0.10.0. |
+| Sprint 10 | ✅ | Produto | Hotfixes críticos (B-23 a B-30) + foundations D030 (`contacts`, dashboard refeito, self_registered + notificação dual) + F-07 (sync EFOS schedule admin) + deprecação catalog legado — v0.10.13, homologado 30/04/2026. 13 hotfixes em 1 dia (v0.10.0→v0.10.13). Langfuse operacional (sessions + custo). AgentCliente/Rep → Haiku. |
+| Sprint 11 | ⬜ | Produto | AnalystAgent MVP (D031) + Bling adapter read-only + débitos Sprint 10 |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 

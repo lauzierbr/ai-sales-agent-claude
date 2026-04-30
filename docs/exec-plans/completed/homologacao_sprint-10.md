@@ -1,9 +1,9 @@
 # Homologação Sprint 10 — Hotfixes críticos + D030 + F-07 + deprecação catalog
 
-**Status:** PENDENTE
-**Data prevista:** _(definir após implementação)_
+**Status:** ✅ APROVADO
+**Data:** 2026-04-30
 **Executado por:** Lauzier
-**Versão alvo:** v0.10.0
+**Versão final:** v0.10.13
 
 ---
 
@@ -140,13 +140,46 @@ estilo "vamos começar de novo".
 
 ## Resultado final
 
-**Veredicto:** [ ] APROVADO / [ ] REPROVADO
-**Data:** ___
-**Bugs encontrados:**
-- [ ] nenhum
+**Veredicto:** ✅ APROVADO
+**Data:** 2026-04-30
+**Versão:** v0.10.13
 
-**Se REPROVADO — próximos passos:**
-[lista de bugs para hotfix antes do Sprint 11]
+**Resultados por cenário:**
+| H | Cenário | Resultado | Observação |
+|---|---------|-----------|------------|
+| H1 | Áudio cliente | ✅ PASSOU | v0.10.1 — Evolution API retorna 201 (não 200) |
+| H2 | Capacidade áudio | ✅ PASSOU | |
+| H3 | Histórico longo | ✅ PASSOU | Validado via webhook simulado (6 turnos) |
+| H4 | Pedido cliente EFOS | ✅ PASSOU | v0.10.2 — observacao migration + account_external_id |
+| H5 | Cadastro contato dashboard | ✅ PASSOU | v0.10.3/v0.10.4 — CAST JSONB + normalize perfil |
+| H6 | Self-registered + notify dual | ⏭ NÃO TESTADO | Validado via webhook simulado; sem WhatsApp novo disponível |
+| H7 | Comando AUTORIZAR | ⏭ NÃO TESTADO | Validado via webhook simulado |
+| H8 | F-07 alterar preset | ✅ PASSOU | |
+| H9 | F-07 lock anti-overlap | ✅ PASSOU | |
+| H10 | Busca semântica pós-drop | ✅ PASSOU | 743/743 embeddings preservados após sync |
+| H11 | Langfuse custo | ✅ PASSOU | v0.10.13 — sessions + input/output + $0.14/sessão |
+| H12 | Ranking eficiente | ✅ PASSOU | 1 tool call, ano 2026 |
+| H13 | Clientes read-only | ✅ PASSOU | |
+
+**Bugs encontrados durante homologação (13 hotfixes, v0.10.1→v0.10.13):**
+- v0.10.1: B-23 (Evolution HTTP 201 ≠ 200)
+- v0.10.2: B-28 incompleto (observacao migration + account_external_id)
+- v0.10.3: B-33 a B-40 (8 bugs sweep — CAST JSONB, perfil normalize, ON CONFLICT, Rodar Agora síncrono, send_whatsapp kwargs, KPI mês, IdentityRouter)
+- v0.10.4: B-34 follow-up (representante→rep mapping)
+- v0.10.5: B-33 incompleto (SELECT contacts ainda com ::jsonb)
+- v0.10.6: CSS radio/checkbox (width:100% em base.html)
+- v0.10.7: aba Sync ausente do menu nav
+- v0.10.8: feedback visual Rodar Agora
+- v0.10.9: run_sync session_factory kwarg inválido
+- v0.10.10: banner sync baseado em query string (falso positivo)
+- v0.10.11: ON CONFLICT 2 colunas vs 3 + indexes faltantes
+- v0.10.12: session_id no trace Langfuse + modelos Haiku + pricing
+- v0.10.13: input/output visíveis na UI de Sessions Langfuse
+
+**Débitos técnicos abertos para Sprint 11:**
+- TD-Sprint10-1: 5 rotas dashboard sem evidência de browser MCP (screenshot)
+- TD-Sprint10-2: Whisper não instrumentado no Langfuse
+- H6/H7 pendente de teste via WhatsApp real (validado via webhook simulado)
 
 ---
 
