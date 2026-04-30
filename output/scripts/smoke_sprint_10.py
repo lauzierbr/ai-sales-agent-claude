@@ -37,7 +37,8 @@ async def check_health() -> None:
         version = data.get("version", "")
         if version != "0.10.0":
             raise AssertionError(f"version={version}, esperado 0.10.0")
-        anthropic = data.get("anthropic", "")
+        # anthropic pode estar em data["anthropic"] ou data["components"]["anthropic"]
+        anthropic = data.get("anthropic") or data.get("components", {}).get("anthropic", "")
         if anthropic != "ok":
             raise AssertionError(f"anthropic={anthropic}, esperado 'ok'")
 
@@ -46,7 +47,7 @@ async def check_alembic_revision() -> None:
     """Check 2: banco em migration 0028."""
     import subprocess
     result = subprocess.run(
-        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "app", "-d", "ai_sales",
+        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "aisales", "-d", "ai_sales",
          "-t", "-c", "SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1;"],
         capture_output=True, text=True, timeout=15,
     )
@@ -59,7 +60,7 @@ async def check_contacts_manual() -> None:
     """Check 3: contacts com origin='manual' >= 5."""
     import subprocess
     result = subprocess.run(
-        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "app", "-d", "ai_sales",
+        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "aisales", "-d", "ai_sales",
          "-t", "-c", "SELECT COUNT(*) FROM contacts WHERE origin='manual';"],
         capture_output=True, text=True, timeout=15,
     )
@@ -72,7 +73,7 @@ async def check_commerce_accounts_telefone() -> None:
     """Check 4: commerce_accounts_b2b com telefone >= 900."""
     import subprocess
     result = subprocess.run(
-        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "app", "-d", "ai_sales",
+        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "aisales", "-d", "ai_sales",
          "-t", "-c", "SELECT COUNT(*) FROM commerce_accounts_b2b WHERE telefone IS NOT NULL;"],
         capture_output=True, text=True, timeout=15,
     )
@@ -85,7 +86,7 @@ async def check_commerce_products_embedding() -> None:
     """Check 5: commerce_products com embedding >= 700."""
     import subprocess
     result = subprocess.run(
-        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "app", "-d", "ai_sales",
+        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "aisales", "-d", "ai_sales",
          "-t", "-c", "SELECT COUNT(*) FROM commerce_products WHERE embedding IS NOT NULL;"],
         capture_output=True, text=True, timeout=15,
     )
@@ -98,7 +99,7 @@ async def check_sync_schedule_enabled() -> None:
     """Check 6: sync_schedule habilitado para jmb."""
     import subprocess
     result = subprocess.run(
-        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "app", "-d", "ai_sales",
+        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "aisales", "-d", "ai_sales",
          "-t", "-c", "SELECT enabled FROM sync_schedule WHERE tenant_id='jmb' AND connector_kind='efos_backup';"],
         capture_output=True, text=True, timeout=15,
     )
@@ -126,7 +127,7 @@ async def check_produtos_nao_existe() -> None:
     """Check 8: tabela produtos nao existe (E20)."""
     import subprocess
     result = subprocess.run(
-        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "app", "-d", "ai_sales",
+        ["docker", "exec", "ai-sales-postgres", "psql", "-U", "aisales", "-d", "ai_sales",
          "-t", "-c", "SELECT 1 FROM produtos LIMIT 1;"],
         capture_output=True, text=True, timeout=15,
     )
