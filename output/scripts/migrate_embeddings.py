@@ -291,8 +291,9 @@ async def main(tenant_id: str, dry_run: bool = False) -> bool:
             dry_run=dry_run,
         )
 
-    # Gerar embeddings para produtos sem match
-    if sem_match > 0 and not dry_run:
+    # Gerar embeddings para produtos de commerce_products sem embedding (sem_match de produtos
+    # legado OU produtos novos importados via EFOS que nunca tiveram embedding)
+    if not dry_run:
         async with factory() as session:
             gerados = await gerar_embeddings_faltantes(
                 tenant_id=tenant_id,
