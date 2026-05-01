@@ -4,6 +4,8 @@
 
 | ID   | Descrição                                           | Severidade | Sprint origem    | Data abertura |
 |------|-----------------------------------------------------|------------|------------------|---------------|
+| B-41 | Busca de cliente pelo gestor é estritamente lexical — "Ariel supermercados" falha, "ARIEL SUPERMERCADO LTDA" encontra. Bot deveria usar fuzzy match (unaccent + ILIKE + variações de plural/sufixo) antes de retornar "nenhum cliente encontrado". | Alta | Piloto | 2026-05-01 |
+| B-42 | Pedidos históricos do EFOS não são encontrados quando gestor pergunta "últimos pedidos" de um cliente — bot busca apenas `pedidos` (write model do bot, em geral vazio) e não inclui `commerce_orders` por padrão. Responde "nenhum nos últimos 30 dias" mesmo havendo centenas de pedidos no EFOS. Bot corretamente oferece ampliar para 90/365 dias mas deveria buscar em `commerce_orders` desde o início. | Alta | Piloto | 2026-05-01 |
 | B-01 | Gestor não recebe notificação quando pedido é feito | Alta       | Sprint 6 homolog | 2026-04-21    |
 | B-10 | Pedido criado sem representante mesmo quando cliente tem rep. vinculado | Alta | Piloto | 2026-04-24 |
 | B-11 | Agente perde contexto conversacional mid-session após troca de persona do número | Alta | Piloto | 2026-04-24 |

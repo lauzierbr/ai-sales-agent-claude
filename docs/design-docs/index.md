@@ -37,6 +37,7 @@ Log de decisões técnicas. Atualizar sempre que uma nova decisão for tomada.
 | D029 | Staging DB efos_staging destruído em bloco finally após cada sync | Sprint 8 | ok |
 | [D030](D030-erp-adapter-and-contact-ownership.md) | ERP adapter pattern + canonical contact ownership no app — App é dono de canais/contatos, ERP é dono de cadastro fiscal/financeiro. Bling como ERP alvo. | Pré-Sprint 10 | aprovado |
 | [D031](D031-analyst-agent-observability.md) | AnalystAgent — meta-agente de observabilidade (Langfuse adapter + persona admin + anomaly detection). Diferencial de produto. | Sprint 11 | aprovado |
+| [D032](D032-analyst-interface-and-nl2sql.md) | AnalystAgent — interface web `/dashboard/analyst` + NL2SQL read-only sobre `commerce_*` (refina D031). WhatsApp admin como canal complementar de alertas no Sprint 12. | Sprint 11 | aprovado |
 
 ---
 

@@ -21,7 +21,7 @@ Para planos detalhados com progresso, ver `docs/exec-plans/`.
 | Sprint 8 | ✅ | Produto | Hotfixes piloto (B-10/B-11/B-12) + integração EFOS via backup diário SSH/pg_restore + 3 tools relatório AgentGestor — v0.8.0, homologado com Sprint 9 (29/04/2026) |
 | Sprint 9 | ✅ | Produto | Hotfix B-13 + leituras commerce_* + dashboard sync + áudio Whisper + 4 hotfixes pós-homologação (B-14 a B-22, B-31, B-32, formato BR, KPIs mensais) — v0.9.4, homologado 29/04/2026 com 11 bugs abertos para Sprint 10 |
 | Sprint 10 | ✅ | Produto | Hotfixes críticos (B-23 a B-30) + foundations D030 (`contacts`, dashboard refeito, self_registered + notificação dual) + F-07 (sync EFOS schedule admin) + deprecação catalog legado — v0.10.13, homologado 30/04/2026. 13 hotfixes em 1 dia (v0.10.0→v0.10.13). Langfuse operacional (sessions + custo). AgentCliente/Rep → Haiku. |
-| Sprint 11 | ⬜ | Produto | AnalystAgent MVP (D031) + Bling adapter read-only + débitos Sprint 10 |
+| Sprint 11 | ⬜ | Produto | **AnalystAgent v1 (D031 + D032)** — tela web `/dashboard/analyst` + NL2SQL read-only sobre `commerce_*` (resolve B-41/B-42/F-08 transitivamente) + detectores de anomalia D031 (loop, cost_outlier, recovery_destrutivo, tool_failure) + role PostgreSQL `ai_readonly` + few-shot real JMB. Persona WhatsApp ANALYST adiada para Sprint 12. |
 
 ## Sprints de infra (executados via Claude Code direto, sem harness)
 
